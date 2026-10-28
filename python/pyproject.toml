@@ -1,8 +1,0 @@
-[project]
-name = "ntarlink-experiments"
-version = "0.1.0"
-requires-python = ">=3.11"
-description = "Orbital and scientific experiment adapters for ntarlink"
-
-[tool.ruff]
-line-length = 100

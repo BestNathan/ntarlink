@@ -1,8 +1,0 @@
-.DS_Store
-.env
-/target/
-/web/node_modules/
-/python/**/__pycache__/
-*.pyc
-coverage/
-dist/
