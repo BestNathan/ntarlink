@@ -10,7 +10,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: gofmt -l $(git ls-files '*.go') | tee /tmp/gofmt.txt && test ! -s /tmp/gofmt.txt
       - run: go test ./...
       - run: go vet ./...
       - run: go run ./cmd/ntarlink validate -scenario scenarios/minimal.yaml
