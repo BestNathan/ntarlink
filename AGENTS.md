@@ -1,7 +1,15 @@
-# Engineering guidelines
+# ntarlink engineering guidelines
 
-ntarlink is a Starlink-like satellite internet simulation platform, not a clone of proprietary SpaceX protocols.
+ntarlink models a complete Starlink-like LEO broadband internet system, not proprietary SpaceX protocol compatibility.
 
-Default languages: Rust for deterministic packet/event core and network runtime; Python for scientific/orbital integrations and experiment analysis; TypeScript for UI and visualization. Do not introduce Go into the core. Existing C/C++ external simulators remain supported as adapters, not rewrites.
+## Architecture first
+- Read docs/README.md, docs/system-overview.md, docs/subsystem-boundaries.md and docs/system-scenarios.md before designing features.
+- Organize by bounded **subsystem responsibility**, not by Rust/Python/TypeScript language. Target structure is documented in docs/architecture.md; code migration is separate.
+- Each subsystem owns its domain state, publishes versioned contracts, and documents explicit non-goals. A logical subsystem need not be a network microservice.
+- Keep simulation, protocol study, Linux IP emulation and HIL fidelity profiles distinct.
 
-Before code changes read docs/architecture.md and docs/roadmap.md. Each feature needs a runnable scenario, tests and fidelity/assumption documentation. Maintain deterministic virtual time, versioned contracts and explicit physical units. Prefer upstream open-source capabilities and audit licenses. Do not mark features complete without measured evidence.
+## Engineering
+- Rust for deterministic event and packet runtime, Python for scientific/orbital/experiments, TypeScript for visualization and UI. External C/C++ upstream simulators remain adapters.
+- Use deterministic virtual time, explicit units/reference frames, seed and model provenance. Do not perform per-packet remote RPC by default.
+- Every change includes executable acceptance evidence, test/benchmark plan and failure modes. Do not mark subsystem capability complete because a folder exists.
+- Audit upstream versions/licenses before integrating, and avoid unsupported assertions about Starlink proprietary internals.
