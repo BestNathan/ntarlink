@@ -1,127 +1,58 @@
-# SYS-14 — 仿真编排与执行内核
+# SYS-14 — Deterministic Simulation Kernel and Experiment Orchestration
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** advance virtual time, schedule causally ordered events, own run lifecycle, deterministic randomness, fault injection, checkpoints and reproducible artifacts. It is the **execution platform**, not the owner of orbital physics, PHY/MAC, subscriber policy or route decision algorithms.
 
-## 1. Position and mission
+## Kernel components
 
-**Position:** 全系统确定性实验执行基础设施.
+1. **Virtual clock:** monotonic `u64` nanoseconds from declared run epoch, separate from UTC/TAI and wall clock.
+2. **Stable event priority queue:** ordering tuple `(timestamp_ns, priority, sequence)`, efficient binary heap, cancellation/tombstone support, no accidental hashmap-order nondeterminism.
+3. **Event dispatch/router:** typed destination subsystem and operation, no unchecked dynamic code execution from user scenarios.
+4. **Domain state store:** subsystem-specific state owned by respective library, snapshot/revision access for tests and adapters.
+5. **Seeded random streams:** reproducible stochastic packet error/weather/traffic with independent per-entity RNG streams.
+6. **Scenario compiler:** validates schema, IDs, references, time range, frequencies, geometry, resource budgets and fidelity compatibility.
+7. **Traffic generator:** modeled UDP/TCP-like flows, packet sizes, arrivals (constant/Poisson/bursty), flow expiry; actual transport behavior belongs to external protocol/emulation adapters.
+8. **Fault injector:** deterministic target/time/severity/recovery event schedule.
+9. **Trace/checkpoint writer:** append events with causation, state digests and artifact manifests; safe bounded buffers.
+10. **Performance and distributed coordinator:** event counters, hot-path profiling and future conservative time-partitioning option.
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Core algorithms and ownership
 
-## 2. Core domain entities
+Proposed API:
 
-- `SimulationRun`
-- `VirtualClock`
-- `Event`
-- `EventQueue`
-- `Seed`
-- `Checkpoint`
+```rust
+struct EventKey { time_ns: u64, priority: u16, insertion_sequence: u64 }
+enum ScheduledEvent {
+    ContactOpened { link: LinkId },
+    LinkAcquired { link: LinkId },
+    PacketTransmit { packet: PacketId, link: LinkId },
+    PacketArrived { packet: PacketId, node: NodeId },
+    InstallRoute { revision: u64 },
+    InjectFault { target: EntityId, kind: FaultKind },
+}
+trait DomainHandler {
+    fn on_event(&mut self, ctx: &mut EventContext, event: DomainEvent)
+        -> Result<(), SimulationError>;
+}
+```
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+This is **proposed** API, not current code. Domains schedule future events through context; they cannot move clock backwards. Same-time event priorities are documented: exogenous link-down/expiration before new transmissions, link-up before eligible subsequent transmissions, with a stable sequence tie-breaker. Choose explicit handling for frames already in flight when a link drops; never silently erase packets. Track `injected = delivered + dropped + expired + in_flight` with defined treatment of retransmitted packet copies.
 
-## 3. Internal modules and detailed capabilities
+Choose a deterministic integer-time representation, avoiding accumulation of floating-point seconds in event keys. Physics may use f64 with finite checks and deterministic rounding at event-scheduling boundary. Time-to-wall-clock bridging is **not** enabled in accelerated runs.
 
-### 3.1 虚拟时钟与事件优先级
+## Run lifecycle
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+`CREATED → VALIDATING → READY → RUNNING ↔ PAUSED → COMPLETED / FAILED / CANCELLED`. A run is immutable with respect to compiled scenario; controls such as fault injection are explicit timestamped event commands appended to a separate action log. Checkpoints include event heap, domain state snapshots, RNG stream states, packet store, clock, counters and adapter revisions. Replay verifies hashes against expected sequence.
 
-### 3.2 确定性RNG
+A small experiment can use one Rust executable and precomputed Python ephemeris snapshots; it must not issue remote RPC per packet. For external ns-3, an adapter can produce offline packet trace comparison first; later a single-authority clock coupling requires designed lookahead/barriers. See [runtime design](../design/simulation-runtime.md).
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Contracts and dependencies
 
-### 3.3 场景初始化
+Own `SimulationRun`, `ScenarioManifest`, `VirtualClock`, `ScheduledEvent`, `Checkpoint`, `FaultPlan`. Commands: `CreateRun`, `StartRun`, `PauseRun`, `AdvanceUntil`, `InjectFault`, `CancelRun`, `ReplayRun`. Events: `RunStarted/Paused/Completed/Failed`, `CheckpointCreated`, `FaultApplied`, `EventBudgetExceeded`. Use Rust core with serde only at boundaries; external Python/TypeScript are artifact/API consumers. No general-purpose parallel framework before profiling.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Reliability, performance and acceptance
 
-### 3.4 子系统调度
+Malicious scenario sizes, infinite zero-delay loops, priority starvation, packet queue exhaustion, trace buffer overload, nonfinite RF model output, skipped cancellation, duplicated action and external adapter crash must fail with explicit run status. Set maximum events, simulated duration, objects, heap bytes and trace bytes.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+**Tests:** deterministic same-seed trace checksum; clock never moves backward; stable same-time ordering; causality/packet accounting; state checkpoint and resumed trace equal uninterrupted trace; fault injection at exact virtual timestamp; execution budget prevents infinite cycles. Benchmarks: events/sec, peak event queue size, memory/packet, disk trace throughput, contact preprocessing time and CPU attribution.
 
-### 3.5 事件排序与因果关系
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 暂停/继续/单步
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 故障注入
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 检查点与回放
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 性能基准
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.10 多进程同步策略
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** all-systems, scenarios.
-- **Primary downstream:** all-systems, observability, applications.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 场景启动;事件提交;时钟推进;结果快照.
-
-**Domain events:** `RunStarted`, `EventScheduled`, `FaultInjected`, `CheckpointSaved`, `RunCompleted`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 非确定性排序; 事件风暴; 内存耗尽; 死锁; 跨进程时间漂移.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** Rust自研最小事件引擎;ns-3外部引擎通过桥接.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 相同seed输出一致; 事件先后关系; 百万事件性能基线; 故障可重放.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Build order:** clock/event heap → packet/link primitives → run/scenario lifecycle → fault+trace → checkpoint → profiling/distributed feasibility study.

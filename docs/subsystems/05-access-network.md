@@ -1,127 +1,57 @@
-# SYS-05 — 用户接入网络
+# SYS-05 — User Access Radio Network: Beams, PHY/MAC and Mobility
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** convert viable terminal–satellite RF opportunities into allocated, time-bounded, capacity-limited bidirectional access service. This is the network side of radio access; the terminal owns device state (SYS-04), the subscriber core owns authorization/session (SYS-08), and network control owns multi-link routing (SYS-07).
 
-## 1. Position and mission
+## Internal functional blocks
 
-**Position:** 用户终端至卫星的无线接入控制和传输.
+| Block | Engineering responsibilities |
+|---|---|
+| Spot-beam manager | beam geometry, beam-pointing footprint, satellite/beam mapping, activation and footprint movement |
+| Spectrum manager | carrier bandwidth, polarization, frequency reuse, co-/adjacent-channel interference and regional spectrum constraints |
+| PHY abstraction | EIRP/G/T, path loss, atmospheric loss, Doppler, thermal noise, SINR, MODCOD and BLER/PER mapping |
+| Timing/synchronization | propagation-delay compensation, frame timing, terminal oscillator/timing-error profile |
+| MAC/RRM | per-beam uplink/downlink scheduling, resource allocation, QoS, control overhead, fairness |
+| Network attachment | candidate discovery, resource admission, authentication coordination, radio bearer lifecycle |
+| Mobility controller | handover eligibility, hysteresis/TTT, make-before-break versus break-before-make, beam/satellite switch |
+| Measurement and accounting | per-beam utilization, scheduling grants, radio packet error, attach failures, handover interruption |
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## PHY and propagation mechanics
 
-## 2. Core domain entities
+For each user link derive range, elevation and relative radial velocity from SYS-01, available payload/beam capability from SYS-02, terminal gain/steering from SYS-04 and weather/spectrum constraints from SYS-12.
 
-- `SpotBeam`
-- `Channel`
-- `ResourceBlock`
-- `Attachment`
-- `AccessBearer`
-- `Handover`
+A first-order received power budget:
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+```text
+Pr[dBW] = Pt[dBW] + Gt[dBi] + Gr[dBi]
+        - FSPL[dB] - Latmos[dB] - Lpoint[dB] - Lother[dB]
+FSPL[dB] = 20 log10(4*pi*d/lambda)
+Doppler[Hz] ~= -(v_radial/c) * carrier_hz
+```
 
-## 3. Internal modules and detailed capabilities
+Convert received power to `C/N0` and then `Eb/N0` or SINR using **occupied bandwidth, thermal noise, noise figure, interference and actual allocated resources**. Map SINR to an explicitly selected MCS/MODCOD and BLER reference curve; the Shannon bound may be reported only as a theoretical upper bound. Distinguish aggregate beam downlink/uplink capacities and per-terminal grant rates, subtracting control/framing overhead. A user packet cannot use the full beam rate unless the scheduler actually allocates it.
 
-### 3.1 用户链路上下行预算
+Interference model starts with simplified beam-overlap and spectral-reuse groups, advances to antenna patterns, co-channel and inter-beam coupling. A feasible user-satellite geometry alone does not imply RF coverage, regulatory eligibility or a free scheduling slot.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Admission, MAC and handover algorithms
 
-### 3.2 波束覆盖与赋形近似
+Attachment: `DISCOVERED → RADIO_CANDIDATE → ACQUIRING → ADMISSION_PENDING → ALLOCATED → ACTIVE → HANDOVER_PENDING → RELEASED`. Reject or defer attach on unsupported terminal capability, insufficient resource blocks, invalid regional policy, authentication denial or insufficient link margin.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+P1 MAC: deterministic weighted round-robin with a per-beam frame budget; account packet overhead and terminal queue; fairness and priority are explicit parameters. P2 candidates: proportional fair, max-C/I, deficit round robin and service-class reservations, each compared on throughput, latency and starvation tests.
 
-### 3.3 频率/极化复用
+Handover score may combine measured `SINR_target - SINR_serving`, time-to-contact-end, beam load, steering time, network path latency and eligibility. Apply hysteresis + time-to-trigger to avoid ping-pong. A handover event includes prepare, target reservation, forwarding update, terminal retune/acquisition, final release and service outage timestamps. SYS-08 maintains logical service session independently of radio bearer.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Contracts and ownership
 
-### 3.4 干扰与SINR
+Own `SpotBeam`, `SpectrumChannel`, `ResourcePool`, `RadioBearer`, `Attachment`, `HandoverTransaction`. Consume ephemeris/contacts, spacecraft capability, terminal telemetry, service policy and environment rules. Publish `BeamActivated`, `AdmissionGranted/Denied`, `RadioBearerEstablished`, `HandoverStarted/Completed/Failed`, `BeamCapacityChanged`, `RadioPacketDropped`.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Commands: `RequestAccess`, `ReserveBeamResources`, `ScheduleTraffic`, `PrepareHandover`, `CommitHandover`, `ReleaseBearer`. Queries: beam geometry/capacity and terminal bearer state at revision/time. All rates are directional and packets reference allocated bearer IDs.
 
-### 3.5 PHY调制编码抽象
+## Implementation and external components
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+**Baseline:** Rust simplified RF budget + directional beam queue/scheduler + attachment/handover state machine, with independent unit tests. Python/SYS-01 supplies position/elevation and Doppler inputs. **Protocol fidelity:** evaluate [SNS3](https://github.com/sns3/sns3-satellite) for multi-spot beam, DVB-S2/RCS2 scheduling, error and interference models; [OpenSAND](https://www.opensand.org/overview.html) for interactive satellite broadband packet emulation. These model other documented standards, **not** a verified Starlink waveform. [OpenAirInterface](https://openairinterface.org/) only for an explicitly separate 3GPP NTN profile (current CSSL terms).
 
-### 3.6 MAC调度和资源公平性
+## Required verification
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Radio power and SINR calculation against independent reference values; Doppler sign/units; beam footprint and steering limits; two terminals exceeding shared beam capacity produce constrained grants; weighted fairness and no starvation; interference reduces effective rate; radio blackout/handover causes measurable packet/service interruption; handover does not accidentally re-create an authorized service session. Report beam goodput, scheduled resources, BLER, packet queue delay, attach completion, handover outages and radio coverage.
 
-### 3.7 接入与鉴权协同
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 终端切换
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 多用户竞争与容量
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.10 多普勒与时延补偿模型
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** orbital, spacecraft, terminal, environment, subscriber-core.
-- **Primary downstream:** terminal, network-control, service-assurance.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 波束覆盖查询;终端接入命令;资源需求;承载状态/吞吐报告.
-
-**Domain events:** `BeamActivated`, `AccessGranted`, `AccessDenied`, `HandoverStarted`, `HandoverCompleted`, `HandoverFailed`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 频谱冲突; 资源耗尽; 切换失败; 雨衰; 干扰; 定时同步失败.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** SNS3/ns-3;OpenAirInterface NTN可选独立制式.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 双用户争抢资源公平性; 覆盖边缘切换; SINR降低时MCS与吞吐变化.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Milestones:** analytic RF/link budget → deterministic beam scheduler → admission/session coordination → handover → external protocol comparison.

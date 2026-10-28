@@ -1,127 +1,42 @@
-# SYS-09 — 地面骨干网与互联网出口
+# SYS-09 — Terrestrial Backhaul, PoPs, IP Routing and Internet Edge
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** model what happens **after feeder radio termination**: ground transport, point of presence, core-facing traffic anchors and internet connectivity. A feeder station and a public-facing PoP are separate entities, even if physically colocated.
 
-## 1. Position and mission
+## Component design
 
-**Position:** 地面传输、PoP和公网互联.
+| Component | Detailed scope |
+|---|---|
+| Backhaul topology | directed fiber/microwave/leased-line links, geographical lengths, capacity, failure domains and costs |
+| PoP inventory | regional PoPs, router interfaces, service anchors, ingress/egress capacities and operational policies |
+| Packet routing | IPv4/IPv6 FIB, prefixes, BGP/IGP convergence model, default route, routing policy and asymmetric return paths |
+| Internet edge | peer/transit/sink selection, synthetic RTT endpoints and congestion from external traffic |
+| Address translation | optional IPv4 CGNAT, state-table caps, mapping lifecycle/timeouts, errors; IPv6 routing without NAT by default |
+| DNS/control services | resolvers and cached queries as modeled service dependencies, not magical global reachability |
+| Backhaul scheduler | serialization/propagation/queue delay, limited bandwidth, burst/drop and traffic classes |
+| Real-IP adapter | netns/veth, Linux routing, FRRouting, packet capture and end-host applications |
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Engineering implementation
 
-## 2. Core domain entities
+Represent ground site `GroundSiteId` and network `PopId` separately with a `BackhaulLinkId` and explicit directed edge. Compute terrestrial propagation from length and effective velocity (e.g. fiber refractive propagation with configurable speed, **not vacuum c**); add serialization, processing, congestion and queuing. A colocated ground station still traverses an explicitly modeled zero-distance or local-backhaul resource, not an implicit network shortcut.
 
-- `PoP`
-- `BackhaulLink`
-- `Router`
-- `InternetEdge`
-- `NATState`
-- `DNSServer`
+A forwarding stage performs route lookup and decrements hop budget; egress policy and service session must authorize the flow. Simulate default IPv6 path as an address/prefix allocation from SYS-08 plus PoP routing; optional IPv4 CGNAT requires capacity-limited mapping tuples and return state. Traffic destination may be an idealized remote server, a modeled WAN transit graph, or a real IP endpoint in emulation mode. Mark which model is used.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+Routing control in SYS-07 may choose PoP/path intentions; SYS-09 owns actual terrestrial link/router state. If using FRRouting in emulation, observe BGP/OSPF/BFD control reconvergence and do not additionally apply an instant synthetic FIB update. Treat paths for uplink and downlink independently, with session anchoring and path symmetry as explicit policies.
 
-## 3. Internal modules and detailed capabilities
+## Interfaces
 
-### 3.1 地面站到PoP回程
+Own `BackhaulLink`, `Pop`, `EdgeRouter`, `InternetEndpoint`, `NATBinding`, `DnsRecord` and transport queue. Commands: `ConfigurePopRoute`, `SetBackhaulState`, `SetEgressPolicy`, `InjectInternetTraffic`. Events: `BackhaulCongested`, `BackhaulLost`, `PopDegraded`, `EgressRouteChanged`, `NATResourceExhausted`, `InternetPacketDelivered`. Inputs: SYS-06 feeder handoff, SYS-07 policy/route plan, SYS-08 service session/address and SYS-11 security policy.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Packet paths must record **Ground Station → terrestrial hop(s) → PoP → destination**, allowing independent failure diagnosis and delay decomposition.
 
-### 3.2 地面骨干链路
+## Dependencies and runtime
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+P1 Rust typed link graph and packet forwarder for deterministic runs. P3 Linux netns/veth/tc/netem and [FRRouting](https://frrouting.org/) as a dedicated privileged/emulation adapter to test real BGP/OSPF/IPv6 behavior. DNS or web endpoints can be small synthetic application workers. Do not simulate enormous global internet BGP tables unless the scenario explicitly requires them.
 
-### 3.3 IP路由与BGP抽象
+## Failures, measurement and acceptance
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Backhaul cut, congestion, PoP outage, routing loop/blackhole, IP address conflict, NAT table exhaustion, DNS timeout, internet sink failure and one-way reachability. Each has a distinct drop/event reason; SYS-07 must be informed for gateway/PoP reselection.
 
-### 3.4 互联网出口选择
+**Tests:** feeder remains UP while backhaul outage causes user service failure; alternate PoP selected after measured delay; IPv6 packet egress and reverse path; IPv4 NAT state life cycle and timeout; route change does not teleport packets; queue occupancy and loss agree with finite capacity. Metrics include PoP load, goodput, backhaul latency, packet drops, NAT bindings, egress route convergence and end-to-end RTT.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.5 IPv6优先与IPv4 CGNAT选项
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 DNS解析模型
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 拥塞队列
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 多PoP故障
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 流量进出方向
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.10 服务端点
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** ground-segment, network-control, subscriber-core.
-- **Primary downstream:** service-assurance, operations, emulation.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 地面站流量输入;PoP路由配置;互联网目的地与回包.
-
-**Domain events:** `BackhaulUp`, `BackhaulCongested`, `PoPUnavailable`, `EgressPathChanged`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 回程拥塞; BGP收敛; NAT状态失效; 出口不可用; DNS故障.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** FRRouting;Linux netns/veth/tc;常见DNS服务.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 终端双向访问internet sink; 出口故障切换; NAT/IPv6路径可观测.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Build order:** terrestrial link and PoP graph → synthetic IP forwarding → IPv6/IPv4 edge policy → failure/congestion → optional FRR and real IP.

@@ -1,123 +1,42 @@
-# SYS-03 — 星间通信与星上转发
+# SYS-03 — Optical Inter-Satellite Links and Onboard Packet Network
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** model usable satellite-to-satellite optical links, onboard forwarding, buffers and transmission. **Not responsible** for orbital propagation (SYS-01), globally optimal route selection (SYS-07) or terminal access (SYS-05).
 
-## 1. Position and mission
+## Internal components
 
-**Position:** 卫星之间的传输和星上数据平面.
+1. **ISL contact candidate filter:** consume geometry/spacecraft capability; select line-of-sight endpoints and enforce optical-head count, orientation, max range and Earth occlusion.
+2. **Pointing, acquisition and tracking (PAT):** explicit `UNAVAILABLE → CANDIDATE → SLEWING → ACQUIRING → TRACKING → DEGRADED → LOST` state machine. Acquisition delay and reacquisition are not zero.
+3. **Optical link model:** range, aperture, beam divergence, transmitter optical power, pointing loss, detector sensitivity/background, error and effective bitrate. Do not substitute Ka-band RF MCS.
+4. **Link capacity scheduler:** directional capacity and reservations, half-/full-duplex assumption, time-window expiry and resource conflicts.
+5. **Satellite forwarding engine:** per-node FIB, next-hop validity, TTL/hop budget, packet processing delay, route revision and failure handling.
+6. **Finite packet queues:** link-specific FIFO baseline, byte caps, optional priority/weighted fair queue, drop-tail and queue accounting.
+7. **ISL telemetry:** acquired state, goodput, bit/packet loss, queue occupancy, reconfiguration and route lookup errors.
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Technical and algorithm details
 
-## 2. Core domain entities
+Geometric feasibility requires an unoccluded satellite–satellite segment and suitable slew/pointing capability. Then PAT must complete and transceiver resources be reserved before `ISL_UP`. The controller may request a link, but SYS-03 owns the final acquired state and reports `ISL_DOWN` on loss of tracking. A contact expires at its planned boundary even if packets remain queued; define transmit-in-flight behavior.
 
-- `ISLTerminal`
-- `OpticalLink`
-- `PATState`
-- `Contact`
-- `ForwardingTable`
-- `PacketQueue`
+For packet hop `A→B`, compute `t_tx = ceil(8·size_bytes / bitrate_bps × 1e9)`, geometric `t_prop = round(distance_m / c × 1e9)`, node processing and queue delay; channel loss follows a labeled deterministic/error model with a seeded RNG. Link state and packet arrival events must be ordered with a reproducible precedence rule. If a link changes mid-transmission, specify whether frames finish, are aborted, or are retransmitted by another layer.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+A valid route entry is owned and installed through SYS-07, but the actual packet forwarding lookup, checksum/TTL handling and queue drop belong here. Intermediate satellite forwarding needs an explicit regenerative/packet-capable payload profile. No global shared routing table updated implicitly by geometry.
 
-## 3. Internal modules and detailed capabilities
+## Data model and contracts
 
-### 3.1 光链路LOS与遮挡
+Entities: `OpticalTerminalId`, `IslLinkId` (directed), `PatSession`, `TxReservation`, `PacketQueue`, `ForwardingTableRevision`. Input events: `ContactCandidateAvailable` (SYS-01), `PayloadResourceChanged` (SYS-02), `InstallForwardingRules` (SYS-07). Output events: `IslAcquisitionStarted`, `IslLinkEstablished`, `IslLinkLost`, `QueueOverflow`, `PacketForwarded`, `PacketDropped`.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Queries: `GetUsableLinks(at_time)`, `GetQueueMetrics(link_id)`, `GetForwardingState(node_id,revision)`. Commands: `AcquireIsl`, `ReleaseIsl`, `InstallRoutes`; reject requests beyond contact expiry, terminal availability or resource constraints. Use [canonical messages](../design/contracts.md).
 
-### 3.2 指向捕获跟踪PAT状态机
+## Dependencies and accuracy
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+**P1:** pure Rust modeled PAT/queue/forwarding under SYS-14 virtual clock; Python/SYS-01 provides batched geometry. **Later:** [ns-3](https://www.nsnam.org/) or [SNS3](https://github.com/sns3/sns3-satellite) packet/protocol comparison and research optical model evaluation. SNS3 ISL functionality is not equivalent to a verified commercial laser modem; validate scope before use. External stacks are separate adapters with versioned trace contracts and GPL review.
 
-### 3.3 链路建立/保持/释放
+## Verification and adverse cases
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+- Two satellites clear LOS but PAT unacquired: **no data-plane route is usable**.
+- Same link with greater range yields larger propagation delay; atmospheric RF equations never used for vacuum optical hop.
+- Optical terminal conflict correctly rejects second simultaneous exclusive link.
+- Failed link invalidates FIB next hop, triggers control update and accounts for packets queued/in flight.
+- Full queue produces deterministic drop reason; byte-level accounting reconciles.
+- Validate PHY/PAT approximations against public link-budget references, with assumption/tolerance table.
 
-### 3.4 光链路预算与容量
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.5 传播时延与误码抽象
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 星上队列/缓存/转发
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 下一跳规则执行
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 故障与恢复
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 星间链路调度约束
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** orbital, spacecraft, network-control, environment.
-- **Primary downstream:** network-control, service-assurance, simulation.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 可用接触窗口;链路建连命令;转发表更新;链路统计查询.
-
-**Domain events:** `ISLContactAvailable`, `ISLAcquiring`, `ISLUp`, `ISLDown`, `PacketForwarded`, `QueueOverflow`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** PAT失败; 短暂遮挡; 容量不足; 星上队列溢出; 控制规则过期.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** ns-3/SNS3模型评估;开源光通信链路预算模型评估.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 双星链路建连时序; 多跳传播时延; 故障触发丢包与路由恢复.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Build order:** directed link abstraction → finite queues and trace → PAT state machine → control-plane FIB install → fault and contact-window expiration → optional protocol validation.

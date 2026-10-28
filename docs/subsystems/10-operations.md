@@ -1,126 +1,35 @@
-# SYS-10 — 网络运营与任务控制
+# SYS-10 — Network Operations Center and Space Mission Operations
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** enable operational supervision and auditable human/automation actions across the satellite fleet and network, not replace domain owners' control algorithms or the simulator's virtual clock.
 
-## 1. Position and mission
+## Operational components
 
-**Position:** 卫星和网络运营操作中心.
+1. **Telemetry ingestion:** spacecraft health, payload availability, station and feeder status, link/route revisions, user service impact and platform run metrics.
+2. **Alarm and incident service:** stateful alarm rules, severity, suppression/correlation, impact estimation, incident opening/escalation/closure.
+3. **Fleet operations:** commission/retire/safe-mode spacecraft, payload reset and maintenance workflows through the spacecraft domain.
+4. **Network operations:** operational constraints, gateway maintenance, approved route policies, beam/site reconfiguration via SYS-05/06/07.
+5. **Command workflow:** operator intent, authenticated authorization, policy validation, optional two-person approval, scheduled execution, acknowledgment and audit.
+6. **Capacity and planning:** per-region demand, station saturation, beam utilization, ISL topology incidents, service impact reports.
+7. **Operations console:** read-only situational view by default; execution commands are explicit actions with run ID and time.
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## State machines and execution
 
-## 2. Core domain entities
+An alarm is `CLEAR → FIRING → ACKNOWLEDGED → RESOLVING → CLEARED`, with severity, source evidence, count and deduplication key. An incident is `OPEN → TRIAGED → MITIGATING → MONITORING → RESOLVED`. Operator commands are `REQUESTED → AUTHORIZED → APPROVED → SCHEDULED → APPLIED/REJECTED → AUDITED`. In a simulated experiment, issuance and acknowledgment occur at **simulated timestamps**; UI arrival is wall time and must not move the virtual clock without an explicit command.
 
-- `FleetDashboard`
-- `Alarm`
-- `Incident`
-- `OperatorCommand`
-- `ChangePlan`
+Example payload disable: controller/operator requests operation; SYS-11 validates authority; SYS-10 logs approval; SYS-02 changes payload state; SYS-03/05/06 lose associated links; SYS-07 recomputes routes; SYS-13 measures service disruption; SYS-16 archives cause chain. The operations service **must not mutate link tables directly**.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+## Interfaces and stored entities
 
-## 3. Internal modules and detailed capabilities
+Own `Alarm`, `Incident`, `OperatorAction`, `ChangePlan`, `MaintenanceWindow` and operation history. Consume event/traces from all systems and SYS-13 service assurance. Commands: `AcknowledgeAlarm`, `RequestOperationalAction`, `ApproveChange`, `ScheduleMaintenance`, `CloseIncident`. Events: `AlarmRaised`, `IncidentOpened`, `ActionApproved/Rejected`, `ChangeApplied`, `IncidentResolved`.
 
-### 3.1 NOC告警聚合
+Command record requires actor/role, target, expected target revision, justification, approval decision, simulated effective time, result and audit hash. Duplicate action IDs cannot execute twice.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## OSS and implementation
 
-### 3.2 星座健康视图
+P3 Rust operational state machines and event-correlation rules, TypeScript NOC console and metrics. [Prometheus](https://prometheus.io/), [Grafana](https://grafana.com/) and [OpenTelemetry](https://opentelemetry.io/) for standard observability conventions; [Yamcs](https://yamcs.org/) can be evaluated for mission telemetry/command workflow experiments, not taken as evidence of actual satellite integration. Historical/archived experiment events may be re-indexed without treating them as current live alarms.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Faults, security and verification
 
-### 3.3 任务/卫星遥测
+Alarm storm, late telemetry, partial state, failed/duplicated command, permission denial, missing approval, contradictory configuration and false-positive incident. Audit must preserve cause and operator intent.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.4 站点和网络配置管理
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.5 故障分级
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 人工审批和命令下发
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 维护窗口
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 容量规划
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 事件审计
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.10 运行报告
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** spacecraft, network-control, ground-segment, observability, security.
-- **Primary downstream:** spacecraft, network-control, ground-segment, service-assurance.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 遥测订阅;命令审批与执行;告警规则;事故查询.
-
-**Domain events:** `AlarmRaised`, `IncidentOpened`, `CommandApproved`, `ChangeApplied`, `IncidentClosed`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 错误操作; 遥测延迟; 重复命令; 审批绕过; 告警风暴.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** Prometheus/Grafana;Yamcs可选任务控制参考.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 卫星禁用命令可审计; 告警关联服务影响; 故障注入可恢复.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Acceptance:** one payload fault creates coherent alarm and packet service impact; denied command leaves spacecraft untouched; repeated command ID is idempotent; maintenance takes feeder site offline only at scheduled time; incident resolves after verified downstream recovery. Metrics: mean time to detect/restore, false alarms, command latency, audit completeness and affected subscriber count.

@@ -1,26 +1,48 @@
-# End-to-end system scenarios and acceptance matrix
+# Cross-subsystem scenario catalog and acceptance
 
-An end-to-end system is only credible when its subsystem boundaries are exercised by reproducible experiments. Each scenario records a deterministic seed, versioned inputs, model provenance, fidelity profile, and machine-readable traces.
+Every scenario is a **reproducible engineering experiment** with scenario/schema revision, epoch, units, fixed seed, fidelity profile, model provenance, named actors, fault schedule, expected invariants and machine-readable packet/event traces.
 
-| Scenario | Participating systems | Minimum measurable acceptance |
-|---|---|---|
-| E2E-01 Basic internet | terminal, access, satellite, ISL, feeder ground, subscriber core, backbone, orchestrator | packet reaches sink; per-hop delay, queue, loss and path trace recorded |
-| E2E-02 Moving satellite / handover | orbital, spacecraft, access, terminal, network control | attachment changes with predicted visibility; outage and dropped packets measured |
-| E2E-03 ISL failure and reroute | ISL, network control, packet simulation, operations | fault changes graph, route reconverges, loss and recovery time measured |
-| E2E-04 Gateway outage | ground, network control, backbone, subscriber core | reroute or explicit service loss; session impact measured |
-| E2E-05 Rain fade / interference | environment, RF access, ground, assurance | degradation tied to modeled link budget and weather inputs |
-| E2E-06 Capacity saturation | beams, ISL, queues, backbone, assurance | throughput, scheduling fairness, queueing and congestion observable |
-| E2E-07 Cross-border service | regulatory, terminal, access, subscriber core | service eligibility changes according to scenario policy |
-| E2E-08 Mission operations | spacecraft, operations, security, orbital | operator command audited; payload state affects available network links |
-| E2E-09 IP emulation | network emulation, ground/backbone, network control | real ping/iperf traffic crosses changing virtual links with reproducible impairments |
-| E2E-10 NTN profile (optional) | NTN access, core adapter, satellite transport | explicitly versioned 3GPP profile, independent of broadband default |
+| Case | Subsystems | Input and action | Mandatory evidence / pass criteria |
+|---|---|---|---|
+| E2E-01 Broadband cold start | 01/02/03/04/05/06/07/08/09/14 | terminal boots, attaches, authorizes, sends packet via A–B ISL and ground/PoP | end-to-end delivery; ordered events; measured per-hop delay, queue and session state; no zero-time teleportation |
+| E2E-02 Mobility handover | 01/02/04/05/07/08/13 | satellite visibility and beam load change over time | terminal and network state transitions agree; counted downtime; same logical service session preserved when configured |
+| E2E-03 ISL reroute | 03/07/14/13 | fail primary ISL mid-traffic | topology revision, route installation delay, alternate feasible route or explicit outage, no route loop |
+| E2E-04 Feeder outage | 06/07/08/09/13 | ground site loses feeder or terrestrial backhaul | distinct feeder-vs-backhaul diagnosis, gateway reselection and service impact |
+| E2E-05 Radio rain fade | 05/06/12/13 | controlled weather cell moves over feeder/user beam | reproducible attenuation, capacity/MCS outcome and throughput/loss change |
+| E2E-06 Capacity saturation | 03/05/09/13/14 | oversubscribe beam, ISL or PoP link | finite queue, drop reason, fairness/QoS summary, conservation of packet accounting |
+| E2E-07 Country/service policy | 04/05/08/11/12 | terminal moves into prohibited service zone | authorization/access denial at correct owner, audit and explicit failure reason |
+| E2E-08 Spacecraft anomaly | 02/03/07/10/11 | authorized operator disables payload | audited command, downstream link loss and route change, mission alarm |
+| E2E-09 Real-IP network | 07/09/14/15/16 | linux netns traffic across time-varying impaired link | successful ping/iperf with measured delay/loss and clean teardown |
+| E2E-10 Replay and provenance | all/14/16 | run twice with same inputs and seed; change a single parameter | identical trace hash for equal inputs; explicit differences and versioned manifest otherwise |
+| E2E-11 Orbital validation | 01/02/12 | reference TLE/epoch and WGS84 ground site | frame conversion verified against golden cases, contact windows geometrically feasible |
+| E2E-12 Optional NR NTN | 04/05/08/15 | separate NTN configuration and external OAI/Open5GS stack | protocol-specific observability and license provenance, never asserted as baseline Starlink broadband |
 
-## Delivery gates
+## Experiment manifest minimum
 
-- **G0 — architecture baseline**: catalog, boundaries, contracts, scenarios and owner per subsystem (documentation only).
-- **G1 — first vertical slice**: E2E-01 on deterministic virtual clock, with actual packet events and assertions.
-- **G2 — physics-informed**: E2E-02, E2E-03 with validated orbit and RF/ISL assumptions.
-- **G3 — network realism**: E2E-04 through E2E-06 and IP emulation.
-- **G4 — integrated platform**: web observability, scenario authoring, provenance, scaling and optional NTN/HIL.
+```json
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "e2e-01",
+  "run_id": "run-e2e-01",
+  "seed": 42,
+  "epoch_utc": "2026-10-29T00:00:00Z",
+  "duration_ns": 120000000000,
+  "fidelity_profile": "L1_DISCRETE_EVENT",
+  "model_versions": {"orbital": "static-fixture-v1", "rf": "budget-v1"},
+  "inputs_sha256": "...",
+  "engine_git_sha": "..."
+}
+```
 
-Passing G0 does not mean any of the simulated subsystems is implemented.
+## General acceptance invariants
+
+- A transmitted packet is accounted as delivered, explicitly dropped/expired or still in-flight—not silently lost.
+- An event cannot occur before its causal prerequisite; source and sink network states are coherent.
+- Every link and hop exists, is authorized and available at the event's simulation time.
+- Propagation and serialization delays are nonnegative and unit-correct; queue sizes cannot exceed declared limits.
+- Trace output and aggregate counters reconcile; failure injection produces deterministic results.
+- L0 analytic-only experiments may **not** claim packet loss or throughput measured from actual packets.
+
+## Development and review workflow
+
+A subsystem change requires: its contract change (if any), owner and dependent references, unit/contract tests, at least one integration scenario, deterministic outputs and telemetry, performance notes and an external dependency/license decision if used. Preserve failure fixtures as regression tests.

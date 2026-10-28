@@ -1,127 +1,44 @@
-# SYS-16 — 数据、可观测与可视化
+# SYS-16 — Data Platform, Observability, Experiment Artifacts and Visualization
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** provide an inspectable, reproducible record of physics/network behavior and a human interface for experiments. Visualization is a **projection** of authoritative subsystem state, never the simulation engine's truth source.
 
-## 1. Position and mission
+## Functional components
 
-**Position:** 跨系统数据证据、分析和操作入口.
+1. **Schema and artifact registry:** versioned scenario, orbital input, domain event and packet-trace schemas with provenance and compatibility checks.
+2. **Event/trace ingest:** append-only per-run structured event log, packet and causation correlation, event index by time/actor/flow.
+3. **Metrics/aggregation:** per-link capacity, RSS/SINR/BLER, queue, handover, RTT/loss/throughput and service availability rollups.
+4. **Experiment artifact store:** run manifest, inputs and hashes, snapshot/checkpoint metadata, raw logs, PCAP, optional Parquet/Arrow and reports.
+5. **Query/stream API:** read-only snapshots and time-range queries; WebSocket/SSE timeline at bounded sampling and backpressure.
+6. **3D constellation frontend:** CesiumJS Earth/WGS84 positions, orbit traces, ground sites, spot beam footprints, directional ISL/feeder/user links and status.
+7. **Experiment control UI:** scenario editor/validator, run launch/pause/replay, permitted fault injection and playback speed; user intent goes through domain-aware APIs.
+8. **Comparative analysis:** baseline vs run differences, failure timelines, metrics by shell/region/ground site/flow and raw-data download.
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Data design and scaling
 
-## 2. Core domain entities
+Every artifact is keyed by `run_id` and version and has a content hash and fidelity/model provenance. Domain event envelopes follow [canonical contracts](../design/contracts.md); packet traces additionally capture each hop's link ID, queue delay, propagation, route revision, loss reason and direction. Telemetry carries source simulated time and wall ingest time separately.
 
-- `Schema`
-- `Trace`
-- `Metric`
-- `Artifact`
-- `ExperimentReport`
-- `VisualizationView`
+Start with deterministic JSONL events and JSON scenario manifests. For large runs use columnar Parquet/Arrow partitions by run/time/event domain with schema evolution rules. Index common queries (`run_id`, `sim_time_ns`, `trace_id`, `satellite_id`) without putting packet IDs into Prometheus labels. Use OpenTelemetry tracing conventions for causal relationships and Prometheus for aggregate metrics. Sampling drops must be disclosed in the artifact manifest; never report an incomplete trace as an exhaustive packet accounting proof.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+For the browser, **do not stream millions of raw packet events to React**. Serve viewport/time-bucket summaries, downsample constellation traces, progressively load visible links and packet journeys, use stable entity IDs and GPU-friendly Cesium primitives. Translate frame-tagged ephemeris positions to WGS84 Earth-fixed coordinates at a declared epoch; do not draw TEME xyz as terrestrial positions.
 
-## 3. Internal modules and detailed capabilities
+## UI behavior and commands
 
-### 3.1 版本化场景与事件schema
+Principal screens: 3D globe; satellite/contact inspector; beam/terminal map; network graph; packet path and per-hop delay trace; run/event timeline; resource/health panel; experiment comparison and artifact export. Controls are read-only except explicit scenario/run actions. Web control requests go through secure run/orchestration API; UI does not directly mutate satellite, route or core session state.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Entities and interfaces
 
-### 3.2 链路/包/会话trace
+Own `ArtifactManifest`, `StoredTrace`, `MetricDefinition`, `TimelineProjection`, `ExperimentReport`, `DashboardState`. APIs: `CreateRunVisualization`, `ListArtifacts`, `GetSnapshotAtTime`, `QueryPacketJourney`, `StreamRunDeltas`, `CompareRuns`, `ExportRawData`. Events: `ArtifactPersisted`, `MetricRollupReady`, `ReportPublished`, `DataGapDetected`.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Consume all subsystem events and SYS-14 runner lifecycle; operator actions depend on SYS-10/11. Observability system may request replay but cannot mint fictitious physical state changes.
 
-### 3.3 指标聚合
+## Dependencies and deployment
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+React/TypeScript and [CesiumJS](https://cesium.com/platform/cesiumjs/) (Apache-2.0) for the UI; Prometheus, OpenTelemetry and Grafana candidates for metrics/trace collection. Python optional for post-run plots and numerical analysis. External map tiles and Cesium ion services can carry different asset terms; prefer reproducible offline/sample assets where tests require deterministic rendering. Avoid forcing a database or high-throughput streaming system before profiling.
 
-### 3.4 实验结果存档
+## Failure conditions and verification
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Event out of order, missing source data, incompatible schema, giant trace download, stale live view, wrong frame conversion, browser GPU limitation, canceled run, aggregate/raw count mismatch and report generation failure. Mark partial data and provide error reason.
 
-### 3.5 原始数据下载
+**Tests:** packet trace drill-down reconstructs hop path, time and drop reason; globe positions match frame-converted reference; snapshot at time t is consistent with events ≤t; same manifest exports same hash; large-run view remains bounded by time/viewport; missing metrics show “unknown” not fabricated zero. KPIs: ingestion lag, lost event count, query latency, browser update time, artifact integrity and replay parity.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 星座三维地图
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 波束覆盖与链路动画
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 时间轴重放
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 实验对比
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.10 可视化操作命令
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** all-systems, simulation, emulation.
-- **Primary downstream:** operations, service-assurance, applications.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 事件/指标摄取;运行数据查询;UI控制命令;报告导出.
-
-**Domain events:** `TraceRecorded`, `MetricPublished`, `ArtifactStored`, `ExperimentReportReady`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 数据丢失; 高基数指标; 事件乱序; 错误地理坐标; 版本不兼容.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** CesiumJS;React/TypeScript;OpenTelemetry;Prometheus;Grafana;Parquet.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 包路径可追踪; 时间轴重放; 跨版本schema兼容; 原始数据可下载.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Build order:** structured trace + artifact manifest → query API → packet journey view → Cesium globe/contact replay → scenario controls and comparisons.
