@@ -20,15 +20,28 @@ pub struct Scenario {
 
 impl Scenario {
     pub fn validate(&self) -> Result<(), String> {
-        if self.name.trim().is_empty() { return Err("scenario name required".into()); }
+        if self.name.trim().is_empty() {
+            return Err("scenario name required".into());
+        }
         if self.satellites.is_empty() || self.terminals.is_empty() || self.gateways.is_empty() {
             return Err("scenario needs satellites, terminals and gateways".into());
         }
         let mut ids = HashSet::new();
-        for node in self.satellites.iter().chain(&self.terminals).chain(&self.gateways) {
-            if node.id.trim().is_empty() { return Err("node id required".into()); }
-            if !ids.insert(&node.id) { return Err(format!("duplicate node id: {}", node.id)); }
-            if !(-90.0..=90.0).contains(&node.latitude) || !(-180.0..=180.0).contains(&node.longitude) {
+        for node in self
+            .satellites
+            .iter()
+            .chain(&self.terminals)
+            .chain(&self.gateways)
+        {
+            if node.id.trim().is_empty() {
+                return Err("node id required".into());
+            }
+            if !ids.insert(&node.id) {
+                return Err(format!("duplicate node id: {}", node.id));
+            }
+            if !(-90.0..=90.0).contains(&node.latitude)
+                || !(-180.0..=180.0).contains(&node.longitude)
+            {
                 return Err(format!("invalid coordinates for {}", node.id));
             }
         }
