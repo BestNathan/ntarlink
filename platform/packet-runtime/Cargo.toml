@@ -1,0 +1,10 @@
+[package]
+name = "ntarlink-packet-runtime"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+ntarlink-contracts = { path = "../contracts" }
+ntarlink-simulation = { path = "../simulation" }
+ntarlink-network-control = { path = "../../systems/network-control" }
+serde = { version = "1", features = ["derive"] }

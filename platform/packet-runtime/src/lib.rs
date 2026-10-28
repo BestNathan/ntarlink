@@ -1,0 +1,442 @@
+use ntarlink_contracts::{LinkAction, Scenario};
+use ntarlink_network_control::next_hops;
+use ntarlink_simulation::Scheduler;
+use serde::Serialize;
+use std::collections::{HashMap, VecDeque};
+
+const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PacketStatus {
+    Delivered,
+    Dropped,
+    InFlight,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HopTrace {
+    pub link_id: String,
+    pub from: String,
+    pub to: String,
+    pub enqueued_ns: u64,
+    pub transmit_started_ns: u64,
+    pub transmit_completed_ns: u64,
+    pub arrived_ns: u64,
+    pub queue_delay_ns: u64,
+    pub serialization_ns: u64,
+    pub propagation_ns: u64,
+    pub processing_ns: u64,
+    pub route_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PacketTrace {
+    pub packet_id: String,
+    pub flow_id: String,
+    pub injected_ns: u64,
+    pub completed_ns: Option<u64>,
+    pub status: PacketStatus,
+    pub drop_reason: Option<String>,
+    pub hops: Vec<HopTrace>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ControlEvent {
+    pub at_ns: u64,
+    pub kind: String,
+    pub link_id: Option<String>,
+    pub route_revision: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct SimulationReport {
+    pub scenario: String,
+    pub fidelity: String,
+    pub duration_ns: u64,
+    pub processed_events: u64,
+    pub route_revision: u64,
+    pub injected: usize,
+    pub delivered: usize,
+    pub dropped: usize,
+    pub packets: Vec<PacketTrace>,
+    pub control_events: Vec<ControlEvent>,
+}
+
+enum Event {
+    Inject { flow: usize, ordinal: u32 },
+    Arrive { packet: usize, node: String },
+    Fault { index: usize },
+    InstallRoutes,
+}
+
+struct PacketRecord {
+    flow: usize,
+    trace: PacketTrace,
+}
+
+#[derive(Default)]
+struct LinkRuntime {
+    up: bool,
+    transmitter_free_ns: u64,
+    bytes_in_queue: u64,
+    pending_tx: VecDeque<(u64, u64)>,
+}
+
+struct Runtime<'a> {
+    scenario: &'a Scenario,
+    links: Vec<LinkRuntime>,
+    routes: Vec<HashMap<String, usize>>,
+    route_revision: u64,
+    packets: Vec<PacketRecord>,
+    control_events: Vec<ControlEvent>,
+}
+
+impl<'a> Runtime<'a> {
+    fn new(scenario: &'a Scenario) -> Self {
+        let links = scenario
+            .links
+            .iter()
+            .map(|l| LinkRuntime {
+                up: l.up,
+                ..LinkRuntime::default()
+            })
+            .collect();
+        let mut runtime = Self {
+            scenario,
+            links,
+            routes: Vec::new(),
+            route_revision: 0,
+            packets: Vec::new(),
+            control_events: Vec::new(),
+        };
+        runtime.install_routes(0);
+        runtime
+    }
+
+    fn install_routes(&mut self, at_ns: u64) {
+        let available: Vec<bool> = self.links.iter().map(|l| l.up).collect();
+        self.routes = self
+            .scenario
+            .flows
+            .iter()
+            .map(|flow| {
+                next_hops(
+                    &self.scenario.links,
+                    &available,
+                    &flow.destination,
+                    flow.packet_size_bytes,
+                )
+            })
+            .collect();
+        self.route_revision += 1;
+        self.control_events.push(ControlEvent {
+            at_ns,
+            kind: "routes_installed".into(),
+            link_id: None,
+            route_revision: self.route_revision,
+        });
+    }
+
+    fn inject(
+        &mut self,
+        at_ns: u64,
+        flow_index: usize,
+        ordinal: u32,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        let flow = &self.scenario.flows[flow_index];
+        let packet_index = self.packets.len();
+        self.packets.push(PacketRecord {
+            flow: flow_index,
+            trace: PacketTrace {
+                packet_id: format!("{}:{}", flow.id, ordinal),
+                flow_id: flow.id.clone(),
+                injected_ns: at_ns,
+                completed_ns: None,
+                status: PacketStatus::InFlight,
+                drop_reason: None,
+                hops: Vec::new(),
+            },
+        });
+        events.schedule(
+            at_ns,
+            20,
+            Event::Arrive {
+                packet: packet_index,
+                node: flow.source.clone(),
+            },
+        )
+    }
+
+    fn drop_packet(&mut self, index: usize, at_ns: u64, reason: &str) {
+        let packet = &mut self.packets[index].trace;
+        packet.status = PacketStatus::Dropped;
+        packet.drop_reason = Some(reason.to_owned());
+        packet.completed_ns = Some(at_ns);
+    }
+
+    fn arrive(
+        &mut self,
+        at_ns: u64,
+        packet_index: usize,
+        node: String,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        let flow_index = self.packets[packet_index].flow;
+        let flow = &self.scenario.flows[flow_index];
+        if node == flow.destination {
+            self.packets[packet_index].trace.status = PacketStatus::Delivered;
+            self.packets[packet_index].trace.completed_ns = Some(at_ns);
+            return Ok(());
+        }
+        let Some(&link_index) = self.routes[flow_index].get(&node) else {
+            self.drop_packet(packet_index, at_ns, "no_route");
+            return Ok(());
+        };
+        if !self.links[link_index].up {
+            self.drop_packet(packet_index, at_ns, "link_unavailable");
+            return Ok(());
+        }
+        let link = &self.scenario.links[link_index];
+        let state = &mut self.links[link_index];
+        while state
+            .pending_tx
+            .front()
+            .is_some_and(|(completed, _)| *completed <= at_ns)
+        {
+            let (_, bytes) = state.pending_tx.pop_front().expect("front exists");
+            state.bytes_in_queue -= bytes;
+        }
+        let size = flow.packet_size_bytes;
+        if size > link.queue_limit_bytes.saturating_sub(state.bytes_in_queue) {
+            self.drop_packet(packet_index, at_ns, "queue_overflow");
+            return Ok(());
+        }
+        let start_ns = at_ns.max(state.transmitter_free_ns);
+        let bits_ns = u128::from(size) * 8 * 1_000_000_000;
+        let serialization_ns =
+            u64::try_from(bits_ns.div_ceil(u128::from(link.capacity_bps)))
+                .map_err(|_| "serialization time exceeds u64".to_owned())?;
+        let completed_ns = start_ns
+            .checked_add(serialization_ns)
+            .ok_or("transmission time overflow")?;
+        let arrived_ns = completed_ns
+            .checked_add(link.propagation_delay_ns)
+            .and_then(|t| t.checked_add(link.processing_delay_ns))
+            .ok_or("packet arrival time overflow")?;
+        if arrived_ns >= self.scenario.duration_ns {
+            self.drop_packet(packet_index, at_ns, "simulation_horizon");
+            return Ok(());
+        }
+        state.pending_tx.push_back((completed_ns, size));
+        state.bytes_in_queue += size;
+        state.transmitter_free_ns = completed_ns;
+        self.packets[packet_index].trace.hops.push(HopTrace {
+            link_id: link.id.clone(),
+            from: link.from.clone(),
+            to: link.to.clone(),
+            enqueued_ns: at_ns,
+            transmit_started_ns: start_ns,
+            transmit_completed_ns: completed_ns,
+            arrived_ns,
+            queue_delay_ns: start_ns - at_ns,
+            serialization_ns,
+            propagation_ns: link.propagation_delay_ns,
+            processing_ns: link.processing_delay_ns,
+            route_revision: self.route_revision,
+        });
+        // P0 completion policy: transmissions already accepted finish after link-down.
+        events.schedule(
+            arrived_ns,
+            20,
+            Event::Arrive {
+                packet: packet_index,
+                node: link.to.clone(),
+            },
+        )
+    }
+
+    fn fault(
+        &mut self,
+        at_ns: u64,
+        fault_index: usize,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        let fault = &self.scenario.faults[fault_index];
+        let index = self
+            .scenario
+            .links
+            .iter()
+            .position(|link| link.id == fault.link_id)
+            .ok_or_else(|| format!("unknown link: {}", fault.link_id))?;
+        self.links[index].up = matches!(fault.action, LinkAction::Up);
+        self.control_events.push(ControlEvent {
+            at_ns,
+            kind: if self.links[index].up {
+                "link_up".into()
+            } else {
+                "link_down".into()
+            },
+            link_id: Some(fault.link_id.clone()),
+            route_revision: self.route_revision,
+        });
+        if let Some(install_at) = at_ns.checked_add(self.scenario.control_delay_ns) {
+            if install_at < self.scenario.duration_ns {
+                events.schedule(install_at, 5, Event::InstallRoutes)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Execute an L1 fixed-contact, modeled-packet simulation.
+/// This does not model RF waveform, optical pointing or a proprietary modem.
+pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
+    scenario.validate()?;
+    let mut state = Runtime::new(scenario);
+    let mut scheduler = Scheduler::new();
+    for (index, fault) in scenario.faults.iter().enumerate() {
+        scheduler.schedule(fault.at_ns, 0, Event::Fault { index })?;
+    }
+    for (flow_index, flow) in scenario.flows.iter().enumerate() {
+        for ordinal in 0..flow.packet_count {
+            let at_ns = flow.start_ns + u64::from(ordinal) * flow.interval_ns;
+            scheduler.schedule(
+                at_ns,
+                10,
+                Event::Inject {
+                    flow: flow_index,
+                    ordinal,
+                },
+            )?;
+        }
+    }
+    let mut processed_events = 0u64;
+    while let Some(scheduled) = scheduler.next_event() {
+        processed_events += 1;
+        if processed_events > MAX_PROCESSED_EVENTS {
+            return Err("processed event budget exceeded".into());
+        }
+        match scheduled.event {
+            Event::Inject { flow, ordinal } => {
+                state.inject(scheduled.at_ns, flow, ordinal, &mut scheduler)?;
+            }
+            Event::Arrive { packet, node } => {
+                state.arrive(scheduled.at_ns, packet, node, &mut scheduler)?;
+            }
+            Event::Fault { index } => {
+                state.fault(scheduled.at_ns, index, &mut scheduler)?;
+            }
+            Event::InstallRoutes => state.install_routes(scheduled.at_ns),
+        }
+    }
+    let packets: Vec<PacketTrace> = state.packets.into_iter().map(|p| p.trace).collect();
+    let delivered = packets
+        .iter()
+        .filter(|p| p.status == PacketStatus::Delivered)
+        .count();
+    let dropped = packets
+        .iter()
+        .filter(|p| p.status == PacketStatus::Dropped)
+        .count();
+    if delivered + dropped != packets.len() {
+        return Err("packet accounting invariant failed".into());
+    }
+    Ok(SimulationReport {
+        scenario: scenario.name.clone(),
+        fidelity: "l1_static_contact_packet_model".into(),
+        duration_ns: scenario.duration_ns,
+        processed_events,
+        route_revision: state.route_revision,
+        injected: packets.len(),
+        delivered,
+        dropped,
+        packets,
+        control_events: state.control_events,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntarlink_contracts::Scenario;
+
+    fn basic() -> Scenario {
+        Scenario::from_json(include_str!("../../../scenarios/minimal.json")).unwrap()
+    }
+
+    #[test]
+    fn reaches_internet_through_all_five_link_types() {
+        let result = run(&basic()).unwrap();
+        assert_eq!(result.injected, 3);
+        assert_eq!(result.delivered, 3);
+        assert_eq!(result.dropped, 0);
+        for packet in &result.packets {
+            let actual: Vec<_> = packet.hops.iter().map(|h| h.link_id.as_str()).collect();
+            assert_eq!(
+                actual,
+                ["user-ue-a", "isl-a-b", "feeder-b-gw", "backhaul-gw-pop", "pop-internet"]
+            );
+            let total: u64 = packet
+                .hops
+                .iter()
+                .map(|h| {
+                    h.queue_delay_ns
+                        + h.serialization_ns
+                        + h.propagation_ns
+                        + h.processing_ns
+                })
+                .sum();
+            assert_eq!(packet.completed_ns.unwrap() - packet.injected_ns, total);
+        }
+    }
+
+    #[test]
+    fn same_scenario_is_byte_for_byte_deterministic() {
+        let a = serde_json::to_vec(&run(&basic()).unwrap()).unwrap();
+        let b = serde_json::to_vec(&run(&basic()).unwrap()).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn finite_queue_drops_packets_with_reason() {
+        let mut s = basic();
+        s.flows[0].packet_count = 4;
+        s.flows[0].interval_ns = 1;
+        s.links[0].queue_limit_bytes = s.flows[0].packet_size_bytes;
+        let result = run(&s).unwrap();
+        assert!(result.dropped > 0);
+        assert!(result
+            .packets
+            .iter()
+            .any(|p| p.drop_reason.as_deref() == Some("queue_overflow")));
+    }
+
+    #[test]
+    fn fault_reconverges_over_backup_isl() {
+        let s =
+            Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
+        let r = run(&s).unwrap();
+        assert!(r.control_events.iter().any(|e| e.kind == "link_down"));
+        assert!(r.route_revision >= 2);
+        assert!(r.packets.iter().any(|p| p
+            .hops
+            .iter()
+            .any(|h| h.link_id == "isl-a-c")));
+        assert!(r.packets.iter().any(|p| p.status == PacketStatus::Delivered));
+    }
+
+    #[test]
+    fn disconnected_feeder_is_not_teleported() {
+        let mut s = basic();
+        let feeder = s.links.iter_mut().find(|l| l.id == "feeder-b-gw").unwrap();
+        feeder.up = false;
+        let result = run(&s).unwrap();
+        assert_eq!(result.delivered, 0);
+        assert!(result
+            .packets
+            .iter()
+            .all(|p| p.drop_reason.as_deref() == Some("no_route")));
+    }
+}

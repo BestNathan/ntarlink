@@ -1,0 +1,5 @@
+[project]
+name = "ntarlink-orbital"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Geometry and orbital input adapters for ntarlink"

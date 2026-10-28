@@ -1,39 +1,42 @@
 # ntarlink
 
-**An open-source-first engineering platform for the simulation and emulation of complete Starlink-like LEO broadband satellite internet systems.**
+**Open-source-first LEO broadband satellite internet simulation and emulation platform.**
 
-> **Status: architecture and early scaffolding.** This repository does **not** implement proprietary Starlink protocols. It does not yet simulate a complete end-to-end packet path, real RF or an operational satellite network.
+ntarlink is organized by **subsystem responsibility**, not by programming language. Rust drives deterministic packet and event simulation, Python provides orbital/geometry experiments, and TypeScript describes console-facing scenario and trace data. Existing ns-3, SNS3, OpenSAND and SDR tools remain potential external adapters, not claimed to be integrated.
 
-## Engineering design
+> **Current fidelity: L1, static-contact modeled packets.** The simulator now executes packet events across a configured user RF link, optical ISL, feeder gateway, terrestrial backhaul and internet edge, and models per-hop propagation/serialization/processing/queue delay, finite queues, link failure and delayed routing reconvergence. Link availability and timing are scenario inputs; **no orbital propagation, real RF waveform, PAT acquisition, MAC scheduling or Starlink proprietary protocol is implemented.**
 
-The platform is decomposed into sixteen domain-defined subsystems spanning orbit and spacecraft, optical ISLs, terminal access, feeder ground infrastructure, network control and subscriber core, terrestrial routing, operations, regulatory/weather constraints, performance assurance, simulation/emulation and visualization.
-
-- [Complete English documentation index](docs/README.md)
-- [Full subsystem catalog](docs/system-overview.md)
-- [16 subsystem implementation designs](docs/subsystems/README.md)
-- [Architecture, planes and runtime](docs/architecture.md)
-- [Interfaces, units, contracts and events](docs/design/contracts.md)
-- [Packet journey, PHY/link models and mobility](docs/design/data-plane.md)
-- [Simulation runtime, coupling, determinism and scale](docs/design/simulation-runtime.md)
-- [External dependencies and license review](docs/dependencies.md)
-- [Delivery roadmap and acceptance scenarios](docs/roadmap.md)
-
-## Technology
-
-Rust for packet and event core, Python for orbital/scientific models, TypeScript for UI. Established C/C++/Java stacks (ns-3/SNS3, OpenSAND, Orekit and others) are investigated as external adapters. **Subsystems are the architectural boundaries; programming languages are not.**
-
-## Current bootstrap
+## Try it
 
 ```sh
 cargo test --workspace
 cargo run -p ntarlink-cli -- validate scenarios/minimal.json
 cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
-python3 -m unittest discover -s python/tests
-cd web && npm install && npm run check
+cargo run -p ntarlink-cli -- simulate scenarios/isl-failure.json --json > report.json
+python3 -m unittest discover -s systems/orbital/python/tests
+cd applications/console && npm install && npm run check
 ```
 
-The `simulate` command presently validates/prints scenario metadata; it **does not** simulate packets. See [phase 1](docs/roadmap.md) for the first real packet-flow milestone.
+The JSON report includes per-packet status, drop reason, route revisions and a timestamped, hop-by-hop packet trace.
 
-## Contributions and licensing
+## Repository architecture
 
-Read [AGENTS.md](AGENTS.md) for subsystem-first engineering and **English-only repository** rules. Dependency licenses are tracked separately in [docs/dependencies.md](docs/dependencies.md). The project has not yet selected its own open-source redistribution license; see [LICENSE-NOTICE.md](LICENSE-NOTICE.md).
+```text
+platform/contracts/           # Versioned scenario model and schema
+platform/simulation/          # Deterministic virtual-time event scheduler
+platform/packet-runtime/      # Generic modeled link queues and packet transport
+systems/network-control/      # Routing and delayed convergence
+systems/orbital/python/       # WGS84 geometry/scenario preprocessing
+applications/cli/            # Validate, simulate and export JSON trace
+applications/console/        # Typed UI contracts; interactive UI planned
+scenarios/                   # Minimal and ISL-failure examples
+docs/                        # Full system and 16 subsystem engineering designs
+```
+
+See [implementation status](docs/implementation-status.md), [engineering documentation](docs/README.md), [subsystems](docs/subsystems/README.md), [contracts](docs/design/contracts.md), [limitations and roadmap](docs/roadmap.md), and [dependency decisions](docs/dependencies.md).
+
+## Scope and licensing
+
+ntarlink is a research and simulation project and does not reproduce undocumented Starlink hardware, modem or protocol implementations. The repository itself has **not yet selected a redistribution license**, as described in [LICENSE-NOTICE.md](LICENSE-NOTICE.md). Third-party license and validation audits are required before integration.
+
+Repository content and engineering documentation are English-only; see [AGENTS.md](AGENTS.md).
