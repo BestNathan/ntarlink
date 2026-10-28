@@ -215,9 +215,8 @@ impl<'a> Runtime<'a> {
         }
         let start_ns = at_ns.max(state.transmitter_free_ns);
         let bits_ns = u128::from(size) * 8 * 1_000_000_000;
-        let serialization_ns =
-            u64::try_from(bits_ns.div_ceil(u128::from(link.capacity_bps)))
-                .map_err(|_| "serialization time exceeds u64".to_owned())?;
+        let serialization_ns = u64::try_from(bits_ns.div_ceil(u128::from(link.capacity_bps)))
+            .map_err(|_| "serialization time exceeds u64".to_owned())?;
         let completed_ns = start_ns
             .checked_add(serialization_ns)
             .ok_or("transmission time overflow")?;
@@ -376,17 +375,18 @@ mod tests {
             let actual: Vec<_> = packet.hops.iter().map(|h| h.link_id.as_str()).collect();
             assert_eq!(
                 actual,
-                ["user-ue-a", "isl-a-b", "feeder-b-gw", "backhaul-gw-pop", "pop-internet"]
+                [
+                    "user-ue-a",
+                    "isl-a-b",
+                    "feeder-b-gw",
+                    "backhaul-gw-pop",
+                    "pop-internet"
+                ]
             );
             let total: u64 = packet
                 .hops
                 .iter()
-                .map(|h| {
-                    h.queue_delay_ns
-                        + h.serialization_ns
-                        + h.propagation_ns
-                        + h.processing_ns
-                })
+                .map(|h| h.queue_delay_ns + h.serialization_ns + h.propagation_ns + h.processing_ns)
                 .sum();
             assert_eq!(packet.completed_ns.unwrap() - packet.injected_ns, total);
         }
@@ -415,16 +415,18 @@ mod tests {
 
     #[test]
     fn fault_reconverges_over_backup_isl() {
-        let s =
-            Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
+        let s = Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
         let r = run(&s).unwrap();
         assert!(r.control_events.iter().any(|e| e.kind == "link_down"));
         assert!(r.route_revision >= 2);
-        assert!(r.packets.iter().any(|p| p
-            .hops
+        assert!(r
+            .packets
             .iter()
-            .any(|h| h.link_id == "isl-a-c")));
-        assert!(r.packets.iter().any(|p| p.status == PacketStatus::Delivered));
+            .any(|p| p.hops.iter().any(|h| h.link_id == "isl-a-c")));
+        assert!(r
+            .packets
+            .iter()
+            .any(|p| p.status == PacketStatus::Delivered));
     }
 
     #[test]

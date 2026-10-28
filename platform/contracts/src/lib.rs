@@ -161,8 +161,7 @@ impl Scenario {
                 ),
                 LinkKind::Internet => matches!(
                     (a, b),
-                    (NodeKind::Pop, NodeKind::Internet)
-                        | (NodeKind::Internet, NodeKind::Pop)
+                    (NodeKind::Pop, NodeKind::Internet) | (NodeKind::Internet, NodeKind::Pop)
                 ),
             };
             if !allowed {

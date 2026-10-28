@@ -11,8 +11,7 @@ struct Timed<E> {
 
 impl<E> PartialEq for Timed<E> {
     fn eq(&self, other: &Self) -> bool {
-        (self.at_ns, self.priority, self.sequence)
-            == (other.at_ns, other.priority, other.sequence)
+        (self.at_ns, self.priority, self.sequence) == (other.at_ns, other.priority, other.sequence)
     }
 }
 
@@ -26,8 +25,11 @@ impl<E> PartialOrd for Timed<E> {
 
 impl<E> Ord for Timed<E> {
     fn cmp(&self, other: &Self) -> Ordering {
-        (self.at_ns, self.priority, self.sequence)
-            .cmp(&(other.at_ns, other.priority, other.sequence))
+        (self.at_ns, self.priority, self.sequence).cmp(&(
+            other.at_ns,
+            other.priority,
+            other.sequence,
+        ))
     }
 }
 
