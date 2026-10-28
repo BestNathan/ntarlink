@@ -1,50 +1,45 @@
-# System scope and subsystem catalog
+# ntarlink system overview
 
-## 1. Mission and simulation boundaries
+This document defines the mission and catalog. The authoritative **detailed specifications** are in [docs/subsystems](subsystems/README.md).
 
-**Mission:** reproduce and experimentally study the full engineering behavior of a Starlink-like LEO broadband network, from orbital dynamics and spectrum/beam planning to terminal acquisition, satellite forwarding, inter-satellite links, feeder links, ground network, user sessions, internet connectivity, operations, failures, and lifecycle economics where useful.
+## Mission
 
-**Not the mission:** reproduce undocumented proprietary SpaceX PHY/MAC, encryption, authentication or ground-station internals; operate real RF transmitters without licensing; assert every Starlink deployment uses a particular 3GPP architecture. We distinguish documented standards, approximations, assumptions, and experimental integrations.
+Develop a reproducible Starlink-like LEO broadband internet simulation/emulation platform covering spacecraft/orbits, optical ISL, user access, feeder gateways, subscriber services, terrestrial backbone, network control, operations, security, environment and user experience. Model fidelity is explicitly labeled; do not assume access to proprietary Starlink PHY/MAC.
 
-The system has **space, user, ground, terrestrial, operations, and simulation-platform segments**. Each catalog entry has one primary owner. A satellite may be a bent-pipe or regenerative payload; choose explicitly per scenario. The direct-to-cell/3GPP NTN profile is optional and must not be conflated with broadband user terminals.
+## 16 logical subsystems
 
-## 2. Subsystem catalog
+| ID | System | Role | Detailed design |
+|---|---|---|---|
+| SYS-01 | 轨道动力学与星历 | 轨道与几何真值服务 | [Specification](subsystems/01-orbital-dynamics.md) |
+| SYS-02 | 星座与航天器 | 空间资产及载荷能力的权威状态 | [Specification](subsystems/02-spacecraft.md) |
+| SYS-03 | 星间通信与星上转发 | 卫星之间的传输和星上数据平面 | [Specification](subsystems/03-space-network.md) |
+| SYS-04 | 用户终端与CPE | 用户侧设备、天线和本地网络边界 | [Specification](subsystems/04-terminal.md) |
+| SYS-05 | 用户接入网络 | 用户终端至卫星的无线接入控制和传输 | [Specification](subsystems/05-access-network.md) |
+| SYS-06 | 地面站与馈电网络 | 卫星馈电链路及地面射频基础设施 | [Specification](subsystems/06-ground-segment.md) |
+| SYS-07 | 全网控制与流量工程 | 动态卫星网络拓扑、路径及容量决策 | [Specification](subsystems/07-network-control.md) |
+| SYS-08 | 用户核心网与业务控制 | 用户身份、服务会话、地址与策略的逻辑核心 | [Specification](subsystems/08-subscriber-core.md) |
+| SYS-09 | 地面骨干网与互联网出口 | 地面传输、PoP和公网互联 | [Specification](subsystems/09-terrestrial-network.md) |
+| SYS-10 | 网络运营与任务控制 | 卫星和网络运营操作中心 | [Specification](subsystems/10-operations.md) |
+| SYS-11 | 安全与信任 | 跨系统身份、授权和威胁模型 | [Specification](subsystems/11-security.md) |
+| SYS-12 | 频谱监管与传播环境 | 约束无线服务可用性的外部环境真值 | [Specification](subsystems/12-environment.md) |
+| SYS-13 | 服务质量与用户体验 | 从终端视角量化网络质量与可用性 | [Specification](subsystems/13-service-assurance.md) |
+| SYS-14 | 仿真编排与执行内核 | 全系统确定性实验执行基础设施 | [Specification](subsystems/14-simulation.md) |
+| SYS-15 | 网络仿真与外部协议适配 | 让真实IP流量和第三方通信模拟器参与实验 | [Specification](subsystems/15-emulation.md) |
+| SYS-16 | 数据、可观测与可视化 | 跨系统数据证据、分析和操作入口 | [Specification](subsystems/16-data-observability.md) |
 
-| ID | Subsystem | Position / primary responsibility | Owns | Does not own |
-|---|---|---|---|---|
-| SYS-01 | Orbital Dynamics & Ephemeris | Physical truth of constellation positions and time-varying geometry | TLE/ephemeris, propagators, ECI/ECEF transforms, time scales, Earth geometry, orbit events | IP routing or beam scheduling |
-| SYS-02 | Constellation & Spacecraft | Inventory and spacecraft lifecycle | satellite/payload models, orbital shells, attitude/pointing capability, energy/thermal constraints, onboard availability, health | orbital propagation algorithms, network path policy |
-| SYS-03 | Space Network / ISL | Space-to-space communications and forwarding | optical ISL acquisition/tracking, LOS, capacities, satellite forwarding plane, per-hop queues, link failure | global network policy, terrestrial internet |
-| SYS-04 | User Terminal / CPE | Subscriber-side hardware and LAN interface | terminal location/mobility, antenna steering, modem states, LAN/Wi-Fi abstraction, terminal telemetry | constellation-wide beam allocation |
-| SYS-05 | User Access Network | User-to-satellite access and mobility | spot beams, spectrum reuse, user RF link, PHY/MAC models, resource allocation, terminal admission, handover | internet egress, feeder station operations |
-| SYS-06 | Ground Stations & Feeder Network | Space-to-ground feeder infrastructure | ground site inventory, antennas, feeder RF/optical link models, tracking, site availability, gateway radio termination | user subscriber core, internet peering |
-| SYS-07 | Network Control & Traffic Engineering | Global network decisions over a changing graph | contact topology, route computation/distribution, gateway selection, load balancing, resilience policy, network-wide capacity planning | authoritative orbit propagation, actual PHY execution |
-| SYS-08 | Subscriber Core & Service Control | Subscriber identity/session and service continuity | authentication *models*, entitlement, session state, IP allocation, mobility anchoring abstraction, QoS/policy, accounting models | assuming Starlink uses 5GC, beam PHY |
-| SYS-09 | Terrestrial Backbone & Internet Edge | Ground IP transport and public connectivity | PoPs, backhaul, IP routing/BGP model, NAT/CGNAT or IPv6 policy, DNS abstraction, internet traffic sinks/sources | satellite feeder PHY, subscriber authorization |
-| SYS-10 | Operations / NOC & Mission Control | Human/operator oversight and lifecycle control | fleet telemetry, alarms, service health, command workflows, network changes, capacity and fault management | simulation virtual-time engine, data-plane forwarding |
-| SYS-11 | Security & Trust | Cross-segment security policies and threat models | identity/trust model, key lifecycle abstraction, secure management channels, isolation, audit, adversarial scenarios | inventing proprietary cryptography |
-| SYS-12 | Regulatory, Spectrum & Environment | External constraints on operations | country/region eligibility, spectrum allocations, interference, weather/rain fade, atmospheric loss, regulatory scenario inputs | PHY scheduling decisions or regulatory approval |
-| SYS-13 | Service Assurance & Customer Experience | User-facing performance and SLA experiments | service availability, throughput/RTT/jitter/loss, outage classification, service-level reports | raw event scheduling or packet forwarding |
-| SYS-14 | Simulation Orchestrator | Run reproducible whole-system experiments | virtual time, event scheduler, seeds, scenario lifecycle, snapshots, replay, distributed run coordination | domain decisions for every subsystem |
-| SYS-15 | Network & Hardware Emulation | Execute packets/protocols against modeled links | Linux netns/veth/tc, external ns-3/SNS3/OpenSAND/SDR adapters, time/fidelity bridges | orbital truth or product policy |
-| SYS-16 | Data, Observability & Visualization | Shared evidence and human inspection | schema registry, experiment artifacts, metrics/traces, time-series, Cesium globe, dashboards and packet journey | authoritative domain state of other systems |
+## End-to-end broadband data plane
 
-**Cross-cutting capabilities**: versioned contracts and units, configuration/provenance, model calibration, test/benchmark infrastructure, deployment and supply-chain management. They are platform responsibilities, not additional competing domain owners.
+LAN → terminal/CPE → user RF/beam → satellite payload → optional optical ISLs → feeder link → ground station → PoP/backhaul → internet edge → destination. Reverse direction can have an asymmetric path.
 
-## 3. Required engineering dimensions per subsystem
+## Control plane
 
-Every subsystem specification must define: purpose and non-goals; entities and ownership; commands/queries/events; state machine; time model; accuracy/fidelity level; performance limits; dependencies; failure modes; security and observability; reproducible acceptance scenarios; upstream components and licensing. A folder alone does not constitute an implemented subsystem.
+Orbit/spacecraft/environment state → contact feasibility → access and network decisions → installed forwarding state → operations and assurance feedback. Subscriber core owns service session/policy, not beam PHY. A feeder gateway, subscriber service gateway and internet egress are distinct roles.
 
-## 4. Core end-to-end paths
+## Architectural principles
 
-**Broadband user plane:** customer LAN → user terminal → access RF/beam → satellite payload → zero or more optical ISLs → feeder link → ground station → terrestrial PoP/backbone → internet destination. Reverse path may use a different route.
-
-**Network control:** orbit and spacecraft state → visibility/contact opportunities → beam/access admission and ISL acquisition → network graph/route and gateway selection → forwarding rules → event/telemetry feedback.
-
-**Operations:** ground/space telemetry → health and incident detection → approved operations actions → system-specific control APIs → state transitions and audit.
-
-**Optional NTN:** handset/UE → NTN radio access → satellite/ground transport → 3GPP core adapter. This is a separate architecture profile, not the default broadband user-plane assumption.
-
-## 5. Logical vs physical decomposition
-
-Subsystems are bounded contexts, **not automatically one microservice each**. A small deterministic run can embed several domains in one Rust process; an orbital Python worker can be a separate process; real-IP emulation may need privileged Linux workers. They still exchange the same versioned domain contracts. Monorepo initially, independently testable packages and optional process isolation; split repositories only for independent release cadence, governance, scale or security needs.
+- **Bounded contexts before languages.** Rust, Python and TypeScript can coexist inside each subsystem.
+- **One monorepo, many domains.** A logical system is not automatically a microservice; deterministic in-process execution is valid.
+- **Contracts before coupling.** Authoritative state ownership, typed events, units, clock domains and trace correlation.
+- **Multiple fidelity profiles.** Analytical, discrete-event, protocol-study, IP emulation and optional HIL are not interchangeable.
+- **Standards vs proprietary.** 3GPP NTN/Open5GS is an optional profile, not assumed Starlink broadband core architecture.
+- **Acceptance over folder count.** See [system scenarios](system-scenarios.md).

@@ -1,14 +1,11 @@
-# ntarlink system documentation
+# ntarlink documentation entry
 
-ntarlink is an **end-to-end LEO broadband satellite internet system simulator and emulator**, inspired by publicly observable Starlink-like system architecture, not a claim of SpaceX protocol compatibility.
+1. [System overview and 16-subsystem catalog](system-overview.md)
+2. **[Detailed subsystem designs — 16 dedicated specifications](subsystems/README.md)**
+3. [Ownership, contracts and execution profiles](subsystem-boundaries.md)
+4. [End-to-end scenarios and acceptance gates](system-scenarios.md)
+5. [Target repository and runtime architecture](architecture.md)
+6. [Roadmap](roadmap.md)
+7. [Open-source integration candidates](open-source.md)
 
-Start here:
-
-1. [System scope and subsystem catalog](system-overview.md) — canonical source of truth for what systems exist and why.
-2. [Subsystem boundaries and contracts](subsystem-boundaries.md) — ownership, interfaces, state and execution modes.
-3. [End-to-end scenarios and acceptance](system-scenarios.md) — what proves the integrated system works.
-4. [Architecture](architecture.md) — repository/runtime organization and technology selection.
-5. [Roadmap](roadmap.md) — phased delivery.
-6. [Open-source integration candidates](open-source.md) — upstream adoption with license/fidelity review.
-
-Design status: **baseline proposal**, not implemented capabilities. Subsystems are logical boundaries, not mandatory microservices or repositories.
+The documents describe a complete target satellite-internet system, **not a claim that all subsystems are implemented**. Each subsystem has a separate detailed specification. Implementation is incremental and cross-subsystem acceptance driven.
