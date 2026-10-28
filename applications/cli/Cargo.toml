@@ -1,0 +1,9 @@
+[package]
+name = "ntarlink-cli"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+ntarlink-contracts = { path = "../../platform/contracts" }
+ntarlink-packet-runtime = { path = "../../platform/packet-runtime" }
+serde_json = "1"

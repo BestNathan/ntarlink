@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "isl-failure-and-reconvergence",
+  "duration_ns": 300000000,
+  "control_delay_ns": 20000000,
+  "nodes": [
+    {"id": "ue-a", "kind": "terminal"},
+    {"id": "sat-a", "kind": "satellite"},
+    {"id": "sat-b", "kind": "satellite"},
+    {"id": "sat-c", "kind": "satellite"},
+    {"id": "gw-a", "kind": "ground_station"},
+    {"id": "pop-a", "kind": "pop"},
+    {"id": "internet", "kind": "internet"}
+  ],
+  "links": [
+    {"id": "user-ue-a", "from": "ue-a", "to": "sat-a", "kind": "user_rf", "capacity_bps": 100000000, "propagation_delay_ns": 2000000, "queue_limit_bytes": 4800},
+    {"id": "isl-a-b", "from": "sat-a", "to": "sat-b", "kind": "optical_isl", "capacity_bps": 1000000000, "propagation_delay_ns": 3200000, "queue_limit_bytes": 9600},
+    {"id": "isl-a-c", "from": "sat-a", "to": "sat-c", "kind": "optical_isl", "capacity_bps": 1000000000, "propagation_delay_ns": 3500000, "queue_limit_bytes": 9600},
+    {"id": "isl-c-b", "from": "sat-c", "to": "sat-b", "kind": "optical_isl", "capacity_bps": 1000000000, "propagation_delay_ns": 3500000, "queue_limit_bytes": 9600},
+    {"id": "feeder-b-gw", "from": "sat-b", "to": "gw-a", "kind": "feeder", "capacity_bps": 200000000, "propagation_delay_ns": 2300000, "queue_limit_bytes": 4800},
+    {"id": "backhaul-gw-pop", "from": "gw-a", "to": "pop-a", "kind": "backhaul", "capacity_bps": 1000000000, "propagation_delay_ns": 1500000, "queue_limit_bytes": 9600},
+    {"id": "pop-internet", "from": "pop-a", "to": "internet", "kind": "internet", "capacity_bps": 1000000000, "propagation_delay_ns": 2500000, "queue_limit_bytes": 9600}
+  ],
+  "flows": [
+    {"id": "fault-test", "source": "ue-a", "destination": "internet", "packet_size_bytes": 1200, "packet_count": 13, "start_ns": 0, "interval_ns": 15000000}
+  ],
+  "faults": [
+    {"at_ns": 80000000, "link_id": "isl-a-b", "action": "down"}
+  ]
+}

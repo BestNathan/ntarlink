@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/ntarlink-cli", "crates/ntarlink-core"]
+members = [
+    "platform/contracts",
+    "platform/simulation",
+    "platform/packet-runtime",
+    "systems/network-control",
+    "applications/cli",
+]
 resolver = "2"
 
 [workspace.package]

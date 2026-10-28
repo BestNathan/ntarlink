@@ -4,6 +4,7 @@
 
 ## Read in this order
 
+0. [Current implementation status, fidelity and run commands](implementation-status.md).
 1. [System mission, functional scope, segment inventory](system-overview.md).
 2. [System architecture, control/data/management planes, runtime and target repository design](architecture.md).
 3. [Subsystem design index](subsystems/README.md) — 16 detailed, English-only specifications.

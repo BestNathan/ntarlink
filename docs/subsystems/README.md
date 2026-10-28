@@ -1,6 +1,6 @@
 # Detailed subsystem engineering design
 
-**All descriptions, interfaces and code examples are in English.** These documents define *target* components and implementation plans; existing executable code is still the minimal Rust/Python/TypeScript bootstrap.
+**All descriptions, interfaces and code examples are in English.** These documents define *target* components and implementation plans. The first L1 packet-transport vertical slice is implemented; this is not equivalent to delivering all sixteen subsystems. See [implementation status](../implementation-status.md).
 
 | ID | System | Primary technical components | Main candidate dependencies | Detailed specification |
 |---|---|---|---|---|

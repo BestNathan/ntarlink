@@ -1,6 +1,6 @@
 # End-to-end data/control flows and link engineering
 
-**Status:** reference architecture for broadband bent-pipe or regenerative satellite Internet; not a proprietary air-interface specification.
+**Status:** reference design; the P0 Rust packet runner now implements five directed, statically configured link hops, queue/serialization/propagation/processing delays and delayed routing on fault events. It does **not** implement orbital contact prediction, bent-pipe signal relay, radio acquisition, optical PAT or a physical modem. See [implementation status](../implementation-status.md).
 
 ## 1. Four classes of links
 

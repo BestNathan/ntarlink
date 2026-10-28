@@ -1,8 +1,8 @@
 [package]
-name = "ntarlink-cli"
+name = "ntarlink-contracts"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-ntarlink-core = { path = "../ntarlink-core" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"

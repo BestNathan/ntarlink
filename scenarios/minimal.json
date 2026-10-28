@@ -1,6 +1,25 @@
 {
-  "name": "minimal-leo-lab",
-  "satellites": [{"id": "sat-a"}, {"id": "sat-b"}],
-  "terminals": [{"id": "ue-a", "latitude": 31.2, "longitude": 121.5}],
-  "gateways": [{"id": "gw-a", "latitude": 30.3, "longitude": 120.2}]
+  "schema_version": 1,
+  "name": "minimal-broadband-path",
+  "duration_ns": 200000000,
+  "control_delay_ns": 5000000,
+  "nodes": [
+    {"id": "ue-a", "kind": "terminal", "latitude_deg": 31.2, "longitude_deg": 121.5},
+    {"id": "sat-a", "kind": "satellite"},
+    {"id": "sat-b", "kind": "satellite"},
+    {"id": "gw-a", "kind": "ground_station", "latitude_deg": 30.3, "longitude_deg": 120.2},
+    {"id": "pop-a", "kind": "pop"},
+    {"id": "internet", "kind": "internet"}
+  ],
+  "links": [
+    {"id": "user-ue-a", "from": "ue-a", "to": "sat-a", "kind": "user_rf", "capacity_bps": 100000000, "propagation_delay_ns": 2000000, "processing_delay_ns": 300000, "queue_limit_bytes": 4800},
+    {"id": "isl-a-b", "from": "sat-a", "to": "sat-b", "kind": "optical_isl", "capacity_bps": 1000000000, "propagation_delay_ns": 3200000, "processing_delay_ns": 200000, "queue_limit_bytes": 9600},
+    {"id": "feeder-b-gw", "from": "sat-b", "to": "gw-a", "kind": "feeder", "capacity_bps": 200000000, "propagation_delay_ns": 2300000, "processing_delay_ns": 300000, "queue_limit_bytes": 4800},
+    {"id": "backhaul-gw-pop", "from": "gw-a", "to": "pop-a", "kind": "backhaul", "capacity_bps": 1000000000, "propagation_delay_ns": 1500000, "processing_delay_ns": 100000, "queue_limit_bytes": 9600},
+    {"id": "pop-internet", "from": "pop-a", "to": "internet", "kind": "internet", "capacity_bps": 1000000000, "propagation_delay_ns": 2500000, "processing_delay_ns": 100000, "queue_limit_bytes": 9600}
+  ],
+  "flows": [
+    {"id": "internet-ping", "source": "ue-a", "destination": "internet", "packet_size_bytes": 1200, "packet_count": 3, "start_ns": 0, "interval_ns": 30000000}
+  ],
+  "faults": []
 }

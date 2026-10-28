@@ -1,6 +1,6 @@
 # Architecture: domain-driven LEO satellite internet simulator
 
-**Architecture status:** intended design. Existing `crates/`, `python/` and `web/` folders are an early scaffold and **not** the completed deployment or the target subsystem layout.
+**Architecture status:** in progress. The first deterministic packet slice has moved into `platform/contracts`, `platform/simulation`, `platform/packet-runtime`, `systems/network-control` and `applications/cli`; Python orbital helpers live under `systems/orbital/python` and TypeScript contracts under `applications/console`. These are real modules, not the complete sixteen-subsystem implementation. See [implementation status](implementation-status.md).
 
 ## 1. Bounded contexts, segments and planes
 

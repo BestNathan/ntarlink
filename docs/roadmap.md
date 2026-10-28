@@ -1,57 +1,38 @@
-# Implementation roadmap and engineering gates
+# Engineering roadmap
 
-The repository is currently a **minimal Rust/Python/TypeScript scaffold** with a scenario validator, not an end-to-end satellite simulator. Target subdirectories, protobuf/JSON schema contracts and third-party adapters are architectural proposals until implemented. Phases are ordered by **measurable integration**, not by the count of directories.
+## P0 — deterministic packet-transport vertical slice
 
-## Phase 0 — Architecture and contract foundation
+- [x] Subsystem-oriented workspace layout and English-only engineering documentation.
+- [x] Scenario version 1, named nodes and typed directed links, packet flows and link faults.
+- [x] Deterministic virtual-time engine with stable timestamp/priority/sequence ordering.
+- [x] Multi-hop user terminal -> user RF -> space ISL -> feeder ground station -> terrestrial PoP -> internet sink.
+- [x] Finite link queues, propagation/serialization/processing delay, per-packet trace and deterministic output.
+- [x] Link-down event and delayed route reconvergence, validated through backup ISL fixture.
+- [ ] Verified CI on merged `main` branch and performance benchmarks.
+- [ ] Generated Rust/Python/TypeScript bindings from canonical schema.
 
-**Deliverables:** all subsystem specifications in English; system/plane map; dependency/license register; state and clock conventions; scenario versioning; typed IDs and units; API envelope prototype; toolchain and formatting checks. A tiny versioned schema with cross-language golden fixtures must accompany the first code PR.
+P0 is **static-contact, packet-level simulation**, not physical radio or orbital simulation. See [status](implementation-status.md).
 
-**Gate:** scenario rejects broken references, impossible coordinates and invalid payload-mode combinations; CI verifies docs English-only and broken relative links (outside vendor files), Rust/Python/TypeScript build/tests. Docs completion alone is not simulation completion.
+## P1 — physical contact and radio/link realism
 
-## Phase 1 — Deterministic packet-path vertical slice (SYS-14/03/05/06/07/08/09)
+- [ ] Orbit catalog/SGP4 adapter, TEME to Earth-fixed/WGS84 conversion, reference datasets and timed contact windows (SYS-01).
+- [ ] Spacecraft payload/optical terminal availability and pointing constraints (SYS-02).
+- [ ] Optical PAT acquisition/tracking and link-budget models (SYS-03).
+- [ ] Terminal modem and beam selection, user RF budget, frequency reuse, MAC scheduling and handover (SYS-04/05).
+- [ ] Ground antenna/feeder allocation with rain fade and site state (SYS-06/12).
 
-**Build:** stable virtual-clock event queue; directional links and finite byte queues; packet identifiers/trace; a validated minimal topology: terminal → RF user link → Satellite A → optical ISL → Satellite B → feeder ground station → backhaul/PoP → internet sink; reverse direction; configurable gateway, drop/loss, link failure and routes.
+## P2 — core services and network realism
 
-**Gate:** deterministic repeated run yields same event hash; delivered/dropped/in-flight accounting balances; packet path trace includes per-hop propagation, serialization, processing and queue delay; fault shows explicit reason and recovery. This phase may use **static geometry/contact fixtures**, clearly labeled.
+- [ ] Subscriber service authorization, session and IPv4/IPv6 IPAM (SYS-08).
+- [ ] Time-dependent/contact routing, gateways and traffic engineering (SYS-07).
+- [ ] Terrestrial IP transport, egress, congestion and service assurance (SYS-09/13).
+- [ ] Linux netns/tc/FRRouting emulation and actual ping/iperf traffic (SYS-15).
 
-## Phase 2 — Orbit-informed contact, RF/access and optical link state (SYS-01/02/03/04/05/06/12)
+## P3 — operations, observability and advanced fidelity
 
-**Build:** Python SGP4 + time/frame conversion with reference vectors; precompute contact windows; realistic acquisition windows; antenna and beam geometry; RF link budgets and Doppler; rain/interference model; optical PAT and link-quality state machine; terminal attachment/handover; spacecraft payload availability.
+- [ ] Operations, security, incident/command workflows (SYS-10/11).
+- [ ] Versioned archive/visualization and CesiumJS globe, interactive console (SYS-16).
+- [ ] OSS integration PoCs: SNS3/ns-3, OpenSAND, OAI/Open5GS NTN profile and GNU Radio.
+- [ ] Explicit model validation, scale/performance and failure-mode benchmarks.
 
-**Gate:** orbit reference tests, elevation/LOS invariants, contact boundary tests; predicted handover triggers measurable interruption; link capacity and packet loss change consistently with explicit model assumptions.
-
-## Phase 3 — Network control, subscriber continuity, terrestrial IP (SYS-07/08/09/13/15)
-
-**Build:** time-dependent route/gateway selection; link and control convergence latency; session/IP anchoring; reverse routing; congestion and QoS; real Linux network namespaces with tcp/udp, ping and iperf; FRR experiment option.
-
-**Gate:** ISL and feeder failure reroute, gateway failover, congestion fairness/latency baseline, measured emulated RTT and packet loss vs configured channel, full resource cleanup.
-
-## Phase 4 — Operations, security, environment and visualization (SYS-10/11/12/13/16)
-
-**Build:** incident/command state machines, authorization and audit, operational telemetry and service reporting; Cesium globe with virtual-time timeline, beams, ISL edges, packet path and downloadable run manifests.
-
-**Gate:** replay packet trace and outage cause by run/time; command requires authority and produces audited state transition; region/weather eligibility changes service; UI state matches archived artifacts.
-
-## Phase 5 — Protocol and hardware fidelity (SYS-05/06/08/15)
-
-**Build:** compare against SNS3/ns-3 (and optionally OpenSAND), independently instrument a 3GPP NTN profile with OAI/Open5GS where justified, SDR/IQ bridge, contact/PHY calibration, scalability/performance research.
-
-**Gate:** reproducible external-tool build with pinned rev/license, numeric cross-engine comparisons and documented differences; realtime/HIL runs label their wall-clock constraints.
-
-## Cross-phase nonfunctional requirements
-
-- Determinism and versioned input + seed + git revision on every run.
-- Physical units, reference frames and time scales verified by tests.
-- Security: scenario parser bounds, privileged emulator isolation, audit and cleanup.
-- Performance: event throughput, contact computation scaling, memory per satellite/terminal, trace cardinality and UI responsiveness measured.
-- Scope honesty: do not mark a capability done because a directory or external product name appears in a document.
-- Licensing: no third-party vendoring until review, especially GPL-2/3, AGPL and OAI CSSL terms.
-
-## Suggested first deliverable PR sequence
-
-1. Contract `scenario.schema.json` with strongly typed Rust/Python/TypeScript fixtures.
-2. Rust `VirtualClock`, `EventQueue`, `Packet` and `Link` primitives with deterministic unit tests.
-3. Static 7-hop network traffic fixture + event trace and latency assertions.
-4. Python orbital/contact precompute and reference frame regression.
-5. Onboard/feeder/access link acquisition, terminal attach and control-plane route installation.
-6. Packet journey web timeline + fault injection reproducibility.
+Do not mark future subsystem capability complete because its design exists. Each functional milestone requires tested behavior, failure cases, trace/metrics and independently justified physical assumptions.
