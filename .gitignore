@@ -1,5 +1,8 @@
 .DS_Store
-*.out
+.env
+/target/
+/web/node_modules/
+/python/**/__pycache__/
+*.pyc
 coverage/
 dist/
-.env

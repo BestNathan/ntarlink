@@ -1,15 +1,14 @@
-# Open-source-first integration candidates
+# Integration candidates (verify versions, license and API before adoption)
 
-| Area | Candidate | Integration approach | Caveat |
-|---|---|---|---|
-| Orbit | python-sgp4 / Orekit | subprocess/service adapter or independently validated Go implementation | license, accuracy, frames and time systems |
-| Satellite networking | OpenSAND | compare gateway / satellite network behavior; optional emulator adapter | not a Starlink implementation |
-| Satellite network simulation | SNS3 / ns-3 | reference PHY/MAC models, independent experiments | simulator coupling complexity |
-| LEO dynamic network | StarryNet / OpenSN | emulation backend and benchmark comparison | verify maintenance and reproducibility |
-| 5G NTN | OpenAirInterface / srsRAN | optional access-network lab | feature support differs by version |
-| SDR | GNU Radio / gr-satellites | physical signal processing and telemetry experiments | not broadband Starlink air interface |
-| CCSDS | NASA cFS / Yamcs | mission control and telemetry profile | CCSDS != Starlink user broadband |
-| Visualization | CesiumJS | orbit and ground track visualization | check current license / asset terms |
-| Networking | Linux netns/veth/tc/netem, FRRouting | packet emulation and routing | Linux-only, privileges required |
+| Area | Project | Plan |
+|---|---|---|
+| Orbit | python-sgp4 / Orekit | Python adapter, reference validation |
+| Network PHY/MAC | SNS3 / ns-3 | external C++ simulator integration and comparison |
+| Satellite gateway | OpenSAND | external emulator integration |
+| NTN | OpenAirInterface | optional lab adapter, not a Starlink air interface |
+| RF / SDR | GNU Radio | external process and IQ interface |
+| LEO networking | StarryNet / OpenSN | routing/topology reference experiments |
+| IP emulation | Linux netns, tc/netem, FRRouting | host backend |
+| Visualization | CesiumJS | TypeScript globe UI |
 
-Do not automatically vendor these projects. Pin versions, audit licenses, verify interfaces, and preserve source attribution before integration.
+Do not vendor third-party code without license and provenance review.

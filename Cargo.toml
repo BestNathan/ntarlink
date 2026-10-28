@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/ntarlink-cli", "crates/ntarlink-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "UNLICENSED"

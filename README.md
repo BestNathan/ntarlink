@@ -1,18 +1,21 @@
 # ntarlink
 
-**Open-source-first LEO satellite internet digital twin and network emulator.** This project models the engineering components of a Starlink-like system; it does not claim to implement SpaceX proprietary protocols.
+**Starlink-like LEO satellite internet simulation and emulation platform.** Open-source-first, reproducible and explicitly not an implementation of proprietary Starlink protocols.
 
-## Goals
-- End-to-end IP packet journey: user terminal → spot beam → satellite → inter-satellite links → gateway → terrestrial internet, and reverse.
-- Reproducible orbital dynamics, visibility, handover, beam scheduling, RF/optical link budgets, topology, routing and failure injection.
-- Deterministic simulation first, then Linux network emulation and optional SDR / 5G NTN integrations.
+## Stack
+- **Rust**: deterministic event-driven packet/network simulation core, typed topology and link models.
+- **Python**: orbital analysis, scenario generation, experiments, external scientific integrations.
+- **TypeScript**: web visualization and interactive experiment UI.
+- **Adapters**: ns-3/SNS3, OpenSAND, OpenAirInterface, GNU Radio, Linux netns/tc and FRRouting where practical; adapters do not dictate core language.
 
-## Quick start
+## Run the bootstrap
 
 ```sh
-go run ./cmd/ntarlink validate -scenario scenarios/minimal.yaml
-go run ./cmd/ntarlink simulate -scenario scenarios/minimal.yaml
- go test ./...
+cargo test --workspace
+cargo run -p ntarlink-cli -- validate scenarios/minimal.json
+cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
+python3 -m unittest discover -s python/tests
+cd web && npm install && npm run check
 ```
 
-The initial executable is a **scaffold**: validates scenario structure and prints the declared topology; it does not yet propagate or route packets. See [architecture](docs/architecture.md), [roadmap](docs/roadmap.md), and [open-source inventory](docs/open-source.md).
+`simulate` currently validates and reports the scenario; it **does not yet simulate packets**. See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
