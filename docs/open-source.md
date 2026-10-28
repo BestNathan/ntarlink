@@ -1,14 +1,17 @@
-# Integration candidates (verify versions, license and API before adoption)
+# Open-source-first engineering policy
 
-| Area | Project | Plan |
-|---|---|---|
-| Orbit | python-sgp4 / Orekit | Python adapter, reference validation |
-| Network PHY/MAC | SNS3 / ns-3 | external C++ simulator integration and comparison |
-| Satellite gateway | OpenSAND | external emulator integration |
-| NTN | OpenAirInterface | optional lab adapter, not a Starlink air interface |
-| RF / SDR | GNU Radio | external process and IQ interface |
-| LEO networking | StarryNet / OpenSN | routing/topology reference experiments |
-| IP emulation | Linux netns, tc/netem, FRRouting | host backend |
-| Visualization | CesiumJS | TypeScript globe UI |
+The authoritative dependency matrix, source URLs, licensing notes, integration APIs, selection gates and adapter topology live in [External dependencies and integration decisions](dependencies.md).
 
-Do not vendor third-party code without license and provenance review.
+## Reuse principles
+
+- Prefer mature and validated scientific/telecommunications models over an in-house rewrite when the model matches the required fidelity.
+- Keep the Rust/Python/TypeScript product boundaries independent from C/C++/Java simulator internals.
+- Avoid conflating an external standard (DVB-S2/RCS2 or 3GPP NTN) with undocumented Starlink air-interface behavior.
+- Respect explicit GPL/LGPL/AGPL/CSSL conditions for pinned revisions and distributed binaries; independent-process adapters are an architectural design, **not** a claim of license exemption.
+- Maintain numerical golden tests, dependency provenance, compatibility matrices and reproducible images for each adopted engine.
+
+## Primary candidates
+
+SGP4, Orekit, ns-3, SNS3, OpenSAND, OpenAirInterface RAN, Open5GS, GNU Radio, Linux netns/tc, FRRouting, StarryNet/OpenSN, CesiumJS, Prometheus and OpenTelemetry.
+
+The repository currently contains **no implementation** of the external integrations above.

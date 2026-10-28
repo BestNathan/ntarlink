@@ -1,22 +1,38 @@
-# Detailed subsystem design index
+# Detailed subsystem engineering design
 
-These 16 documents are the **normative subsystem decomposition** for ntarlink. Every document defines position, core entities, detailed internal capabilities, ownership, dependencies, interfaces, events, failure modes, upstream candidates, acceptance and milestones.
+**All descriptions, interfaces and code examples are in English.** These documents define *target* components and implementation plans; existing executable code is still the minimal Rust/Python/TypeScript bootstrap.
 
-- **SYS-01** [轨道动力学与星历](01-orbital-dynamics.md) — 轨道与几何真值服务
-- **SYS-02** [星座与航天器](02-spacecraft.md) — 空间资产及载荷能力的权威状态
-- **SYS-03** [星间通信与星上转发](03-space-network.md) — 卫星之间的传输和星上数据平面
-- **SYS-04** [用户终端与CPE](04-terminal.md) — 用户侧设备、天线和本地网络边界
-- **SYS-05** [用户接入网络](05-access-network.md) — 用户终端至卫星的无线接入控制和传输
-- **SYS-06** [地面站与馈电网络](06-ground-segment.md) — 卫星馈电链路及地面射频基础设施
-- **SYS-07** [全网控制与流量工程](07-network-control.md) — 动态卫星网络拓扑、路径及容量决策
-- **SYS-08** [用户核心网与业务控制](08-subscriber-core.md) — 用户身份、服务会话、地址与策略的逻辑核心
-- **SYS-09** [地面骨干网与互联网出口](09-terrestrial-network.md) — 地面传输、PoP和公网互联
-- **SYS-10** [网络运营与任务控制](10-operations.md) — 卫星和网络运营操作中心
-- **SYS-11** [安全与信任](11-security.md) — 跨系统身份、授权和威胁模型
-- **SYS-12** [频谱监管与传播环境](12-environment.md) — 约束无线服务可用性的外部环境真值
-- **SYS-13** [服务质量与用户体验](13-service-assurance.md) — 从终端视角量化网络质量与可用性
-- **SYS-14** [仿真编排与执行内核](14-simulation.md) — 全系统确定性实验执行基础设施
-- **SYS-15** [网络仿真与外部协议适配](15-emulation.md) — 让真实IP流量和第三方通信模拟器参与实验
-- **SYS-16** [数据、可观测与可视化](16-data-observability.md) — 跨系统数据证据、分析和操作入口
+| ID | System | Primary technical components | Main candidate dependencies | Detailed specification |
+|---|---|---|---|---|
+| SYS-01 | Orbital dynamics | SGP4/TLE, frames, geometry, contact intervals | python-sgp4, Orekit | [Orbital](01-orbital-dynamics.md) |
+| SYS-02 | Spacecraft/constellation | fleet registry, payload, attitude, power, health | Orekit optional | [Spacecraft](02-spacecraft.md) |
+| SYS-03 | Optical ISL/network | PAT, optical budget, directional ISL, space queues/FIB | ns-3/SNS3 comparison | [Space Network](03-space-network.md) |
+| SYS-04 | User terminal/CPE | modem, phased-array steering, LAN, mobility, telemetry | Linux netns/TAP optional | [Terminal](04-terminal.md) |
+| SYS-05 | User RF access | spot beams, SINR/MODCOD, MAC/RRM, handover | SNS3, OpenSAND, OAI NTN optional | [Access](05-access-network.md) |
+| SYS-06 | Feeder stations | ground antennas, tracking, feeder radio, handoff | OpenSAND, GNU Radio | [Ground](06-ground-segment.md) |
+| SYS-07 | Network control | contact graph, time-dependent routing, gateway/TE | FRRouting, StarryNet/OpenSN | [Network Control](07-network-control.md) |
+| SYS-08 | Subscriber core | auth/session, IPAM, QoS, session continuity | Open5GS optional NTN | [Core](08-subscriber-core.md) |
+| SYS-09 | Terrestrial network | backhaul, PoP, BGP, IPv6, CGNAT, internet edge | FRRouting, Linux tc/netns | [Terrestrial](09-terrestrial-network.md) |
+| SYS-10 | NOC/operations | alarms, incidents, approvals, spacecraft command workflow | Prometheus, Grafana, Yamcs reference | [Operations](10-operations.md) |
+| SYS-11 | Security | trust, authorization, credential lifecycle, audit | Rust TLS ecosystem | [Security](11-security.md) |
+| SYS-12 | Environment/regulatory | rain fade, interference, spectrum, geography | ITU-R models, weather inputs | [Environment](12-environment.md) |
+| SYS-13 | Service assurance | probes, SLA, outage correlation, customer KPIs | OpenTelemetry, Prometheus | [Assurance](13-service-assurance.md) |
+| SYS-14 | Simulation kernel | virtual time, event queue, RNG, fault, checkpoint | Rust/serde | [Simulation](14-simulation.md) |
+| SYS-15 | Emulation/adapters | Linux netns/tc, ns-3, OpenSAND, OAI, SDR | FRRouting, SNS3, GNU Radio | [Emulation](15-emulation.md) |
+| SYS-16 | Data/UI | trace store, event stream, 3D globe, run replay | React, TypeScript, CesiumJS | [Data and UI](16-data-observability.md) |
 
-See [overall catalog](../system-overview.md), [boundaries](../subsystem-boundaries.md), [E2E acceptance](../system-scenarios.md). A subsystem is a logical bounded context, **not necessarily a separate service**. Current repository code has not yet migrated to the target directory layout.
+## Standard design expectations
+
+Each specification describes responsibility and non-goals; internal components; physics/algorithms and state machine; authoritative data and commands/events; dependencies and license/adoption strategy; failure handling; test evidence and build order.
+
+### Cross-system decisions
+
+- [System architecture](../architecture.md)
+- [Data and message contracts](../design/contracts.md)
+- [End-to-end packet/control sequences](../design/data-plane.md)
+- [Simulation/emulation coupling](../design/simulation-runtime.md)
+- [Deployment and subsystem ownership](../design/deployment.md)
+- [Fidelity, validation and reproducibility](../design/verification.md)
+- [External dependency matrix](../dependencies.md)
+
+A subsystem is a **bounded context**, not an automatic microservice. Common source code can be linked into one deterministic process, with external runtimes only where needed. Cross-subsystem state cannot be directly mutated.

@@ -1,122 +1,46 @@
-# SYS-15 — 网络仿真与外部协议适配
+# SYS-15 — Linux Packet Emulation, Protocol Simulators and Hardware-in-the-Loop
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** connect modeled links and network state to actual IP packets, external telecom simulators and optional SDR/hardware experiments. Distinguish **emulation** from accelerated discrete-event simulation and waveform-level RF experiments.
 
-## 1. Position and mission
+## Architecture: multiple backends, one declared capability contract
 
-**Position:** 让真实IP流量和第三方通信模拟器参与实验.
+| Backend | Execution mechanics | Fidelity / important limits |
+|---|---|---|
+| Linux network namespaces | one/few netns per modeled node, veth/TAP, tc netem, qdisc shaping and routes | real Linux IP traffic; link impairment approximation |
+| FRRouting | BGP/OSPF/IS-IS/BFD per selected virtual routers | genuine protocol convergence; not satellite MAC or native contact-graph routing |
+| ns-3/SNS3 | externally built C++ scenarios with pinned compatible revisions | network/protocol study, standard-specific PHY/MAC assumptions |
+| OpenSAND | satellite modem/channel emulation and real packet interfaces | DVB-S2/RCS2 profiles, not Starlink-proprietary protocol |
+| OpenAirInterface + Open5GS | separate 3GPP NTN experiment with RAN/core | explicit NTN profile; licensing and infrastructure obligations |
+| GNU Radio / SDR | IQ samples, GNU Radio flow graphs and supported RF hardware | real-time hardware, legal spectrum controls; not global network scale |
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Adapter interface and coupling model
 
-## 2. Core domain entities
+Adapters implement a versioned `EmulationBackend` contract: `DescribeCapabilities`, `PrepareTopology`, `Start`, `ApplyLinkState`, `InjectTraffic`, `CollectCapture`, `Stop`, `Cleanup`. Capability record includes timing ownership, supported link types, accepted units, packet encapsulation, kernel/privilege requirements, external binary digest, license/source revision and observability.
 
-- `EmulationNode`
-- `Namespace`
-- `VirtualLink`
-- `AdapterInstance`
-- `TimeBridge`
+**Mode A — offline comparison:** generate scenario/contact/traffic inputs, run external engine independently, import packet or performance traces. The two engines are not coupled in real time; this is safest for ns-3/SNS3 first integration.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+**Mode B — realtime impairment:** Rust controller emits real-wall-clock link schedule; privileged Linux worker updates netns/veth routes, qdisc rates/latencies/loss, then traffic generators send real IP packets. Measure qdisc update granularity, scheduling skew, command-to-kernel latency and capture timestamps.
 
-## 3. Internal modules and detailed capabilities
+**Mode C — synchronized co-simulation:** external engine advances only at negotiated conservative boundaries; designate a single simulation time authority, manage lookahead and causality, and prevent applying delay/loss twice. Use only after numerical validation.
 
-### 3.1 Linux netns/veth/tap
+## Linux implementation details
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Create a per-run namespace prefix, idempotent resource journal, explicit bridge/veth naming and sysctl/IP addresses. Keep netns creation under minimal CAP_NET_ADMIN in a separate worker, never in web application. Configure `tc netem` for variable delay/loss and `tbf`/`htb` (where appropriate) for shaping. Because qdisc behavior and kernel timers differ from a virtual clock, calibrate achieved rate, jitter and loss against trace captures before comparing with SYS-14 output.
 
-### 3.2 tc/netem时延丢包
+Provision traffic endpoints such as iperf3, ping and synthetic TCP/UDP flows. Instrument `tcpdump`/PCAP, interface counters, qdisc statistics and FRR routing/FIB state. Clean up all namespaces, virtual interfaces, processes and qdiscs on completion, cancellation and crash/restart. Do not run arbitrary shell commands from uploaded scenario files.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Data and interfaces
 
-### 3.3 路由守护进程
+Own `AdapterInstance`, `NamespaceId`, `VirtualInterface`, `ImpairmentSchedule`, `CaptureArtifact`, `TimeBridge`. Inputs: SYS-07 route/graph revision, SYS-09 IP topology, SYS-05/06/03 link capacity and delay snapshots, SYS-14 run actions. Events: `AdapterStarted`, `KernelLinkUpdated`, `PacketCaptured`, `TimeSkewExceeded`, `AdapterFailed`, `CleanupCompleted`.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## OSS and licensing constraints
 
-### 3.4 真实ping/iperf
+ns-3 GPL-2.0, SNS3 GPL-3.0, OpenSAND GPL/LGPL, FRR generally GPL-2.0+, Open5GS AGPL-3.0, OpenAirInterface RAN CSSL v1.0 (current): each requires pin/version/license and distribution review. Process isolation does not automatically eliminate license obligations. Native SDR transmission may be subject to legal restrictions; initial SDR/HIL experiments should use conducted/shielded setups and qualified users.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+## Acceptance and failure cases
 
-### 3.5 ns-3/SNS3/OpenSAND外部进程
+Worker lacks privileges, kernel/netem feature mismatch, FRR daemon exit, namespace name collisions, stale interface, packet loss calibration mismatch, external engine time skew or unsupported link-rate update. No silent substitution of analytical output for unavailable emulation.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+**Tests:** ping RTT approximately matches configured round-trip impairment within measured tolerance; iperf goodput reflects bottleneck; route failure causes a real packet outage and FRR convergence delay; wall-clock update skew bounded; two concurrent isolated runs do not share namespaces; forced crash cleanup leaves no resources. Capture reproducible environment digest and PCAP hash.
 
-### 3.6 SDR硬件适配
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 虚拟时间与墙钟同步
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 权限隔离
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 资源回收
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** simulation, network-control, space-network, access-network.
-- **Primary downstream:** observability, applications.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 链路损伤配置;虚拟接口管理;pcap导出;运行健康.
-
-**Domain events:** `AdapterStarted`, `LinkImpairmentChanged`, `PacketCaptured`, `AdapterFailed`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 宿主权限不足; 内核差异; 时间同步漂移; 外部模拟器崩溃; 残留netns.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** Linux tc/netem;FRRouting;ns-3/SNS3;OpenSAND;GNU Radio.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** ping/iperf链路可达; 注入丢包匹配统计; 清理无残留; 时间桥误差有界.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Build order:** simple netns pair → mutable tc impairment → multi-hop routed topology → FRR → offline ns-3/SNS3 comparison → optional HIL bridge.

@@ -1,122 +1,39 @@
-# SYS-11 — 安全与信任
+# SYS-11 — Identity, Trust, Authorization and Security Experiments
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** define and enforce security/trust policy across control interfaces, subscriber service and operational actions. Model credible security properties without inventing proprietary Starlink cryptography or shipping insecure pseudo-crypto as if production ready.
 
-## 1. Position and mission
+## Core components
 
-**Position:** 跨系统身份、授权和威胁模型.
+| Component | Position |
+|---|---|
+| Trust model | principals, service identities, terminal/subscriber relationships, device certificates/credentials as abstract identities |
+| Authorization engine | permission policy for operator, service, subsystem and terminal actions |
+| Credential lifecycle | creation, validity, rotation, revocation and expiry of simulated credentials |
+| Transport protection | optional real TLS/mTLS for live APIs; simulated crypto overhead on modeled links |
+| Management-plane isolation | separate management/control/data endpoints and permitted API audiences |
+| Audit ledger | immutable run-linked records of decisions, actions and security-relevant state transitions |
+| Threat experiment engine | replay, injection, denial of service, spoofed command, resource exhaustion and jamming **models** |
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Threat boundaries
 
-## 2. Core domain entities
+Assets: spacecraft control commands, routing updates, ground station operations, subscriber sessions, telemetry provenance and experiment artifacts. Trust assumptions differ: in-process simulation can pass a typed authenticated context; external worker APIs require actual authentication and least-privilege credentials. User-plane packets may be treated as encrypted payloads with explicit overhead and protected/unprotected toggles; the simulator should not claim compatibility with actual production SpaceX tunnel formats or keys.
 
-- `Identity`
-- `Credential`
-- `TrustPolicy`
-- `AuditRecord`
-- `SecurityIncident`
+Define principal/subject/action/resource/policy-decision tuples. A request has `principal_id`, `action`, `target_id`, `context`, `expected_revision` and `command_id`; policy yields `ALLOW` or `DENY` with reason. SYS-10 owns approval workflow, SYS-11 owns access decision, destination subsystem owns actual state mutation. The system must reject a route installation or spacecraft mode change without authorization, even if the command's source looks like an internal event.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+For deliberate attack scenarios use **bounded modeled behavior**: probabilistic telemetry delay, flood input at declared rates, forged command rejection, replay-idempotency test, link availability under interference from SYS-12. No offensive payloads or live credential harvesting are needed.
 
-## 3. Internal modules and detailed capabilities
+## Interfaces and events
 
-### 3.1 终端与控制端身份抽象
+Entities: `Principal`, `TrustAnchor`, `Credential`, `AuthorizationPolicy`, `SecurityFinding`, `AuditEntry`. APIs: `AuthorizeCommand`, `RotateCredential`, `RevokePrincipal`, `ValidateManagementConnection`, `RecordAuditEvent`. Events: `AuthorizationAllowed/Denied`, `CredentialExpired`, `TrustPolicyChanged`, `SecurityIncidentRecorded`.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Consumers: SYS-08 subscriber service, SYS-10 operations, SYS-07 controller and SYS-15 worker orchestration. Expose only redacted identifiers in public experiment reports; experiments should use synthetic test identities.
 
-### 3.2 密钥生命周期模型
+## Dependencies and isolation
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Use maintained Rust TLS and cryptographic libraries only when implementing **real** management API transport, never write custom crypto primitives. External OAI/Open5GS security is specific to its optional 3GPP profile; do not graft it onto baseline broadband access without defined contracts. Privileged Linux emulators run with limited capabilities, constrained resource quotas, isolated network namespaces and controlled input files.
 
-### 3.3 认证授权策略
+## Failures and acceptance
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Expired credential, authorization role mismatch, replayed command ID, untrusted telemetry origin, audit write failure, worker compromise simulation and management-plane DoS. Fail **closed** on unauthorized operational commands. Modeling degraded service due to an attack should remain separate from real implementation vulnerabilities.
 
-### 3.4 控制指令签名/审计抽象
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.5 管理面隔离
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 通信加密开销模型
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 重放/拒绝服务威胁场景
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 租户隔离
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 安全事件追踪
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** subscriber-core, operations, terminal.
-- **Primary downstream:** subscriber-core, operations, network-control.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 身份验证请求;权限策略;审计事件;凭据轮换.
-
-**Domain events:** `AuthAllowed`, `AuthDenied`, `CredentialRotated`, `SecurityViolation`, `AuditRecorded`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 凭据泄露; 重放; 越权控制; DoS; 时钟偏移.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** 成熟TLS/mTLS实现用于真实控制服务;不复刻专有加密.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 未授权指令拒绝; 审计不可缺项; 密钥过期导致预期行为.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Tests:** prohibited operator cannot disable satellite; authorized approval executes once; replay rejected/deduplicated; expired subscriber entitlement terminates policy service; security event trace causally ties to incident, with no secret-bearing payload in artifacts. Measure deny count, time-to-authorization, audit coverage, policy revision and simulated attack impact.

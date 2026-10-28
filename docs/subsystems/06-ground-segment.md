@@ -1,122 +1,39 @@
-# SYS-06 — 地面站与馈电网络
+# SYS-06 — Feeder Ground Stations, Antennas and Radio Gateways
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** terminate and manage **space-to-ground feeder** links, station antennas and ground-side radio infrastructure. A ground feeder site is **not** the subscriber core or public internet PoP (SYS-08/09).
 
-## 1. Position and mission
+## Components
 
-**Position:** 卫星馈电链路及地面射频基础设施.
+1. **Ground site registry:** geodetic position, altitude, regional location, climate model, availability, site IDs and coverage constraints.
+2. **Antenna farm and tracking:** exclusive beam/antenna resources, azimuth/elevation limits, slew/acquisition delays, tracking and pointing error.
+3. **Feeder link manager:** bidirectional Ka/other selected frequency links, contact candidates, acquisition and channel occupancy.
+4. **Radio/physical model:** EIRP/G/T, feeder rain fade, atmospherics, noise/interference, feeder coding and effective capacity.
+5. **Gateway radio termination:** bridge feeder bearer/frames to a ground network ingress; preserve modeled encapsulation/processing costs.
+6. **Site control:** radio health, power and environmental alerts, maintenance, antenna reassignment and feeder failover.
+7. **Ground ingress interface:** hand-off into an explicit terrestrial backhaul link to PoP, with distinct capacity and queue metrics.
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Technical link and resource design
 
-## 2. Core domain entities
+SYS-01 computes satellite/site line-of-sight and elevation windows; SYS-02 constrains satellite-side feeder radios; SYS-12 supplies weather/region. SYS-06 additionally checks antenna occupancy, frequency/polarization, acquisition time, uplink/downlink power and the site capacity ledger. Its feeder state machine is `INVISIBLE → VISIBLE → TRACKING → ACQUIRING → UP → DEGRADED → LOST`.
 
-- `GroundSite`
-- `FeederAntenna`
-- `FeederLink`
-- `RadioGateway`
-- `SiteAvailability`
+For each feeder direction compute `FSPL`, transmitter/receiver gain, pointing loss, atmospheric/gaseous/rain attenuation, receiver noise and coding/framing overhead. High-frequency feeder link rain fade should be configurable with externally justified reference-model parameters. Separate user RF and feeder carriers even if the same satellite is involved. Site capacity can be constrained by a limited number of simultaneous antennas and ground transport bandwidth.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+A feeder modem’s output is not an immediate public internet route: `GroundSite → BackhaulLink → PoP` is modeled by SYS-09. A radio site may have excellent satellite connectivity and still lose user traffic due to terrestrial backhaul outage.
 
-## 3. Internal modules and detailed capabilities
+## Data model and interfaces
 
-### 3.1 地面站选址与容量
+Own `GroundSiteId`, `AntennaId`, `FeederBearerId`, `StationResourceLease`, `SiteHealthState`, `RadioGatewayId`. External inputs: position/elevation, spacecraft resource state, regional spectrum/weather, SYS-07 gateway/route plan and SYS-09 backhaul availability.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Commands: `RequestFeederAcquisition`, `AllocateGroundAntenna`, `ReleaseAntenna`, `SetSiteOperationalMode`, `ApplyFeederPolicy`. Events: `FeederContactCandidate`, `AntennaTracking`, `FeederLinkEstablished`, `FeederLinkDegraded`, `FeederLinkLost`, `GroundSiteUnavailable`. Outputs include resource availability, direction-specific capacity/delay and termination-point mapping to SYS-09.
 
-### 3.2 天线跟踪
+## External dependencies and staged implementation
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+P1 simplified feeder RF + station tracking/antenna allocation in Rust; Python orbit/weather snapshots as inputs. [OpenSAND](https://www.opensand.org/overview.html) is a promising ground/user satellite broadband emulation reference but uses DVB-S2/RCS2 rather than an asserted Starlink feeder waveform; GPL/LGPL and operating environment review required. [GNU Radio](https://www.gnuradio.org/) is relevant for experimental waveform/SDR integration, not for constellation-scale event simulation. Optional SNS3 feeder link studies must pin exact matching ns-3 modules and data.
 
-### 3.3 馈电频段和链路预算
+## Failure modes and acceptance
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Rain fade, site power loss, antenna jam/overbooking, unavailable satellite radio, ground station maintenance, tracking timeout, regulatory exclusion and terrestrial backhaul outage. Fault ownership must distinguish **feeder failed** from **backhaul failed**; SYS-07 handles selection of an alternate site and SYS-13 reports customer impact.
 
-### 3.4 地面站可见窗口
+**Tests:** two satellites contending for one ground antenna are not both admitted; geometry expiry forces link loss; weather attenuation reduces capacity predictably; gateway failover includes acquisition and route install delay; a healthy feeder with failed backhaul is observable and still cannot reach internet sink; no double resource reservations. Capture site utilization, active feeder count, C/N, rain fade, link uptime, time-to-acquire and egress handoff packets.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.5 站点调度
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 射频收发/协议终止模型
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 站点电力和网络可用性
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 多卫星接入
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 站点故障和切换
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** orbital, spacecraft, environment, network-control.
-- **Primary downstream:** network-control, terrestrial-network, service-assurance.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 地面站能力与状态;馈电链路建连命令;地面数据接口.
-
-**Domain events:** `FeederAvailable`, `FeederEstablished`, `FeederLost`, `GroundSiteDegraded`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 雨衰; 地面站故障; 天线资源冲突; 卫星不可见; 站点回程中断.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** OpenSAND;GNU Radio;SNS3馈电模型.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 卫星切换馈电站; 雨衰容量下降; 馈电与地面IP出口职责分离.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Milestones:** site/antenna catalog → feeder link budget and acquisition → terrestrial handoff → failure and gateway-selection integration → external protocol emulation.

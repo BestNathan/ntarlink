@@ -1,11 +1,26 @@
-# ntarlink documentation entry
+# ntarlink Engineering Documentation
 
-1. [System overview and 16-subsystem catalog](system-overview.md)
-2. **[Detailed subsystem designs — 16 dedicated specifications](subsystems/README.md)**
-3. [Ownership, contracts and execution profiles](subsystem-boundaries.md)
-4. [End-to-end scenarios and acceptance gates](system-scenarios.md)
-5. [Target repository and runtime architecture](architecture.md)
-6. [Roadmap](roadmap.md)
-7. [Open-source integration candidates](open-source.md)
+**Status:** architecture proposal and staged implementation blueprint. The only existing executable functionality is the minimal Rust scenario validator and supporting Python/TypeScript scaffolding. Nothing in these specifications implies that a satellite PHY, IP path, terminal modem, or operational network has been built.
 
-The documents describe a complete target satellite-internet system, **not a claim that all subsystems are implemented**. Each subsystem has a separate detailed specification. Implementation is incremental and cross-subsystem acceptance driven.
+## Read in this order
+
+1. [System mission, functional scope, segment inventory](system-overview.md).
+2. [System architecture, control/data/management planes, runtime and target repository design](architecture.md).
+3. [Subsystem design index](subsystems/README.md) — 16 detailed, English-only specifications.
+4. [Canonical interfaces, schema, time and units](design/contracts.md).
+5. [Physical/packet pipeline and cross-system interactions](design/data-plane.md).
+6. [Simulation, emulation, fidelity and performance](design/simulation-runtime.md).
+7. [Open-source dependency decisions, links, licensing and integration gates](dependencies.md).
+8. [Delivery phases, cross-system tests and acceptance evidence](roadmap.md), [scenarios](system-scenarios.md).
+9. [Domain boundaries and state ownership](subsystem-boundaries.md); [open-source notes](open-source.md).
+
+## Architectural vocabulary
+
+A **segment** is physical/operational (space, user, ground, terrestrial, operations).
+A **subsystem** is a bounded domain with its own authoritative state and commands/events.
+A **component** is an independently testable module within a subsystem.
+An **adapter** maps an internal contract to an external engine, standard or device.
+A **run** is one reproducible virtual-time experiment.
+A **fidelity profile** states what has actually been modeled and what has not.
+
+See [design decisions](architecture.md#decisions-and-trade-offs). English is mandatory for source files, documentation, code comments, issue/PR titles created by project agents, identifiers and observable event names.

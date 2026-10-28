@@ -1,127 +1,40 @@
-# SYS-08 — 用户核心网与业务控制
+# SYS-08 — Subscriber Core, Service Sessions, Address Management and Policy
 
-> Status: design specification; implementation not implied. Logical bounded context, not necessarily an independently deployed service.
+**Mission:** be the authoritative logical core for **subscriber identity, authorization, service sessions, IP allocation and QoS/policy** in a Starlink-like broadband simulation. This does **not** assert the real Starlink system runs a 3GPP 5G core.
 
-## 1. Position and mission
+## Functional decomposition
 
-**Position:** 用户身份、服务会话、地址与策略的逻辑核心.
+1. **Subscriber registry:** logical subscriber identity, product/service profile, eligibility, authorized terminal set and tenancy; no real personal data required for experiments.
+2. **Authentication/authorization:** simulated identity challenge and policy check; cryptographic detail modeled at an abstract cost/latency level unless explicitly integrating a real stack.
+3. **Session manager:** independent logical session `UNREGISTERED → AUTHORIZING → ACTIVE → SUSPENDED → RECOVERING → RELEASED`, revisioned bearer/terminal association and mobility anchoring.
+4. **IP address manager:** subscriber IPv6 prefix or addresses, optional private IPv4 lease/pool, lease expiry/reuse, duplicate prevention and routing anchor.
+5. **Policy/QoS:** service tiers, allowed regions, bandwidth/priority/rate limits, quota and congestion policies; coordinate radio scheduling with SYS-05.
+6. **Accounting:** session usage, traffic volume and uptime records; deterministic fake billing calculation for studies, **not** real payment processing.
+7. **Service continuity:** radio bearer changes vs logical session state, anchor updates during ground gateway switches, reauthorization rules and recovery timers.
+8. **Optional 3GPP NTN adapter:** a separate configuration profile mapping simulated subscribers to real core functions with explicit standards and identifiers.
 
-**Purpose:** Provide a separately testable domain with explicit authority over its state and measurable contracts. It participates in a whole-system Starlink-like broadband experiment while avoiding assumptions about undisclosed SpaceX implementations.
+## Broadband logical core design
 
-## 2. Core domain entities
+Terminal → access attachment → **service authorization** → session creation → IP assignment and policy distribution → ground subscriber service/traffic anchor → terrestrial egress. The user's active session persists across beam and possibly gateway changes when configured. Do not equate `RadioBearerId` with `ServiceSessionId` or `TerminalId` with `SubscriberId`.
 
-- `Subscriber`
-- `Subscription`
-- `ServiceSession`
-- `IPLease`
-- `Policy`
-- `UsageRecord`
+IP policies: IPv6-first model with per-subscriber prefix or lease and a separate optional IPv4/CGNAT path modeled by SYS-09. Address allocation is a deterministic stateful pool; collisions and exhausted pools fail explicitly. For a changing PoP anchor, define either retained session anchor (possibly longer latency) or modeled anchor relocation with control delay, forwarding and NAT-state consequences.
 
-Each entity must eventually have a schema, identifier, lifecycle and ownership rules. Physical quantities require units and coordinate/time conventions.
+Session control owns authorization decisions from subscription + security context but never bypasses SYS-11 trust checks or SYS-12 regional rules. A disabled subscriber must prevent user-plane egress even when RF attachment is healthy. Rate limiting/QoS policy is enforced where packet scheduling and edge forwarding actually occur; the core distributes policy, it does not secretly create beam capacity.
 
-## 3. Internal modules and detailed capabilities
+## Data, interfaces and events
 
-### 3.1 用户订阅与授权模型
+Entities: `SubscriberId`, `SubscriptionProfile`, `TerminalBinding`, `AuthTransaction`, `ServiceSessionId`, `IPLeaseId`, `QoSPolicyId`, `UsageRecord`. Commands: `AuthorizeSubscriber`, `CreateSession`, `BindBearer`, `AssignAddress`, `UpdateSessionAnchor`, `ChangePolicy`, `ReleaseSession`. Events: `AuthorizationApproved/Denied`, `SessionEstablished`, `IPAssigned`, `SessionSuspended/Restored`, `PolicyUpdated`, `UsageRecorded`.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Consumes terminal identity, access radio attach, security verdict, regulatory eligibility, control-plane gateway and PoP choices. Publishes session/address/policy snapshots to SYS-05/07/09/13. Idempotent command IDs prevent duplicate IP lease/session creation after retries. Authentication sequence, simulated latency and denial reasons are visible in trace.
 
-### 3.2 接入鉴权接口
+## Technology and external dependencies
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+**Default P1/P2:** Rust domain state machine, deterministic test identities and address allocator with documented simulated authentication. Generic DHCP/IPAM or external AAA may be integrated later as a separate component. **NR-NTN option:** [Open5GS](https://github.com/open5gs/open5gs) for 5GC/EPC; currently AGPL-3.0 for open-source files and requires legal/deployment review. Pair with a compatible NTN RAN profile (e.g. OAI) rather than treating a 5G core as an unexplained replacement for satellite broadband services.
 
-### 3.3 会话生命周期
+## Failure modes, acceptance and milestones
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
+Invalid subscription, failed identity check, expired entitlement, duplicate terminal binding, IP pool exhaustion, service-anchor outage, session expiry, subscriber revocation and incompatible QoS request.
 
-### 3.4 IPv4/IPv6分配
+**Tests:** user terminal attaches but unauthorized subscriber has no egress; authorized session receives nonduplicated IP; radio handover preserves session/address if configured; gateway change with anchor retained/relocated has explicit interruption; quota/policy affects actual packet scheduling/edge forwarding; test subscribers are synthetic and audit records are complete.
 
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.5 会话锚点与移动性
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.6 QoS策略
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.7 限速/配额
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.8 用量计量
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.9 故障恢复
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-### 3.10 多租户/漫游场景抽象
-
-Implement as an independently verifiable capability: specify inputs, output/state transition, physical or protocol assumptions, error handling, metrics and reference tests. Choose analytical approximations before protocol-accurate models where appropriate.
-
-## 4. Boundaries and dependencies
-
-- **Primary upstream:** terminal, access-network, security.
-- **Primary downstream:** access-network, terrestrial-network, service-assurance.
-- **Boundary:** this subsystem owns only its domain state and behavior; external orchestration, shared event timing, visualization and experiment storage belong to platform services. Avoid implementing neighboring domains inside this module.
-- **Control plane:** receives versioned commands and configuration; emits state transition events.
-- **Data plane:** if relevant, operates on typed link/packet/bearer state without cross-process RPC per packet.
-
-## 5. Interfaces and contracts
-
-**Initial API surfaces:** 授权请求;会话建立/更新/释放;地址分配;策略查询.
-
-**Domain events:** `SubscriberAuthorized`, `SessionEstablished`, `IPAssigned`, `PolicyChanged`, `SessionReleased`.
-
-Define each message's producer, consumer, schema, timestamps, idempotency and failure semantics before implementation. Consumers must tolerate delayed, duplicated and stale events where execution mode permits.
-
-## 6. Lifecycle and failure modes
-
-**Expected failure/edge cases:** 认证失败; 地址池耗尽; 会话锚点失效; 切换期间会话丢失.
-
-State transitions must be observable. For each fault, specify detection, propagation to dependent systems, impact on traffic, recovery and user-visible outcome. Fault injection is an explicit test input.
-
-## 7. Technology and open-source integration
-
-**Candidates:** Open5GS仅限可选3GPP NTN profile;通用DHCP/IPAM.
-
-Use Rust for performance-sensitive state/event/packet logic, Python for scientific/orbital/experiment workflows and TypeScript for UI when applicable. Existing C/C++ stacks remain independent adapters. These are candidates, not approved or verified dependencies.
-
-## 8. Verification and acceptance
-
-**Priority acceptance cases:** 未授权用户不能联网; 切换后会话连续; IPv6与地址租期正确.
-
-Each case needs reproducible input, fixed seed where stochastic, expected invariants, per-hop/per-entity trace, and explicit fidelity label. Cross-system acceptance is indexed in [system scenarios](../system-scenarios.md).
-
-## Architectural contract and implementation requirements
-
-### Domain model and ownership
-- Own the entities above as authoritative state; external systems consume snapshots or events, not direct mutation.
-- Explicitly document each state machine (initial, active, degraded, failed, recovering) and legal transitions. Avoid global singleton mutable state.
-- All measurements include units; geometry includes reference frame and epoch; time-bearing events distinguish simulated time, orbital UTC and wall clock.
-
-### Interfaces and consistency
-- Version messages with `schema_version`, `run_id`, `scenario_id`, `sim_time_ns`, `sequence`, `source`, `trace_id`.
-- Separate queries, commands and domain events. Define idempotency keys and error codes for mutating commands; allow batched snapshots for large constellations.
-- In deterministic runs, process events in stable timestamp/priority/sequence order. Hot-path packet handling must not depend on synchronous remote RPC.
-
-### Fidelity and performance
-- **L0 analytical:** geometry/aggregate capacity without packets; **L1 discrete event:** packets, queues, modeled links; **L2 protocol:** external validated PHY/MAC stacks; **L3 emulation:** real Linux/IP packets; **L4 HIL:** optional SDR/hardware under legal constraints.
-- Every model records assumptions, source, validation reference, version, seed and expected scalability. Report measured performance, not hypothetical throughput.
-
-### Test and operational requirements
-- Unit tests cover model invariants and invalid inputs; contract tests cover versioning; integration tests cover upstream/downstream events; E2E tests cover failure and recovery.
-- Emit domain events, per-entity metrics, trace correlation and structured error reasons; capture artifacts for reproducibility.
-- Never claim proprietary Starlink compatibility; third-party integration requires license, maintenance and model-fidelity review.
-
-## 9. Delivery milestones
-
-- **M0 Contract:** entities, states, interfaces, units, scenario fixtures and failure semantics reviewed.
-- **M1 Analytical:** deterministic simplified model with unit and contract tests.
-- **M2 Integrated:** participates in a whole-system E2E scenario with trace and fault injection.
-- **M3 Fidelity:** reference-calibrated physical/protocol model or reviewed upstream adapter.
-- **M4 Scale/Operations:** benchmarks, observability, resource limits and recovery validated.
-
-M0 documentation does **not** mean M1–M4 is implemented.
+**Build order:** subscriber/session state + synthetic auth → deterministic IP allocation → policy enforcement integration → mobility/anchor scenarios → optional standalone 3GPP core profile.
