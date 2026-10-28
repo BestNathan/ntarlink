@@ -1,0 +1,6 @@
+{
+  "name": "minimal-leo-lab",
+  "satellites": [{"id":"sat-a"},{"id":"sat-b"}],
+  "terminals": [{"id":"ue-a","latitude":31.2,"longitude":121.5}],
+  "gateways": [{"id":"gw-a","latitude":30.3,"longitude":120.2}]
+}
