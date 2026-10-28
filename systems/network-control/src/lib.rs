@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn direct_route_preferred_until_link_down() {
-        let s = Scenario::from_json(include_str!("../../scenarios/isl-failure.json")).unwrap();
+        let s = Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
         let up: Vec<_> = s.links.iter().map(|x| x.up).collect();
         let route = next_hops(&s.links, &up, "internet", 1200);
         let direct_index = route["sat-a"];
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn no_path_when_feeder_down() {
-        let s = Scenario::from_json(include_str!("../../scenarios/minimal.json")).unwrap();
+        let s = Scenario::from_json(include_str!("../../../scenarios/minimal.json")).unwrap();
         let mut up: Vec<_> = s.links.iter().map(|x| x.up).collect();
         let feeder = s.links.iter().position(|x| x.id == "feeder-b-gw").unwrap();
         up[feeder] = false;
