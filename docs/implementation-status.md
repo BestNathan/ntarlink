@@ -30,6 +30,23 @@ The existing P0 Rust packet simulator executes a deterministic packet journey ac
 
 Read [historical pass instructions](../scenarios/ORBITAL-README.md) for the end-to-end command. This demo uses the ISS and a co-located laboratory ground site for reproducibility; it **does not** represent an operational Starlink constellation.
 
+## Bounded offline SYS-01 ephemeris snapshots
+
+The `ntarlink_orbital.ephemeris` CLI exports sorted, frame-tagged ITRS
+satellite position snapshots on a bounded, half-open UTC time grid. It
+reuses the existing pinned SGP4/Skyfield position provider and writes an
+independent JSON artifact with exact input/output SHA-256 provenance and
+dependency versions. A global 500,000 satellite-time-pair cap and explicit
+microsecond-resolution time grid prevent unbounded work and false
+nanosecond precision. Unit tests cover deterministic ordering, time
+boundaries, invalid IDs, malformed positions, resource limits and digests;
+CI generates a real historical ISS ephemeris.
+
+This offline analytical export does **not** modify the Rust packet runtime,
+contact windows or RF budgets. It has no interpolation accuracy bound,
+velocity output, EOP calibration or constellation-scale benchmark.
+See [ephemeris artifact design](design/orbital-ephemeris-artifacts.md).
+
 ## First SYS-05 analytical RF budget
 
 A separate `systems/access/python` package now consumes the compiled
@@ -90,7 +107,7 @@ authorization, modem acquisition, downlink scheduling or handover signaling.
 
 ## Remaining subsystem work
 
-P1 next: independent Earth-orientation reference vectors, orbit catalog/ephemeris output, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
+P1 next: independent Earth-orientation reference vectors, large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
 
 P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
 
