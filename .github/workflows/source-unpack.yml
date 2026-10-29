@@ -2,7 +2,7 @@ name: Stage Pages source files
 on:
   push:
     branches: [feat/pages-system-showcase]
-    paths: [.pages-source.xz.b64]
+    paths: [.pages-source.part09]
 permissions:
   contents: write
 jobs:
@@ -17,8 +17,9 @@ jobs:
           python3 - <<'PY'
           import base64, json, lzma
           from pathlib import Path
-          archive = Path(".pages-source.xz.b64")
-          files = json.loads(lzma.decompress(base64.b64decode(archive.read_text().strip())))
+          parts = [Path(f".pages-source.part{i:02d}") for i in range(1, 10)]
+          archive_text = "".join(part.read_text().strip() for part in parts)
+          files = json.loads(lzma.decompress(base64.b64decode(archive_text)))
           expected = {
             "applications/console/package.json",
             "applications/console/tsconfig.json",
@@ -38,7 +39,8 @@ jobs:
               path = Path(name)
               path.parent.mkdir(parents=True, exist_ok=True)
               path.write_text(content, encoding="utf-8")
-          archive.unlink()
+          for part in parts:
+              part.unlink()
           Path(".github/workflows/source-unpack.yml").unlink()
           print("Extracted", len(files), "verified source files")
           PY
