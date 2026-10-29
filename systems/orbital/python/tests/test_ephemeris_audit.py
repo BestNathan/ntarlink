@@ -111,6 +111,13 @@ class EphemerisAuditTests(unittest.TestCase):
                 audit_interpolation(self.doc, self.quadratic, threshold)
         self.assertEqual(self.calls, [])
 
+    def test_total_probe_limit_fails_before_propagation(self):
+        large = {**self.doc, "duration_ns": 2_000_000_000 * 100_001,
+                 "sample_count": 100_001}
+        with self.assertRaisesRegex(ValueError, "probe limit"):
+            audit_interpolation(large, self.quadratic, 1.0, 7)
+        self.assertEqual(self.calls, [])
+
     def test_malformed_grid_and_positions_fail_before_propagation(self):
         bad = json.loads(json.dumps(self.doc))
         bad["satellites"][0]["samples"][1]["at_ns"] += 1
