@@ -41,7 +41,14 @@ The loader checks the byte-for-byte digest, 8 MB file limit, 2–50,000 parsed
 daily records, consecutive UTC MJD, finite/bounded DUT1 and polar motion,
 simulation coverage and explicit validity deadline. It **fails closed**
 outside that coverage; no silent extrapolation or auto-refresh is allowed.
-The deadline cannot exceed the last tabulated UTC epoch.
+The deadline cannot exceed the last tabulated UTC epoch. Simulation
+intervals are half-open in integer nanoseconds. Because Python datetime and
+the Skyfield interface represent only microseconds, the loader conservatively
+rounds the **last included nanosecond up** to a microsecond when checking
+coverage, expiry and prediction flags. A submicrosecond overrun at a source
+boundary therefore fails closed rather than being silently truncated. This
+may reject a submicrosecond interval that would otherwise fit a strict
+nanosecond boundary; it does not imply nanosecond frame accuracy.
 
 ### Observation/prediction quality policy
 
