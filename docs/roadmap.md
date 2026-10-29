@@ -20,6 +20,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Optional bisection refinement of bracketed geometric contact boundaries (SYS-01); sample step and tolerance are recorded in the manifest. Detected coarse setting edges are now conservative rather than admitting known-invisible time.
 - [x] Published historical ISS GCRS/geodetic/topocentric regression and coarse trailing-interval coverage (not independent EOP validation).
 - [x] Bounded offline SYS-01 ITRS ephemeris JSON artifact with stable UTC sampling, source hashes and historical ISS CI validation (not interpolation or EOP validation).
+- [x] Offline, SHA-256 provenance-checked SYS-01 linear ITRS ephemeris **midpoint** error audit against the same SGP4 provider, with a configurable CI threshold (not a continuous interpolation bound or independent reference).
 - [x] Independent published Vallado/Astropy/Orekit TEME-to-PEF-to-ITRF reference position with pinned historical UT1/polar motion and a separate Skyfield transform regression (test-only; no production EOP ingestion).
 - [x] Opt-in versioned, SHA-256-pinned local IERS finals2000A ingestion for production Skyfield timescales, with strict coverage/expiry checks and provenance (no bundled IERS archive or independent multi-epoch calibration).
 - [x] Small pinned excerpts of published IERS 2004/2014 observed rows and 2026 predicted rows, with production EOP parsing and two-epoch independent GMST82 comparison (not a complete authenticated archive or external multi-epoch ITRF reference).
