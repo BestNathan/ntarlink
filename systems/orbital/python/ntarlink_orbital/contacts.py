@@ -410,7 +410,9 @@ def main(argv=None):
             "limitations": "not light-time iteration, PHY group delay, or route-weight refresh",
         },
         "orbit_input_sha256": hashlib.sha256(raw_config).hexdigest(),
-        "earth_orientation": provider.earth_orientation,
+        "earth_orientation": getattr(
+            provider, "earth_orientation", {"mode": "external_position_provider"}
+        ),
         "skyfield_version": version("skyfield"),
         "sgp4_version": version("sgp4"),
         "generated_contacts": len(result["contacts"]),
