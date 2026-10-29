@@ -9,7 +9,8 @@ agrees with the same pinned SGP4/Skyfield position provider at fixed
 The default is one midpoint; optional 3- and 7-probe modes sample evenly
 spaced interior points, including the midpoint. It reports both midpoint-only
 and all-probe maximum/RMS three-dimensional position errors in meters,
-globally and per satellite. The configured threshold is an experiment-specific gate, **not**
+globally and per satellite. The configured threshold is an
+experiment-specific gate, **not**
 a certified interpolation accuracy or a continuous bound.
 
 This is an analytical reproducibility/quality probe, not a replacement for
@@ -46,7 +47,8 @@ after measuring the relevant orbit and sampling conditions.
   in default mode. With N probes per interval, the step must be divisible
   by 1,000 × (N+1) nanoseconds, so every interior probe is microsecond-aligned.
 - A minimum of two samples per satellite and a maximum of 500,000
-  satellite-time pairs are enforced. The ephemeris artifact and manifest are
+  satellite-time pairs, plus a separate cap of 500,000 total interior probes,
+  are enforced before propagation. The ephemeris artifact and manifest are
   each limited to 128 MB. Malformed/nonfinite positions and irregular sample
   timestamps are rejected before the provider is invoked.
 - Every complete adjacent sample pair has 1, 3 or 7 evenly spaced interior
