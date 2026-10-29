@@ -16,6 +16,7 @@ from functools import lru_cache
 from importlib.metadata import version
 from pathlib import Path
 
+from .eop import build_timescale
 from .kinematics import estimate_range_rate_mps, first_order_doppler_shift_hz
 
 from .geometry import (
@@ -39,7 +40,7 @@ def parse_utc(iso_timestamp: str) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def build_sgp4_provider(config: dict, duration_ns: int):
+def build_sgp4_provider(config: dict, duration_ns: int, config_dir: Path | None = None):
     """Return a cached position provider yielding ITRS x/y/z in meters.
 
     Skyfield performs the TEME -> ITRS transformation; raw TEME positions
@@ -53,7 +54,8 @@ def build_sgp4_provider(config: dict, duration_ns: int):
     if not math.isfinite(max_tle_age_days) or max_tle_age_days <= 0:
         raise ValueError("max_tle_age_days must be positive and finite")
 
-    timescale = load.timescale(builtin=True)
+    timescale, eop_info = build_timescale(
+        config.get("earth_orientation"), epoch, duration_ns, config_dir\n    )
     satellites = {}
     for entry in config["satellites"]:
         identifier = str(entry["id"])
@@ -84,6 +86,7 @@ def build_sgp4_provider(config: dict, duration_ns: int):
             raise ValueError(f"SGP4 propagation failed: {satellite_id}, t={time_ns}")
         return result
 
+    position.earth_orientation = eop_info
     return position
 
 
@@ -367,7 +370,9 @@ def main(argv=None):
     scenario = json.loads(args.scenario.read_text(encoding="utf-8"))
     raw_config = args.orbit_config.read_bytes()
     config = json.loads(raw_config)
-    provider = build_sgp4_provider(config, int(scenario["duration_ns"]))
+    provider = build_sgp4_provider(
+        config, int(scenario["duration_ns"]), args.orbit_config.resolve().parent
+    )
     result = generate_scenario(scenario, config, provider)
     kinematics = generate_contact_kinematics(scenario, config, provider, result["contacts"])
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
@@ -404,6 +409,7 @@ def main(argv=None):
             "limitations": "not light-time iteration, PHY group delay, or route-weight refresh",
         },
         "orbit_input_sha256": hashlib.sha256(raw_config).hexdigest(),
+        "earth_orientation": provider.earth_orientation,
         "skyfield_version": version("skyfield"),
         "sgp4_version": version("sgp4"),
         "generated_contacts": len(result["contacts"]),
