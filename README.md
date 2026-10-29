@@ -22,9 +22,11 @@ cd applications/console && npm install && npm run check
 
 The JSON report includes per-packet status, drop reason, route revisions and a timestamped, hop-by-hop packet trace.
 
-## GitHub Pages system showcase
+## GitHub Pages: showcase and interactive demo
 
-The [interactive system showcase](https://bestnathan.github.io/ntarlink/) presents all 16 subsystem capability areas, network topology, simulated event timelines and failure scenarios using explicitly **mock data**. The site is built from [applications/console/pages/index.html](applications/console/pages/index.html) and published by [.github/workflows/pages.yml](.github/workflows/pages.yml) after GitHub Pages has been enabled for the repository. If the URL is not yet active, see [Pages setup and deployment](docs/pages.md).
+The [Platform Showcase](https://bestnathan.github.io/ntarlink/) introduces the system and its 16 engineering domains. The separate **[Mission Control Demo](https://bestnathan.github.io/ntarlink/demo/)** provides a network overview and navigable workspaces for all 16 subsystems; each subsystem has **Overview, Assets, Operations and Telemetry** pages with synthetic example records and local mock interactions. Importing a local Rust `SimulationReport` JSON shows genuine packet totals in a separately labeled browser-only panel.
+
+The site is served from [applications/console/pages](applications/console/pages/index.html) and deployed by [.github/workflows/pages.yml](.github/workflows/pages.yml). All built-in telemetry is **synthetic**, not live Starlink or production ntarlink data. See the [Demo Console design](docs/demo-console.md) and [Pages deployment guide](docs/pages.md). The URLs require successful GitHub Pages deployment.
 
 ## Repository architecture
 

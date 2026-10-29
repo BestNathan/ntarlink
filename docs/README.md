@@ -4,6 +4,8 @@
 
 ## Read in this order
 
+**Interactive product prototype:** [Mission Control Demo information architecture](demo-console.md) and [GitHub Pages deployment](pages.md). The system demo is separate from the platform showcase and contains four routed views per subsystem.
+
 0. [Current implementation status, fidelity and run commands](implementation-status.md).
 1. [System mission, functional scope, segment inventory](system-overview.md).
 2. [System architecture, control/data/management planes, runtime and target repository design](architecture.md).
