@@ -63,6 +63,19 @@ See [access implementation](../../systems/access/README.md). Physical
 interference generation, beam scheduling, antenna patterns, MAC and handover
 remain planned.
 
+## Standalone beam-frame scheduler milestone
+
+The `systems/access/rust` crate provides an isolated, deterministic
+weighted deficit round-robin beam-frame model. It enforces a byte budget
+derived from bitrate and frame duration, includes fixed per-packet wire
+overhead, and rejects packets larger than one frame or exceeding the shared
+queue budget. Tests cover two-terminal weighted service, finite capacity,
+eventual service for a larger packet and reproducible terminal ordering.
+This is a scheduling primitive only: it has **not** been integrated with
+the packet engine or linked to the SYS-01 contact schedule, physical
+SINR/MODCOD, terminal attach state or service-core authorization. Integration
+requires an explicit resource/bearer contract and packet-grant event bridge.
+
 ## Required verification
 
 Radio power and SINR calculation against independent reference values; Doppler sign/units; beam footprint and steering limits; two terminals exceeding shared beam capacity produce constrained grants; weighted fairness and no starvation; interference reduces effective rate; radio blackout/handover causes measurable packet/service interruption; handover does not accidentally re-create an authorized service session. Report beam goodput, scheduled resources, BLER, packet queue delay, attach completion, handover outages and radio coverage.

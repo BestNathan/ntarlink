@@ -70,3 +70,30 @@ never re-runs SGP4 or performs per-packet RF calculations.
 
 See [SYS-05 design](../../docs/subsystems/05-access-network.md) and
 [SYS-01 orbital contacts](../../scenarios/ORBITAL-README.md).
+
+## Experimental deterministic MAC frame scheduler (Rust)
+
+The standalone `systems/access/rust` crate (`ntarlink-access-scheduler`)
+implements a first bounded **single-direction beam-frame allocator**. It
+accepts weighted terminal queues, accounts for fixed per-packet wire overhead,
+limits aggregate queued wire bytes and allocates at most
+`floor(capacity_bps * frame_duration_ns / 8e9)` bytes per frame. Weighted
+deficit round robin accrues credit for backlogged terminals once per frame,
+caps credit at one frame, and rotates the first terminal to avoid fixed-order
+bias. Stable terminal-ID ordering and integer arithmetic make repeated runs
+deterministic. An oversized packet is rejected rather than fragmented.
+
+```sh
+cargo test -p ntarlink-access-scheduler
+cargo clippy -p ntarlink-access-scheduler --all-targets -- -D warnings
+```
+
+The two-terminal saturated test demonstrates a 3:1 weighted grant split
+within a 400-byte frame, queue accounting, bounded grants, tight-frame
+alternation and eventual service for larger packets. This is a **standalone
+L1 MAC scheduling primitive**, not yet connected to the Rust packet runtime,
+the SYS-01 contact timeline, subscriber admission or actual RF/SINR outcomes.
+It does not create service sessions, model control slots, implement BLER or
+transmit RF signals. Each frame currently discards fractional-bit capacity;
+unused bytes do not carry over. Per-frame work is proportional to active
+terminals plus granted packets, with queue storage bounded in wire bytes.

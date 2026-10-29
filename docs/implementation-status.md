@@ -59,6 +59,20 @@ closed, and the 500,000-sample bound is enforced. This is **discrete sampled
 analysis**, not a live RF waveform, continuously interpolated SINR, physical
 interference prediction, admission or MAC scheduling.
 
+## Standalone SYS-05 beam-frame resource scheduler
+
+The Rust `systems/access/rust` crate now models a finite-capacity,
+single-direction beam-frame allocator using deterministic weighted deficit
+round robin. Per-terminal packet queues consume a shared bounded wire-byte
+budget, and frame grants account for fixed per-packet overhead. Unit tests
+exercise two saturated terminals at 3:1 weight, per-frame byte conservation,
+small-frame alternation, deferred large-packet service, invalid input and
+stable terminal ordering. The crate is compiled and tested by the existing
+Rust workspace CI. **It is not yet connected to the packet runtime**:
+scenario links still use their existing independent per-link capacities, and
+there is no PHY admission, MAC grant scheduling of real simulated packets,
+beam steering, contact-driven eligibility or subscriber authorization.
+
 ## Remaining subsystem work
 
 P1 next: independent Earth-orientation reference vectors, orbit catalog/ephemeris output, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
