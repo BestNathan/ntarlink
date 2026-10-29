@@ -112,6 +112,38 @@ class PinnedEopTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exceeds the last"):
             self.timescale(self.config(until=self.day + timedelta(days=2)))
 
+    def test_submicrosecond_end_fails_closed_at_expiry_and_coverage(self):
+        # A single nanosecond at the final tabulated UTC instant is valid.
+        # Two nanoseconds would extend past it, even though datetime cannot
+        # represent that second nanosecond directly.
+        boundary = self.day + timedelta(days=1)
+        config = self.config(until=boundary)
+        self.timescale(config, boundary, duration_ns=1)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.timescale(config, boundary, duration_ns=2)
+
+        # When expiry is later than the source coverage, the coverage check
+        # must still reject a submicrosecond overrun of the last source day.
+        # A later expiry is invalid itself, so this also tests the explicit
+        # deadline/source invariant rather than silently extrapolating.
+        with self.assertRaisesRegex(ValueError, "exceeds the last"):
+            self.timescale(self.config(until=boundary + timedelta(days=1)),
+                           boundary, duration_ns=1)
+
+    def test_submicrosecond_end_includes_next_day_prediction(self):
+        boundary = self.day + timedelta(days=1)
+        rows = [self.rows[0], self.rows[1], self.rows[2],
+                (boundary + timedelta(days=1), -0.14, 0.33, -0.44, "P", "I")]
+        config = self.config(rows, until=boundary + timedelta(days=1))
+        # The following predicted day is not needed for an instant exactly
+        # at the observed boundary, but is needed one nanosecond later.
+        self.timescale(config, boundary, duration_ns=1)
+        with self.assertRaisesRegex(ValueError, "predicted EOP"):
+            self.timescale(config, boundary, duration_ns=2)
+        config["allow_predictions"] = True
+        _, info = self.timescale(config, boundary, duration_ns=2)
+        self.assertEqual(info["predicted_interpolation_days"], 1)
+
     def test_predictions_are_rejected_only_when_used_for_interpolation(self):
         # Forecasts elsewhere in a full IERS archive need not invalidate
         # an experiment whose entire interpolation window is observed.
