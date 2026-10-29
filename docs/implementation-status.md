@@ -144,6 +144,19 @@ authorization, modem acquisition, downlink scheduling or handover signaling.
 
 Small fixed-width excerpts transcribed from the published IERS finals2000A rolling file (2004, 2014 and 2026) are pinned as test fixtures. Production EOP parsing and two-epoch independent GMST82/IAU-1980 transform agreement are exercised, along with forecast rejection/opt-in. See [source and limitations](design/iers-observed-excerpts.md). These are not an authenticated complete IERS archive or independently published multi-epoch ITRF vectors.
 
+## Production frame cross-check at multiple instants
+
+The production SGP4/Skyfield ITRS provider is regression-tested at three
+2014-01-23 UTC instants against raw SGP4 TEME positions transformed by a
+separate test-only Vallado GMST82/IAU-1980 implementation. It consumes
+the pinned official 2014 IERS excerpt and checks SHA-256 provenance,
+observed EOP policy, three-dimensional position agreement within 0.5 m
+and negative controls for omitted UT1 or polar motion. The comparison
+tests frame wiring, not independent orbital truth. It does not supply
+externally published ITRF vectors for several years, a complete certified
+IERS archive or independently maintained leap-second tables. See
+[frame validation](design/orbital-frame-validation.md).
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
