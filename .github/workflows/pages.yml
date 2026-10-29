@@ -1,4 +1,4 @@
-name: Publish System Showcase
+name: Publish ntarlink Showcase and Demo Console
 on:
   push:
     branches: [main]
@@ -24,12 +24,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Validate subsystem catalog and browser script
-        run: python3 scripts/check_pages_site.py
+      - name: Validate showcase and all demo subsystem routes
+        run: |
+          python3 scripts/check_pages_site.py
+          node scripts/test_demo_console.cjs
       - name: Prepare standalone site
         run: |
           mkdir -p _site
-          cp applications/console/pages/index.html _site/index.html
+          cp -R applications/console/pages/. _site/
+          test -f _site/index.html
+          test -f _site/demo/index.html
+          test -f _site/demo/data.js
+          test -f _site/demo/app.js
+          test -f _site/demo/styles.css
           touch _site/.nojekyll
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
