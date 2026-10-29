@@ -12,7 +12,7 @@
 3. [Subsystem design index](subsystems/README.md) — 16 detailed, English-only specifications.
 4. [Canonical interfaces, schema, time and units](design/contracts.md).
 5. [Physical/packet pipeline and cross-system interactions](design/data-plane.md).
-6. [Simulation, emulation, fidelity and performance](design/simulation-runtime.md).
+6. [Simulation, emulation, fidelity and performance](design/simulation-runtime.md); [shared beam-frame packet grants](design/beam-frame-packet-bridge.md).
 7. [Open-source dependency decisions, links, licensing and integration gates](dependencies.md).
 8. [Delivery phases, cross-system tests and acceptance evidence](roadmap.md), [scenarios](system-scenarios.md).
 9. [Domain boundaries and state ownership](subsystem-boundaries.md); [open-source notes](open-source.md).

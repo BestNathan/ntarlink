@@ -167,6 +167,23 @@ impl BeamScheduler {
         Ok(())
     }
 
+    /// Drop all queued packets for a bearer when contact or link availability is lost.
+    /// Already-issued grants are not revoked (P0 completion-after-departure).
+    pub fn discard_terminal(&mut self, terminal_id: &str) -> Result<Vec<String>, String> {
+        let index = self
+            .terminals
+            .binary_search_by(|t| t.id.as_str().cmp(terminal_id))
+            .map_err(|_| format!("unknown terminal: {terminal_id}"))?;
+        let mut removed = Vec::new();
+        let terminal = &mut self.terminals[index];
+        while let Some(packet) = terminal.pending.pop_front() {
+            self.queued_bytes -= packet.wire_bytes;
+            removed.push(packet.id);
+        }
+        terminal.deficit_bytes = 0;
+        Ok(removed)
+    }
+
     /// Grant one frame. Each backlogged terminal earns weight * quantum bytes
     /// once per frame, capped at one frame. Idle terminals lose old credit.
     /// A rotating starting terminal avoids fixed-order tight-budget bias.
@@ -393,6 +410,20 @@ mod tests {
         assert_eq!(beam.queued_bytes(), 200);
         assert_eq!(beam.schedule_frame().unwrap().used_bytes, 200);
         assert_eq!(beam.queued_packets(), 0);
+    }
+
+    #[test]
+    fn discarding_one_bearer_preserves_other_terminal_and_queue_accounting() {
+        let mut beam = BeamScheduler::new(config(400), terminals()).unwrap();
+        beam.enqueue("ue-a", "a", 80).unwrap();
+        beam.enqueue("ue-b", "b", 80).unwrap();
+        assert_eq!(beam.discard_terminal("ue-a").unwrap(), vec!["a"]);
+        assert_eq!(beam.queued_bytes(), 100);
+        assert_eq!(beam.queued_packets(), 1);
+        assert!(beam.discard_terminal("missing").is_err());
+        let grants = beam.schedule_frame().unwrap().grants;
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].packet_id, "b");
     }
 
     #[test]

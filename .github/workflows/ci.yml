@@ -16,7 +16,7 @@ jobs:
           node-version: '22'
       - run: python scripts/check_pages_site.py
       - run: node scripts/test_demo_console.cjs
-      - run: python -m json.tool scenarios/minimal.json > /dev/null && python -m json.tool scenarios/isl-failure.json > /dev/null && python -m json.tool scenarios/visibility-handover.json > /dev/null && python -m json.tool scenarios/orbital-pass.json > /dev/null && python -m json.tool scenarios/orbit-sources.sample.json > /dev/null && python -m json.tool scenarios/rf-budgets.sample.json > /dev/null && python -m json.tool platform/contracts/schemas/scenario.schema.json > /dev/null
+      - run: python -m json.tool scenarios/beam-uplink-contention.json > /dev/null && python -m json.tool scenarios/minimal.json > /dev/null && python -m json.tool scenarios/isl-failure.json > /dev/null && python -m json.tool scenarios/visibility-handover.json > /dev/null && python -m json.tool scenarios/orbital-pass.json > /dev/null && python -m json.tool scenarios/orbit-sources.sample.json > /dev/null && python -m json.tool scenarios/rf-budgets.sample.json > /dev/null && python -m json.tool platform/contracts/schemas/scenario.schema.json > /dev/null
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -30,6 +30,10 @@ jobs:
       - run: cargo run -p ntarlink-cli -- validate scenarios/minimal.json
       - run: cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
       - run: cargo run -p ntarlink-cli -- simulate scenarios/isl-failure.json --json > /tmp/ntarlink-report.json
+      - name: Verify shared-beam uplink grant packet accounting
+        run: |
+          cargo run -p ntarlink-cli -- simulate scenarios/beam-uplink-contention.json --json > /tmp/beam-report.json
+          python3 -c 'import json; x=json.load(open("/tmp/beam-report.json")); assert (x["injected"], x["delivered"], x["dropped"]) == (8,8,0), x; assert len(x["beam_grants"])==8 and all(g["wire_bytes"]==1220 for g in x["beam_grants"]); h=sorted((h for p in x["packets"] for h in p["hops"] if h["link_id"].startswith("user-")), key=lambda h:h["transmit_started_ns"]); assert [q["transmit_started_ns"] for q in h]==[i*10000000 for i in range(8)]; assert all(q["transmit_completed_ns"]-q["transmit_started_ns"]==10000000 for q in h); print("Shared uplink beam:", len(h), "grants")'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

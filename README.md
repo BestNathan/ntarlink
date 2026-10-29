@@ -4,7 +4,7 @@
 
 ntarlink is organized by **subsystem responsibility**, not by programming language. Rust drives deterministic packet and event simulation, Python provides orbital/geometry experiments, and TypeScript describes console-facing scenario and trace data. Existing ns-3, SNS3, OpenSAND and SDR tools remain potential external adapters, not claimed to be integrated.
 
-> **Current fidelity: L1 packet simulation with an optional P1 offline orbital-contact bridge.** The deterministic Rust runner models packet paths, finite queues, per-hop delay, link faults and control-plane convergence. Python now generates geometric contact windows from historical TLEs using SGP4/Skyfield and WGS84, which drive timed link availability and routing changes. An optional offline delay sample series drives deterministic per-packet geometric propagation delay in Rust; route weights still use contact midpoint delay. This is **not** a real RF modem, laser PAT, access MAC or proprietary Starlink protocol.
+> **Current fidelity: L1 packet simulation with an optional P1 offline orbital-contact bridge.** The deterministic Rust runner models packet paths, finite queues, per-hop delay, link faults and control-plane convergence. Python now generates geometric contact windows from historical TLEs using SGP4/Skyfield and WGS84, which drive timed link availability and routing changes. An optional offline delay sample series drives deterministic per-packet geometric propagation delay in Rust; route weights still use contact midpoint delay. An optional SYS-05 shared-beam uplink frame scheduler now constrains multiple terminals' packet grants. This is **not** a real RF modem, laser PAT, PHY-based MAC, subscriber authorization or proprietary Starlink protocol.
 
 ## Try it
 
@@ -13,6 +13,7 @@ cargo test --workspace
 cargo run -p ntarlink-cli -- validate scenarios/minimal.json
 cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
 cargo run -p ntarlink-cli -- simulate scenarios/isl-failure.json --json > report.json
+cargo run -p ntarlink-cli -- simulate scenarios/beam-uplink-contention.json --json > beam-report.json
 python -m pip install -e systems/orbital/python
 python3 -m unittest discover -s systems/orbital/python/tests
 python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass.json
@@ -35,6 +36,7 @@ platform/contracts/           # Versioned scenario model and schema
 platform/simulation/          # Deterministic virtual-time event scheduler
 platform/packet-runtime/      # Generic modeled link queues and packet transport
 systems/network-control/      # Routing and delayed convergence
+systems/access/rust/          # Shared beam-frame uplink MAC scheduler
 systems/orbital/python/       # WGS84 geometry/scenario preprocessing
 applications/cli/            # Validate, simulate and export JSON trace
 applications/console/        # Typed UI contracts; interactive UI planned

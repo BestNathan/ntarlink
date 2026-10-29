@@ -91,9 +91,21 @@ cargo clippy -p ntarlink-access-scheduler --all-targets -- -D warnings
 The two-terminal saturated test demonstrates a 3:1 weighted grant split
 within a 400-byte frame, queue accounting, bounded grants, tight-frame
 alternation and eventual service for larger packets. This is a **standalone
-L1 MAC scheduling primitive**, not yet connected to the Rust packet runtime,
-the SYS-01 contact timeline, subscriber admission or actual RF/SINR outcomes.
+L1 MAC scheduling primitive**. The opt-in packet bridge below now consumes
+its grants and contact availability, but subscriber admission and actual
+RF/SINR outcomes remain unimplemented.
 It does not create service sessions, model control slots, implement BLER or
 transmit RF signals. Each frame currently discards fractional-bit capacity;
 unused bytes do not carry over. Per-frame work is proportional to active
 terminals plus granted packets, with queue storage bounded in wire bytes.
+
+## Opt-in shared-beam packet runtime bridge
+
+`access_beams[]` can now bind multiple terminal-to-satellite uplink links
+onto one shared finite beam resource in the Rust scenario. At a frame boundary,
+SYS-05 issues weighted grants that drive packet hop start/completion times.
+Shared queue overflow and contact-loss drops are accounted, while unconfigured
+links keep legacy independent serialization. See
+[beam-frame packet integration](../../docs/design/beam-frame-packet-bridge.md)
+and `scenarios/beam-uplink-contention.json` for a reproducible example.
+This is a modeled uplink MAC, not a modem, authenticated bearer or PHY.

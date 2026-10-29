@@ -71,13 +71,22 @@ derived from bitrate and frame duration, includes fixed per-packet wire
 overhead, and rejects packets larger than one frame or exceeding the shared
 queue budget. Tests cover two-terminal weighted service, finite capacity,
 eventual service for a larger packet and reproducible terminal ordering.
-This is a scheduling primitive only: it has **not** been integrated with
-the packet engine or linked to the SYS-01 contact schedule, physical
-SINR/MODCOD, terminal attach state or service-core authorization. Integration
-requires an explicit resource/bearer contract and packet-grant event bridge.
+The standalone scheduler is now consumed by an **opt-in** packet-runtime
+bridge with explicit beam/bearer configuration and contact-loss cancellation.
+Physical SINR/MODCOD, terminal attach state and service-core authorization
+remain unimplemented.
 
 ## Required verification
 
 Radio power and SINR calculation against independent reference values; Doppler sign/units; beam footprint and steering limits; two terminals exceeding shared beam capacity produce constrained grants; weighted fairness and no starvation; interference reduces effective rate; radio blackout/handover causes measurable packet/service interruption; handover does not accidentally re-create an authorized service session. Report beam goodput, scheduled resources, BLER, packet queue delay, attach completion, handover outages and radio coverage.
 
 **Milestones:** analytic RF/link budget → deterministic beam scheduler → admission/session coordination → handover → external protocol comparison.
+## Opt-in uplink MAC packet integration
+
+The L1 shared-beam bridge now connects the standalone weighted frame allocator
+to the packet runtime for explicitly configured terminal-to-satellite user RF
+uplinks. It enforces a common per-frame wire-byte budget, accounts queue delay
+and drops ungranted bearer packets on contact loss. Legacy links are unchanged.
+This does **not** implement physical acquisition, SINR-based rate adaptation,
+subscriber admission, downlink scheduling or handover. See
+[beam-frame packet bridge](../design/beam-frame-packet-bridge.md).

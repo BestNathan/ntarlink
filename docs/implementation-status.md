@@ -67,11 +67,26 @@ round robin. Per-terminal packet queues consume a shared bounded wire-byte
 budget, and frame grants account for fixed per-packet overhead. Unit tests
 exercise two saturated terminals at 3:1 weight, per-frame byte conservation,
 small-frame alternation, deferred large-packet service, invalid input and
-stable terminal ordering. The crate is compiled and tested by the existing
-Rust workspace CI. **It is not yet connected to the packet runtime**:
-scenario links still use their existing independent per-link capacities, and
-there is no PHY admission, MAC grant scheduling of real simulated packets,
-beam steering, contact-driven eligibility or subscriber authorization.
+stable terminal ordering. The crate is compiled and tested by the existing Rust workspace CI.
+An **opt-in** shared-beam bridge now uses this allocator to issue uplink packet
+grants; links without an access beam still use independent per-link capacity.
+There is no PHY admission, beam steering, RF-derived capacity, subscriber
+authorization or complete handover signaling.
+
+## Optional SYS-05 shared-beam packet grant bridge
+
+The opt-in `access_beams[]` scenario contract now connects SYS-05's
+deterministic weighted beam-frame scheduler to Rust packet forwarding for
+multiple terminal-to-satellite uplinks sharing one finite directional
+resource. Packet grants serialize within a common frame budget and account
+for framing overhead. Contact loss or link failure cancels ungranted
+bearer packets, with bounded shared queue and deterministic drop reasons.
+Unconfigured links retain their legacy independent capacity behavior.
+See [beam-frame integration design](design/beam-frame-packet-bridge.md)
+and `scenarios/beam-uplink-contention.json` for the cross-subsystem fixture.
+
+This remains a **modeled L1 MAC** without RF-derived capacity, bearer
+authorization, modem acquisition, downlink scheduling or handover signaling.
 
 ## Remaining subsystem work
 
