@@ -122,13 +122,11 @@ class PinnedEopTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expired"):
             self.timescale(config, boundary, duration_ns=2)
 
-        # When expiry is later than the source coverage, the coverage check
-        # must still reject a submicrosecond overrun of the last source day.
-        # A later expiry is invalid itself, so this also tests the explicit
-        # deadline/source invariant rather than silently extrapolating.
-        with self.assertRaisesRegex(ValueError, "exceeds the last"):
+        # Even with a later operator-supplied expiry, the source coverage
+        # must independently reject a nanosecond beyond the final EOP day.
+        with self.assertRaisesRegex(ValueError, "coverage"):
             self.timescale(self.config(until=boundary + timedelta(days=1)),
-                           boundary, duration_ns=1)
+                           boundary, duration_ns=2)
 
     def test_submicrosecond_end_includes_next_day_prediction(self):
         boundary = self.day + timedelta(days=1)
