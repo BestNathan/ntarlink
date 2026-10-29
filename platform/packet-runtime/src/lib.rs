@@ -519,9 +519,18 @@ mod tests {
     #[test]
     fn sampled_delay_interpolates_and_clamps_without_floating_point() {
         let samples = [
-            PropagationDelaySample { at_ns: 10, delay_ns: 10 },
-            PropagationDelaySample { at_ns: 20, delay_ns: 31 },
-            PropagationDelaySample { at_ns: 30, delay_ns: 11 },
+            PropagationDelaySample {
+                at_ns: 10,
+                delay_ns: 10,
+            },
+            PropagationDelaySample {
+                at_ns: 20,
+                delay_ns: 31,
+            },
+            PropagationDelaySample {
+                at_ns: 30,
+                delay_ns: 11,
+            },
         ];
         assert_eq!(interpolated_delay(&samples, 0), 10);
         assert_eq!(interpolated_delay(&samples, 15), 21);
@@ -539,19 +548,38 @@ mod tests {
             end_ns,
             propagation_delay_ns: Some(2_000_000),
             propagation_delay_samples: vec![
-                PropagationDelaySample { at_ns: 0, delay_ns: 1_000_000 },
-                PropagationDelaySample { at_ns: end_ns - 1, delay_ns: 3_000_000 },
+                PropagationDelaySample {
+                    at_ns: 0,
+                    delay_ns: 1_000_000,
+                },
+                PropagationDelaySample {
+                    at_ns: end_ns - 1,
+                    delay_ns: 3_000_000,
+                },
             ],
         });
         let result = run(&scenario).unwrap();
         assert_eq!(result.delivered, 3);
         let samples = &scenario.contacts[0].propagation_delay_samples;
-        let user_hops: Vec<_> = result.packets.iter()
-            .map(|packet| packet.hops.iter().find(|hop| hop.link_id == "user-ue-a").unwrap())
+        let user_hops: Vec<_> = result
+            .packets
+            .iter()
+            .map(|packet| {
+                packet
+                    .hops
+                    .iter()
+                    .find(|hop| hop.link_id == "user-ue-a")
+                    .unwrap()
+            })
             .collect();
-        assert!(user_hops.windows(2).all(|pair| pair[0].propagation_ns < pair[1].propagation_ns));
+        assert!(user_hops
+            .windows(2)
+            .all(|pair| pair[0].propagation_ns < pair[1].propagation_ns));
         for hop in user_hops {
-            assert_eq!(hop.propagation_ns, interpolated_delay(samples, hop.transmit_completed_ns));
+            assert_eq!(
+                hop.propagation_ns,
+                interpolated_delay(samples, hop.transmit_completed_ns)
+            );
             assert_eq!(
                 hop.arrived_ns - hop.transmit_completed_ns,
                 hop.propagation_ns + hop.processing_ns
