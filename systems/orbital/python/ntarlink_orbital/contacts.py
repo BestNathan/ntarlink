@@ -283,7 +283,7 @@ def generate_contact_kinematics(
         if link_id not in frequencies:
             continue
         start_ns, end_ns = window["start_ns"], window["end_ns"]
-        midpoint_ns = start_ns + (end_ns - start_ns - 1) // 2
+        midpoint_ns = start_ns + (end_ns - start_ns) // 2
         half_span_ns = min(
             requested_span_ns, midpoint_ns - start_ns, end_ns - 1 - midpoint_ns
         )
