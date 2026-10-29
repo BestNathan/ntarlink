@@ -20,7 +20,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Optional bisection refinement of bracketed geometric contact boundaries (SYS-01); sample step and tolerance are recorded in the manifest.
 - [ ] Independent Earth orientation reference vectors, ephemeris artifact batching and large constellation benchmarks.
 - [x] First-order Doppler/range-rate observations at contact midpoints, exported as a separate analytical artifact (not PHY carrier recovery).
-- [ ] Actual access/optical acquisition feasibility, physical link-budget output and live per-hop varying propagation delay.
+- [x] Initial SYS-05 analytical RF link-budget sidecar from SYS-01 midpoint contact delays (Friis, thermal C/N, reference margin); no PHY/MAC admission.
+- [ ] Actual access/optical acquisition feasibility, calibrated link budgets with interference, and live per-hop varying propagation delay.
 - [ ] Spacecraft payload/optical terminal availability and pointing constraints (SYS-02).
 - [ ] Optical PAT acquisition/tracking and link-budget models (SYS-03).
 - [ ] Terminal modem and beam selection, user RF budget, frequency reuse, MAC scheduling and handover (SYS-04/05).
