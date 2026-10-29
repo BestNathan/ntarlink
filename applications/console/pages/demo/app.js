@@ -153,7 +153,7 @@
       '<button type="button" class="' + (state.filter===g.id?"active":"") + '" data-filter="' + esc(g.id) + '" aria-pressed="' + (state.filter===g.id?"true":"false") + '">' + esc(g.label) + '</button>').join("");
     return '<div class="hero-intro"><div><div class="eyebrow">MISSION CONTROL / NETWORK OPERATIONS</div><h1>Satellite Network Overview</h1>' +
       '<p>One operating picture for the complete LEO broadband system. Explore network paths, inspect simulated events, and drill into all 16 subsystem workspaces.</p></div>' +
-      '<div class="hero-buttons"><a class="btn secondary" href="#systems">Explore subsystems ↘</a><a class="btn" href="' + href("simulation") + '">Open simulation ↗</a></div></div>' +
+      '<div class="hero-buttons"><button class="btn secondary" type="button" data-scroll="systems">Explore subsystems ↘</button><a class="btn" href="' + href("simulation") + '">Open simulation ↗</a><button class="btn tertiary" type="button" data-export>Export mock snapshot</button></div></div>' +
       '<div class="system-alert"><span><strong>DEMO ENVIRONMENT.</strong> ' + esc(sourceNote) + '</span><span class="source">● MOCK / OFFLINE</span></div>' +
       '<div class="metric-grid">' + metricGrid + '</div>' +
       '<div class="home-panels">' +
@@ -332,6 +332,8 @@
     if(!(target instanceof Element))return;
     const menu=target.closest("[data-menu]");
     if(menu){state.menu=!state.menu;render();return;}
+    const scroll=target.closest("[data-scroll]");
+    if(scroll){const section=$(scroll.getAttribute("data-scroll"));if(section)section.scrollIntoView({behavior:"smooth",block:"start"});return;}
     const n=target.closest("[data-scenario]");
     if(n){switchScenario(n.getAttribute("data-scenario"));return;}
     const go=target.closest("[data-go]");
