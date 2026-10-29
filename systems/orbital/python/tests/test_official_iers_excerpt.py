@@ -24,16 +24,24 @@ from test_vallado_frame_reference import (
 
 TEME_KM = (5094.18016210, 6127.64465050, 6380.34453270)
 
+EXPECTED_SHA256 = {
+    "finals2000a-2004-04-05-to-07.txt": "bf9ddc7259666e6315c0ff313e6569b3f08a695a3be62d24f7cb7fd4ec5192cf",
+    "finals2000a-2014-01-22-to-24.txt": "79af897ec4e9b1d72b3d4d3e95919ed4d824452ed862a4ca5cfa4b78e964e89e",
+    "finals2000a-2026-10-22-to-24.txt": "81cee54306de1f767e03982f0e3aadf72ea5103a5bdbaec2fd6d2ff504d65073",
+}
+
 
 class OfficialIersExcerptTests(unittest.TestCase):
     def load(self, filename, epoch, allow_predictions=False):
         path = Path(__file__).resolve().parent / "data" / filename
         raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        self.assertEqual(digest, EXPECTED_SHA256[filename])
         config = {
             "schema_version": 1,
             "format": "iers-finals2000a",
             "path": str(path),
-            "sha256": hashlib.sha256(raw).hexdigest(),
+            "sha256": digest,
             "valid_until_utc": (epoch.replace(hour=0, minute=0, second=0,
                                               microsecond=0) + timedelta(days=1)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
