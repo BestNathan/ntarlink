@@ -116,3 +116,25 @@ python -m unittest discover -s systems/orbital/python/tests
 CI also exercises the historical ISS contact artifact through the Rust
 packet engine. No RF/optical acquisition, modem, or continuous propagation
 delay capability is implied by these regression tests.
+
+## Production adapter multi-instant frame cross-check (2014)
+
+`test_production_frame_multi_instant.py` checks the production
+`build_sgp4_provider()` ITRS positions at 06:20:00, 11:18:07 and 20:00:00
+UTC on 2014-01-23. The same historical ISS demonstration TLE is independently
+propagated with the raw `sgp4.api.Satrec` API to obtain TEME positions. A
+test-only Vallado GMST82 and IAU-1980 polar-motion implementation transforms
+those positions using fixed 2014-01-23/24 UT1 and xp/yp values from the
+SHA-256-pinned official IERS excerpt. The production output is compared to
+this independent frame path with a 0.5 m three-dimensional tolerance.
+Negative controls omit UT1 or polar motion to ensure that those corrections
+actually affect the result. The production EOP manifest must report the
+expected SHA-256 and zero predicted interpolation days.
+
+This tests the **production adapter and frame transformation at multiple
+instants** rather than only a standalone transform helper. Both paths use
+the same SGP4 model and demonstration TLE; it is not independent orbit truth.
+The three instants fall on one UTC day, and the fixture is only an excerpt,
+not a certified IERS archive. Independent externally published ITRF vectors
+at multiple calendar epochs, complete EOP/leap-second archive provenance and
+precision orbit validation remain open.
