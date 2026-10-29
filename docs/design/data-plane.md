@@ -1,6 +1,6 @@
 # End-to-end data/control flows and link engineering
 
-**Status:** the Rust L1 packet runner implements five link classes and deterministic packet/queue timing. Python can now precompute TLE/SGP4-derived **geometric** visibility windows and midpoint delay for the Rust runtime, triggering contact open/close events, link availability and route changes. This does not yet implement RF/laser acquisition, MAC scheduling, bent-pipe relay or a physical modem. See [implementation status](../implementation-status.md).
+**Status:** the Rust L1 packet runner implements five link classes and deterministic packet/queue timing. Python can now precompute TLE/SGP4-derived **geometric** visibility windows, midpoint routing delay and optional bounded time-varying delay samples for the Rust runtime, triggering contact open/close events, link availability and route changes. See [sampled delay semantics](time-varying-propagation.md). This does not yet implement RF/laser acquisition, MAC scheduling, bent-pipe relay or a physical modem. See [implementation status](../implementation-status.md).
 
 ## 1. Four classes of links
 
