@@ -441,7 +441,8 @@ impl<'a> Runtime<'a> {
             return Ok(());
         }
         let report = self.beams[beam_index].scheduler.schedule_frame()?;
-        let beam = &self.scenario.access_beams[beam_index];
+        let capacity_bps = self.scenario.access_beams[beam_index].capacity_bps;
+        let frame_duration_ns = self.scenario.access_beams[beam_index].frame_duration_ns;
         let mut used_bytes = 0u64;
         for grant in report.grants {
             let packet_index: usize = grant.packet_id.parse()
@@ -454,12 +455,12 @@ impl<'a> Runtime<'a> {
             }
             let start_offset = u64::try_from(
                 (u128::from(used_bytes) * 8_000_000_000u128)
-                    .div_ceil(u128::from(beam.capacity_bps)),
+                    .div_ceil(u128::from(capacity_bps)),
             ).map_err(|_| "beam start offset overflow")?;
             used_bytes += grant.wire_bytes;
             let end_offset = u64::try_from(
                 (u128::from(used_bytes) * 8_000_000_000u128)
-                    .div_ceil(u128::from(beam.capacity_bps)),
+                    .div_ceil(u128::from(capacity_bps)),
             ).map_err(|_| "beam end offset overflow")?;
             let start_ns = at_ns.checked_add(start_offset)
                 .ok_or("beam start time overflow")?;
@@ -498,7 +499,7 @@ impl<'a> Runtime<'a> {
             })?;
         }
         if !self.beams[beam_index].pending.is_empty() {
-            if let Some(next) = at_ns.checked_add(beam.frame_duration_ns) {
+            if let Some(next) = at_ns.checked_add(frame_duration_ns) {
                 self.ensure_beam_frame(beam_index, next, events)?;
             }
         }
