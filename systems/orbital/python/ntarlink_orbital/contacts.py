@@ -46,7 +46,7 @@ def build_sgp4_provider(config: dict, duration_ns: int, config_dir: Path | None 
     Skyfield performs the TEME -> ITRS transformation; raw TEME positions
     must never be interpreted as Earth-fixed coordinates.
     """
-    from skyfield.api import EarthSatellite, load
+    from skyfield.api import EarthSatellite
     from skyfield.framelib import itrs
 
     epoch = parse_utc(config["epoch_utc"])
@@ -55,7 +55,8 @@ def build_sgp4_provider(config: dict, duration_ns: int, config_dir: Path | None 
         raise ValueError("max_tle_age_days must be positive and finite")
 
     timescale, eop_info = build_timescale(
-        config.get("earth_orientation"), epoch, duration_ns, config_dir\n    )
+        config.get("earth_orientation"), epoch, duration_ns, config_dir
+    )
     satellites = {}
     for entry in config["satellites"]:
         identifier = str(entry["id"])
