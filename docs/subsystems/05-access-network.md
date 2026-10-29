@@ -55,9 +55,13 @@ Commands: `RequestAccess`, `ReserveBeamResources`, `ScheduleTraffic`, `PrepareHa
 The initial `systems/access/python` implementation is a standalone SYS-05
 consumer of SYS-01's compiled contact JSON. It produces directional,
 midpoint-only Friis/290 K C/N budgets with explicit loss and reference-margin
-inputs. It does not install RF links or change packet capacity. See
-[access implementation](../../systems/access/README.md). Full interference,
-beam scheduling, antenna patterns, MAC and handover remain planned.
+inputs. An optional **configured aggregate in-band interference power** now
+produces a separate C/(N+I) estimate and independent SINR threshold, without
+changing the legacy C/N reference. This is not a beam-coupling or spectrum
+reuse interference model. It does not install RF links or change packet capacity.
+See [access implementation](../../systems/access/README.md). Physical
+interference generation, beam scheduling, antenna patterns, MAC and handover
+remain planned.
 
 ## Required verification
 
