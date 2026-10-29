@@ -11,6 +11,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/check_repository_docs.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python scripts/check_pages_site.py
       - run: python -m json.tool scenarios/minimal.json > /dev/null && python -m json.tool scenarios/isl-failure.json > /dev/null && python -m json.tool scenarios/visibility-handover.json > /dev/null && python -m json.tool scenarios/orbital-pass.json > /dev/null && python -m json.tool scenarios/orbit-sources.sample.json > /dev/null && python -m json.tool platform/contracts/schemas/scenario.schema.json > /dev/null
   rust:
     runs-on: ubuntu-latest
