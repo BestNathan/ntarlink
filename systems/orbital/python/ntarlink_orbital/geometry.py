@@ -25,3 +25,47 @@ def elevation_deg(satellite_ecef_m, latitude_deg: float, longitude_deg: float, h
     n = sum(delta[i] * north[i] for i in range(3))
     u = sum(delta[i] * up[i] for i in range(3))
     return degrees(atan2(u, sqrt(e * e + n * n)))
+
+
+"""WGS84 line of sight and geometric propagation models.
+
+Positions are Earth-centered Earth-fixed (ITRS/ECEF) meters, not raw SGP4 TEME.
+"""
+from math import sqrt
+
+EQUATORIAL_RADIUS_M = 6_378_137.0
+POLAR_RADIUS_M = 6_356_752.314245
+SPEED_OF_LIGHT_MPS = 299_792_458.0
+
+
+def distance_m(a, b):
+    return sqrt(sum((float(a[i]) - float(b[i])) ** 2 for i in range(3)))
+
+
+def earth_occludes_segment(a, b, clearance_m=0.0):
+    """Return whether the 3D segment intersects an inflated WGS84 ellipsoid.
+
+    Tangency counts as occlusion. The clearance margin is a geometric
+    approximation rather than an atmospheric/optical pointing model.
+    """
+    if clearance_m < 0.0:
+        raise ValueError("clearance_m must be nonnegative")
+    radii = (
+        EQUATORIAL_RADIUS_M + clearance_m,
+        EQUATORIAL_RADIUS_M + clearance_m,
+        POLAR_RADIUS_M + clearance_m,
+    )
+    p = [float(a[i]) / radii[i] for i in range(3)]
+    d = [(float(b[i]) - float(a[i])) / radii[i] for i in range(3)]
+    squared = sum(v * v for v in d)
+    if squared == 0.0:
+        return True
+    t = max(0.0, min(1.0, -sum(p[i] * d[i] for i in range(3)) / squared))
+    q = sum((p[i] + t * d[i]) ** 2 for i in range(3))
+    return q <= 1.0
+
+
+def geometric_delay_ns(range_m):
+    if range_m <= 0:
+        raise ValueError("geometric range must be positive")
+    return max(1, round(range_m / SPEED_OF_LIGHT_MPS * 1_000_000_000))

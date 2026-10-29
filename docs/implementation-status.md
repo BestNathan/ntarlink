@@ -1,32 +1,48 @@
 # Implementation status and current fidelity
 
-## Working P0/L1 vertical slice (subject to CI)
+## Operational P0 and P1 orbital-contact bridge
 
-The Rust simulation is no longer a placeholder. `ntarlink-cli simulate` executes modeled packets on the graph configured in `scenarios/minimal.json`:
+The existing P0 Rust packet simulator executes a deterministic packet journey across user RF, satellite optical ISL, feeder station, terrestrial backhaul and internet endpoint. The new **P1 orbital bridge** provides offline TLE/SGP4 propagation, Skyfield TEME-to-ITRS transformation, WGS84 elevation and Earth-occlusion geometry, sampled contact windows and propagation delay.
 
-```text
-User Terminal -> User RF -> Satellite A -> Optical ISL -> Satellite B
--> Feeder -> Ground Station -> Backhaul -> PoP -> Internet Endpoint
-```
+**Implemented in code:** contact windows with half-open `[start_ns,end_ns)` bounds and optional midpoint geometric delay; `contact_mode: "scheduled"` prevents space links without visibility from being treated as always available; Rust contact transitions drive link state and delayed route recomputation. The same packet engine reports delivered and dropped packets as contacts open/close. Python runs offline and writes a versioned JSON scenario plus a provenance sidecar.
 
-**Implemented in code:** JSON scenario v1, typed node/link/flow/fault models and validation, deterministic integer-nanosecond event queue, directed link path computation, explicit initial FIB and delayed route reinstall after faults, finite byte queues, link capacity/serialization, propagation and processing delay, per-hop packet trace, JSON report, cross-domain fixture tests and CLI.
+**Existing P0:** typed nodes/links/flows/faults, deterministic integer-nanosecond event scheduler, shortest-route FIB with controller delay, packet queues, propagation/serialization/processing delay, packet traces, JSON report and CLI.
 
-**Models/approximations:** contact topology is **fixed** and link states are scenario-controlled; RF/optical delays and capacity are scenario parameters, not output of a validated link budget. No dynamic orbital calculations or true MAC/PHY/RF. A modeled packet accepted onto a link finishes transmission even if the link goes DOWN later (P0 `complete_after_departure` policy). No routing protocol exchange, 3GPP service core or terminal authentication yet. Traffic sources are simulated packets rather than kernel IP sockets.
+### Provenance and accuracy
 
-**Implementation modules:** `platform/contracts`, `platform/simulation`, `platform/packet-runtime`, `systems/network-control`, `applications/cli`; Python geometry under `systems/orbital/python`, TypeScript trace types under `applications/console`. This is a **vertical slice**, not all sixteen subsystems implemented. Domain-specific access/MAC, space optical PAT, ground station resource managers and subscriber service core remain future independent implementations.
+- Python dependency pins: `skyfield==1.55`, `sgp4==2.27`; zero network downloads during propagation (`timescale(builtin=True)`).
+- Orbital input TLE and absolute historical `epoch_utc` are explicitly recorded and checked for freshness (configurable maximum 14 days from TLE epoch).
+- Skyfield converts SGP4 TEME output to ITRS Earth-fixed coordinates before WGS84 elevation/occlusion calculations.
+- Contacts are **sample-aligned** with timing uncertainty up to the step interval. A contact's delay is computed at its midpoint and held constant for that window.
+- A geometric contact is a **candidate**, not proof of beam scheduling, modem synchronization, optical PAT acquisition or resource admission.
+- Packet transmissions already admitted before a contact closes finish under the P0 `complete_after_departure` convention. Physical interruption and retransmission models remain future work.
+- Linux IP, real PHY/MAC, BER, interference, handover signaling and satellite control remain unimplemented.
 
-## Reproducible scenarios
+### Reproducible scenarios
 
-| Scenario | What is validated | Expected evidence |
+| Scenario | Input | Verified behavior |
 |---|---|---|
-| `scenarios/minimal.json` | five physical/link classes and destination delivery | 3 delivered packets, each with exactly 5 hop traces |
-| `scenarios/isl-failure.json` | optical link outage, 20ms control-plane convergence, backup path | link_down event, increased route revision, eventual hops via sat-c |
-| In-memory unit variations | finite queue and no feeder route | queue_overflow/no_route, zero false deliveries |
+| `scenarios/minimal.json` | configured static links | 3 packets delivered over five hops |
+| `scenarios/isl-failure.json` | configured link failure | reroute through backup ISL after control delay |
+| `scenarios/visibility-handover.json` | synthetic, time-varying RF/ISL contact windows | deterministic contact opens/closes, temporary outage and alternative access route |
+| `scenarios/orbital-pass.json` | historic public ISS TLE from Skyfield guide, 2014 epoch | Python generates real geometric contacts, Rust simulates internet delivery only within visibility intervals |
 
-## Compatibility and next steps
+Read [historical pass instructions](../scenarios/ORBITAL-README.md) for the end-to-end command. This demo uses the ISS and a co-located laboratory ground site for reproducibility; it **does not** represent an operational Starlink constellation.
 
-The old Go and `crates/` bootstrap layouts are removed; the Rust workspace is organized by runtime/domain boundaries, Python by orbital subsystem and TypeScript by application. Schema v1 is a starting point and requires cross-language generated bindings once stabilized.
+## Remaining subsystem work
 
-**Not complete:** full Starlink-like orbital propagation, RF/SNR/beam/MAC models, optical PAT, satellite payload lifecycle, terminal attachment, subscriber core, backhaul routing protocol integration, operations, weather, Linux emulation, Cesium globe, OSS engine adapters and large-scale benchmarking.
+P1 next: reference-grade contact boundary refinement, orbit catalog/ephemeris output, differential propagation delays, Doppler, antenna/beam RF budget, MAC access/scheduler, optical PAT and spacecraft constraints.
 
-See [roadmap](roadmap.md) and [subsystem designs](subsystems/README.md).
+P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
+
+## Test commands
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+python -m pip install -e systems/orbital/python
+python -m unittest discover -s systems/orbital/python/tests
+python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-run.json
+cargo run -p ntarlink-cli -- simulate /tmp/orbital-run.json --json > /tmp/orbital-report.json
+```

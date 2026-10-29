@@ -79,6 +79,27 @@ pub struct Fault {
     pub action: LinkAction,
 }
 
+/// A half-open geometric link contact. This is not a claim of PHY acquisition.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContactWindow {
+    pub link_id: String,
+    pub start_ns: u64,
+    pub end_ns: u64,
+    /// Optional effective geometric propagation delay, sampled at a declared epoch.
+    /// The active window uses this fixed value until the next contact transition.
+    #[serde(default)]
+    pub propagation_delay_ns: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContactMode {
+    #[default]
+    Static,
+    Scheduled,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
@@ -86,11 +107,16 @@ pub struct Scenario {
     pub name: String,
     pub duration_ns: u64,
     pub control_delay_ns: u64,
+    #[serde(default)]
+    pub contact_mode: ContactMode,
     pub nodes: Vec<Node>,
     pub links: Vec<Link>,
     pub flows: Vec<Flow>,
     #[serde(default)]
     pub faults: Vec<Fault>,
+    /// Optional physical visibility/contact schedule. Empty means static-link mode.
+    #[serde(default)]
+    pub contacts: Vec<ContactWindow>,
 }
 
 impl Scenario {
@@ -205,6 +231,46 @@ impl Scenario {
                 return Err(format!("invalid fault target or time: {}", fault.link_id));
             }
         }
+        if self.contacts.len() > 500_000 {
+            return Err("contact window limit exceeded".into());
+        }
+        let mut windows: std::collections::HashMap<&str, Vec<(u64, u64)>> =
+            std::collections::HashMap::new();
+        for contact in &self.contacts {
+            let Some(link) = self.links.iter().find(|l| l.id == contact.link_id) else {
+                return Err(format!("unknown contact link: {}", contact.link_id));
+            };
+            if !matches!(
+                link.kind,
+                LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl
+            ) {
+                return Err(format!(
+                    "contact window not supported for terrestrial link: {}",
+                    contact.link_id
+                ));
+            }
+            if contact.start_ns >= contact.end_ns || contact.end_ns > self.duration_ns {
+                return Err(format!("invalid contact interval for {}", contact.link_id));
+            }
+            if contact.propagation_delay_ns == Some(0) {
+                return Err(format!(
+                    "contact propagation delay must be positive for {}",
+                    contact.link_id
+                ));
+            }
+            windows
+                .entry(&contact.link_id)
+                .or_default()
+                .push((contact.start_ns, contact.end_ns));
+        }
+        for (link_id, intervals) in &mut windows {
+            intervals.sort_unstable();
+            for pair in intervals.windows(2) {
+                if pair[0].1 > pair[1].0 {
+                    return Err(format!("overlapping contact intervals for {link_id}"));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -244,6 +310,44 @@ mod tests {
         let mut s = Scenario::from_json(&fixture()).unwrap();
         s.flows[0].packet_count = 0;
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn contact_windows_validate_bounds_and_overlaps() {
+        let mut s = Scenario::from_json(&fixture()).unwrap();
+        s.contacts.push(ContactWindow {
+            link_id: "user-ue-a".into(),
+            start_ns: 10,
+            end_ns: 20,
+            propagation_delay_ns: Some(1_900_000),
+        });
+        assert!(s.validate().is_ok());
+        s.contacts.push(ContactWindow {
+            link_id: "user-ue-a".into(),
+            start_ns: 19,
+            end_ns: 22,
+            propagation_delay_ns: None,
+        });
+        assert!(s.validate().unwrap_err().contains("overlapping"));
+        s.contacts[1].start_ns = 20;
+        assert!(s.validate().is_ok());
+        s.contacts[1].link_id = "pop-internet".into();
+        assert!(s.validate().unwrap_err().contains("terrestrial"));
+    }
+
+    #[test]
+    fn contact_windows_reject_unknown_link_and_invalid_range() {
+        let mut s = Scenario::from_json(&fixture()).unwrap();
+        s.contacts.push(ContactWindow {
+            link_id: "not-a-link".into(),
+            start_ns: 10,
+            end_ns: 20,
+            propagation_delay_ns: Some(2_000),
+        });
+        assert!(s.validate().unwrap_err().contains("unknown contact"));
+        s.contacts[0].link_id = "isl-a-b".into();
+        s.contacts[0].end_ns = 10;
+        assert!(s.validate().unwrap_err().contains("invalid contact"));
     }
 
     #[test]

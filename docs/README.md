@@ -1,6 +1,6 @@
 # ntarlink Engineering Documentation
 
-**Status:** architecture proposal and staged implementation blueprint. The only existing executable functionality is the minimal Rust scenario validator and supporting Python/TypeScript scaffolding. Nothing in these specifications implies that a satellite PHY, IP path, terminal modem, or operational network has been built.
+**Status:** subsystem engineering blueprint with an executable Rust L1 packet engine and an offline Python SGP4/Skyfield orbital-contact compiler. This is not a complete RF/laser/modem/core implementation; see the [current implementation status](implementation-status.md).
 
 ## Read in this order
 

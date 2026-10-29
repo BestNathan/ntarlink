@@ -1,4 +1,4 @@
-use ntarlink_contracts::{LinkAction, Scenario};
+use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, Scenario};
 use ntarlink_network_control::next_hops;
 use ntarlink_simulation::Scheduler;
 use serde::Serialize;
@@ -67,6 +67,8 @@ enum Event {
     Inject { flow: usize, ordinal: u32 },
     Arrive { packet: usize, node: String },
     Fault { index: usize },
+    ContactOpen { index: usize },
+    ContactClose { index: usize },
     InstallRoutes,
 }
 
@@ -77,10 +79,18 @@ struct PacketRecord {
 
 #[derive(Default)]
 struct LinkRuntime {
-    up: bool,
+    admin_up: bool,
+    contact_up: bool,
+    contact_delay_ns: Option<u64>,
     transmitter_free_ns: u64,
     bytes_in_queue: u64,
     pending_tx: VecDeque<(u64, u64)>,
+}
+
+impl LinkRuntime {
+    fn effective_up(&self) -> bool {
+        self.admin_up && self.contact_up
+    }
 }
 
 struct Runtime<'a> {
@@ -97,9 +107,23 @@ impl<'a> Runtime<'a> {
         let links = scenario
             .links
             .iter()
-            .map(|l| LinkRuntime {
-                up: l.up,
-                ..LinkRuntime::default()
+            .map(|link| {
+                let contact_defined = scenario.contacts.iter().any(|c| c.link_id == link.id);
+                let schedule_required = scenario.contact_mode == ContactMode::Scheduled
+                    && matches!(
+                        link.kind,
+                        LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl
+                    );
+                let initial = scenario
+                    .contacts
+                    .iter()
+                    .find(|c| c.link_id == link.id && c.start_ns == 0);
+                LinkRuntime {
+                    admin_up: link.up,
+                    contact_up: (!contact_defined && !schedule_required) || initial.is_some(),
+                    contact_delay_ns: initial.and_then(|c| c.propagation_delay_ns),
+                    ..LinkRuntime::default()
+                }
             })
             .collect();
         let mut runtime = Self {
@@ -115,14 +139,20 @@ impl<'a> Runtime<'a> {
     }
 
     fn install_routes(&mut self, at_ns: u64) {
-        let available: Vec<bool> = self.links.iter().map(|l| l.up).collect();
+        let available: Vec<bool> = self.links.iter().map(LinkRuntime::effective_up).collect();
+        let mut effective_links = self.scenario.links.clone();
+        for (link, runtime) in effective_links.iter_mut().zip(&self.links) {
+            if let Some(delay_ns) = runtime.contact_delay_ns {
+                link.propagation_delay_ns = delay_ns;
+            }
+        }
         self.routes = self
             .scenario
             .flows
             .iter()
             .map(|flow| {
                 next_hops(
-                    &self.scenario.links,
+                    &effective_links,
                     &available,
                     &flow.destination,
                     flow.packet_size_bytes,
@@ -194,12 +224,13 @@ impl<'a> Runtime<'a> {
             self.drop_packet(packet_index, at_ns, "no_route");
             return Ok(());
         };
-        if !self.links[link_index].up {
+        if !self.links[link_index].effective_up() {
             self.drop_packet(packet_index, at_ns, "link_unavailable");
             return Ok(());
         }
         let link = &self.scenario.links[link_index];
         let state = &mut self.links[link_index];
+        let propagation_ns = state.contact_delay_ns.unwrap_or(link.propagation_delay_ns);
         while state
             .pending_tx
             .front()
@@ -221,7 +252,7 @@ impl<'a> Runtime<'a> {
             .checked_add(serialization_ns)
             .ok_or("transmission time overflow")?;
         let arrived_ns = completed_ns
-            .checked_add(link.propagation_delay_ns)
+            .checked_add(propagation_ns)
             .and_then(|t| t.checked_add(link.processing_delay_ns))
             .ok_or("packet arrival time overflow")?;
         if arrived_ns >= self.scenario.duration_ns {
@@ -241,7 +272,7 @@ impl<'a> Runtime<'a> {
             arrived_ns,
             queue_delay_ns: start_ns - at_ns,
             serialization_ns,
-            propagation_ns: link.propagation_delay_ns,
+            propagation_ns,
             processing_ns: link.processing_delay_ns,
             route_revision: self.route_revision,
         });
@@ -254,6 +285,45 @@ impl<'a> Runtime<'a> {
                 node: link.to.clone(),
             },
         )
+    }
+
+    fn contact_transition(
+        &mut self,
+        at_ns: u64,
+        contact_index: usize,
+        opened: bool,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        let contact = &self.scenario.contacts[contact_index];
+        let link_index = self
+            .scenario
+            .links
+            .iter()
+            .position(|link| link.id == contact.link_id)
+            .ok_or_else(|| format!("unknown contact link: {}", contact.link_id))?;
+        let state = &mut self.links[link_index];
+        state.contact_up = opened;
+        state.contact_delay_ns = if opened {
+            contact.propagation_delay_ns
+        } else {
+            None
+        };
+        self.control_events.push(ControlEvent {
+            at_ns,
+            kind: if opened {
+                "contact_open".into()
+            } else {
+                "contact_close".into()
+            },
+            link_id: Some(contact.link_id.clone()),
+            route_revision: self.route_revision,
+        });
+        if let Some(at) = at_ns.checked_add(self.scenario.control_delay_ns) {
+            if at < self.scenario.duration_ns {
+                events.schedule(at, 5, Event::InstallRoutes)?;
+            }
+        }
+        Ok(())
     }
 
     fn fault(
@@ -269,10 +339,10 @@ impl<'a> Runtime<'a> {
             .iter()
             .position(|link| link.id == fault.link_id)
             .ok_or_else(|| format!("unknown link: {}", fault.link_id))?;
-        self.links[index].up = matches!(fault.action, LinkAction::Up);
+        self.links[index].admin_up = matches!(fault.action, LinkAction::Up);
         self.control_events.push(ControlEvent {
             at_ns,
-            kind: if self.links[index].up {
+            kind: if self.links[index].admin_up {
                 "link_up".into()
             } else {
                 "link_down".into()
@@ -297,6 +367,14 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
     let mut scheduler = Scheduler::new();
     for (index, fault) in scenario.faults.iter().enumerate() {
         scheduler.schedule(fault.at_ns, 0, Event::Fault { index })?;
+    }
+    for (index, window) in scenario.contacts.iter().enumerate() {
+        if window.start_ns > 0 {
+            scheduler.schedule(window.start_ns, 1, Event::ContactOpen { index })?;
+        }
+        if window.end_ns < scenario.duration_ns {
+            scheduler.schedule(window.end_ns, 0, Event::ContactClose { index })?;
+        }
     }
     for (flow_index, flow) in scenario.flows.iter().enumerate() {
         for ordinal in 0..flow.packet_count {
@@ -327,6 +405,12 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
             Event::Fault { index } => {
                 state.fault(scheduled.at_ns, index, &mut scheduler)?;
             }
+            Event::ContactOpen { index } => {
+                state.contact_transition(scheduled.at_ns, index, true, &mut scheduler)?;
+            }
+            Event::ContactClose { index } => {
+                state.contact_transition(scheduled.at_ns, index, false, &mut scheduler)?;
+            }
             Event::InstallRoutes => state.install_routes(scheduled.at_ns),
         }
     }
@@ -344,7 +428,13 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
     }
     Ok(SimulationReport {
         scenario: scenario.name.clone(),
-        fidelity: "l1_static_contact_packet_model".into(),
+        fidelity: if scenario.contact_mode == ContactMode::Scheduled {
+            "l1_sampled_orbital_contact_packet_model".into()
+        } else if scenario.contacts.is_empty() {
+            "l1_static_contact_packet_model".into()
+        } else {
+            "l1_scheduled_contact_fixture_packet_model".into()
+        },
         duration_ns: scenario.duration_ns,
         processed_events,
         route_revision: state.route_revision,
@@ -427,6 +517,67 @@ mod tests {
             .packets
             .iter()
             .any(|p| p.status == PacketStatus::Delivered));
+    }
+
+    #[test]
+    fn geometric_contacts_drive_handover_without_teleportation() {
+        let scenario =
+            Scenario::from_json(include_str!("../../../scenarios/visibility-handover.json"))
+                .unwrap();
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, 12);
+        assert!(report.delivered > 0);
+        assert!(report.dropped > 0);
+        assert!(report.route_revision >= 3);
+        assert!(report
+            .control_events
+            .iter()
+            .any(|e| e.kind == "contact_close"));
+        assert!(report
+            .control_events
+            .iter()
+            .any(|e| e.kind == "contact_open"));
+        assert!(report
+            .packets
+            .iter()
+            .any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
+        assert!(report.packets.iter().any(|p| p
+            .hops
+            .iter()
+            .any(|h| { h.link_id == "user-ue-a" && h.propagation_ns == 1_800_000 })));
+        assert!(report
+            .packets
+            .iter()
+            .all(|p| p.status != PacketStatus::InFlight));
+    }
+
+    #[test]
+    fn scheduled_contact_mode_does_not_allow_unscheduled_rf_or_feeder_links() {
+        let mut scenario = basic();
+        scenario.contact_mode = ntarlink_contracts::ContactMode::Scheduled;
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.delivered, 0);
+        assert_eq!(report.dropped, report.injected);
+        assert_eq!(report.fidelity, "l1_sampled_orbital_contact_packet_model");
+    }
+
+    #[test]
+    fn a_link_remains_down_when_faulted_during_visible_contact() {
+        let mut scenario =
+            Scenario::from_json(include_str!("../../../scenarios/visibility-handover.json"))
+                .unwrap();
+        scenario.faults.push(ntarlink_contracts::Fault {
+            at_ns: 20_000_000,
+            link_id: "user-ue-a".into(),
+            action: ntarlink_contracts::LinkAction::Down,
+        });
+        let result = run(&scenario).unwrap();
+        assert!(result.dropped > 0);
+        assert!(result.control_events.iter().any(|e| e.kind == "link_down"));
+        assert!(result
+            .packets
+            .iter()
+            .any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
     }
 
     #[test]

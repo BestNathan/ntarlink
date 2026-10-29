@@ -38,6 +38,26 @@ Clock rules: `sim_time_ns` is a nonnegative integer relative to run epoch, not U
 
 Recommended message taxonomy: `*Requested`/`*Accepted`/`*Rejected` commands, `*Changed`/`*Established`/`*Lost` events, `*Snapshot` query results. A `command_id` and `expected_revision` support idempotency/concurrency control.
 
+## 2.1 Implemented scenario v1 contact extension
+
+The current Rust `platform/contracts` crate and `platform/contracts/schemas/scenario.schema.json` accept optional `contact_mode: "static" | "scheduled"` and `contacts`:
+
+```json
+{
+  "contact_mode": "scheduled",
+  "contacts": [
+    {
+      "link_id": "user-iss",
+      "start_ns": 340000000000,
+      "end_ns": 500000000000,
+      "propagation_delay_ns": 2100000
+    }
+  ]
+}
+```
+
+In `static` mode, orbital links without schedules retain their scenario `up` state; in `scheduled` mode, user RF, feeder and optical ISL links are **unavailable unless a window is active**. Terrestrial links remain static unless faults explicitly change them. `up` represents administrative state and cannot override missing geometric visibility. Windows are nonoverlapping and half-open. Their midpoint propagation delay is fixed per interval in the current L1 runtime. These optional fields extend scenario v1; the broader system envelope remains a forward-looking interface proposal.
+
 ## 3. Canonical identifiers and primitive types
 
 | Type | Definition | Invariants |

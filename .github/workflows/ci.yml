@@ -11,7 +11,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: python scripts/check_repository_docs.py
-      - run: python -m json.tool scenarios/minimal.json > /dev/null && python -m json.tool scenarios/isl-failure.json > /dev/null && python -m json.tool platform/contracts/schemas/scenario.schema.json > /dev/null
+      - run: python -m json.tool scenarios/minimal.json > /dev/null && python -m json.tool scenarios/isl-failure.json > /dev/null && python -m json.tool scenarios/visibility-handover.json > /dev/null && python -m json.tool scenarios/orbital-pass.json > /dev/null && python -m json.tool scenarios/orbit-sources.sample.json > /dev/null && python -m json.tool platform/contracts/schemas/scenario.schema.json > /dev/null
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -25,6 +25,15 @@ jobs:
       - run: cargo run -p ntarlink-cli -- validate scenarios/minimal.json
       - run: cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
       - run: cargo run -p ntarlink-cli -- simulate scenarios/isl-failure.json --json > /tmp/ntarlink-report.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e systems/orbital/python
+      - name: Generate real SGP4 visibility windows and run the Rust packet engine
+        run: |
+          python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json
+          cargo run -p ntarlink-cli -- simulate /tmp/orbital-pass-compiled.json --json > /tmp/orbital-report.json
+          python -c 'import json; x=json.load(open("/tmp/orbital-report.json")); assert x["delivered"] > 0 and x["dropped"] > 0, x; print("Orbital E2E:", x["delivered"], "delivered,", x["dropped"], "dropped")'
   python:
     runs-on: ubuntu-latest
     steps:
@@ -32,6 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - run: python -m pip install -e systems/orbital/python
       - run: python -m unittest discover -s systems/orbital/python/tests
   typescript:
     runs-on: ubuntu-latest

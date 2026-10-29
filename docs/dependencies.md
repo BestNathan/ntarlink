@@ -6,7 +6,8 @@
 
 | Component | Domain(s) | Role and concrete integration surface | Published licensing / important constraint | Decision |
 |---|---|---|---|---|
-| [python-sgp4](https://github.com/brandon-rhodes/python-sgp4) | SYS-01 | TLE/OMM SGP4 propagation; Python batch -> frame-tagged ephemeris artifacts | MIT; propagator returns **TEME**, not ITRF/ECEF automatically | **Preferred P0/P1**, with tested frame conversion |
+| [python-sgp4](https://github.com/brandon-rhodes/python-sgp4) | SYS-01 | Historical TLE propagation via Skyfield; offline contact compilation | MIT; SGP4 returns TEME, not ITRS | **Integrated**: pinned `sgp4==2.27` |
+| [Skyfield](https://rhodesmill.org/skyfield/) | SYS-01 | SGP4 TEME-to-ITRS transform and Earth-fixed WGS84 geometry | MIT; built-in timescale avoids live network downloads | **Integrated**: pinned `skyfield==1.55` |
 | [Orekit](https://gitlab.orekit.org/orekit/orekit) | SYS-01/02 | high-fidelity orbit/attitude/event detection; separate Java worker | Apache-2.0; JVM/distribution overhead | **Optional higher-fidelity adapter** |
 | [ns-3](https://www.nsnam.org/) | SYS-03/05/09/15 | C++ discrete-event protocol stack and packet-level comparison | GPL-2.0; independent engine owns its simulation time | **Evaluate P2**; never merge two event clocks implicitly |
 | [SNS3 satellite](https://github.com/sns3/sns3-satellite) | SYS-03/05/06 | ns-3 extension; DVB satellite link, beams, interference and routing/reference experiments | GPL-3.0; current README documents aligned **ns-3.48** satellite, traffic, stats tags—pin compatible revisions | **Evaluate P2**, not Starlink PHY equivalence |
@@ -21,7 +22,7 @@
 | [OpenTelemetry](https://opentelemetry.io/) / [Prometheus](https://prometheus.io/) | SYS-10/13/16 | traces, service health, metrics aggregation | evaluate dependency/collector costs and high-cardinality exposure | **Preferred observability conventions** |
 | [StarryNet](https://github.com/SpaceNetLab/StarryNet) / [OpenSN](https://opensn-library.github.io/) | SYS-07/15 | routing, Linux/container-based dynamic constellation emulation patterns | licenses and implementation status **must be checked before adoption** | **Reference/benchmark candidates** |
 
-**Current installed dependencies:** minimal Rust `serde`/`serde_json`, Python standard library and TypeScript compiler. This register is a roadmap **not** a declaration that the dependencies are installed.
+**Current installed dependencies:** Rust `serde`/`serde_json`, pinned Python `skyfield==1.55` and `sgp4==2.27` in the orbital package, and TypeScript compiler. All other projects in this table are still adapter candidates. This register is a roadmap **not** a declaration that the dependencies are installed.
 
 ## 2. Selection and licensing policy
 
