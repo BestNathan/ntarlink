@@ -62,6 +62,20 @@ self-consistency check; it neither proves continuous interpolation accuracy
 nor independently validates orbit truth or EOP. See
 [ephemeris audit design](design/orbital-ephemeris-audit.md).
 
+## Bounded SYS-01 JSONL streaming ephemeris
+
+The optional `ntarlink_orbital.ephemeris_stream` CLI emits a versioned,
+frame-tagged, satellite-major JSONL artifact without retaining all position
+samples in memory. It shares the original exporter's UTC grid validation,
+500,000 satellite-time-pair limit and pinned SGP4/EOP provider. Each stream
+has a header plus one record per sample, a 128 MB byte limit, atomic
+replacement after successful validation, and a companion SHA-256 provenance
+manifest. Python CI exercises a real historical ISS stream, deterministic
+ordering, failure cleanup and resource limits. This does not replace the
+original nested JSON exporter or its interpolation audit, and is neither
+columnar output nor a measured constellation-scale benchmark. See
+[streaming design](design/orbital-ephemeris-stream.md).
+
 ## Opt-in production SYS-01 Earth-orientation input
 
 The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A
@@ -159,7 +173,7 @@ IERS archive or independently maintained leap-second tables. See
 
 ## Remaining subsystem work
 
-P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
+P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
 
 P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
 
