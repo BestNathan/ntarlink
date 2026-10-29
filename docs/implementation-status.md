@@ -107,7 +107,7 @@ authorization, modem acquisition, downlink scheduling or handover signaling.
 
 ## Remaining subsystem work
 
-P1 next: independent Earth-orientation reference vectors, large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
+P1 next: production IERS EOP ingestion and multi-epoch frame verification (an independent published Vallado TEME/PEF/ITRF position regression with explicit UT1/polar motion now exists, but does not configure the production timescale), large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
 
 P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
 
