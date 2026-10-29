@@ -79,6 +79,14 @@ pub struct Fault {
     pub action: LinkAction,
 }
 
+/// A sampled one-way geometric propagation delay in scenario-relative nanoseconds.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropagationDelaySample {
+    pub at_ns: u64,
+    pub delay_ns: u64,
+}
+
 /// A half-open geometric link contact. This is not a claim of PHY acquisition.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -90,6 +98,10 @@ pub struct ContactWindow {
     /// The active window uses this fixed value until the next contact transition.
     #[serde(default)]
     pub propagation_delay_ns: Option<u64>,
+    /// Optional per-transmission delay samples; interpolated at TX completion.
+    /// The midpoint delay above remains the route-planning weight.
+    #[serde(default)]
+    pub propagation_delay_samples: Vec<PropagationDelaySample>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -236,6 +248,7 @@ impl Scenario {
         }
         let mut windows: std::collections::HashMap<&str, Vec<(u64, u64)>> =
             std::collections::HashMap::new();
+        let mut sample_total = 0usize;
         for contact in &self.contacts {
             let Some(link) = self.links.iter().find(|l| l.id == contact.link_id) else {
                 return Err(format!("unknown contact link: {}", contact.link_id));
@@ -257,6 +270,43 @@ impl Scenario {
                     "contact propagation delay must be positive for {}",
                     contact.link_id
                 ));
+            }
+            let samples = &contact.propagation_delay_samples;
+            sample_total = sample_total
+                .checked_add(samples.len())
+                .ok_or("propagation delay sample count overflow")?;
+            if sample_total > 500_000 {
+                return Err("propagation delay sample budget exceeded".into());
+            }
+            if !samples.is_empty() {
+                if contact.propagation_delay_ns.is_none() {
+                    return Err(format!(
+                        "sampled contact requires midpoint propagation delay for {}",
+                        contact.link_id
+                    ));
+                }
+                if samples.first().map(|s| s.at_ns) != Some(contact.start_ns)
+                    || samples.last().map(|s| s.at_ns) != Some(contact.end_ns - 1)
+                {
+                    return Err(format!(
+                        "propagation delay samples must span the contact for {}",
+                        contact.link_id
+                    ));
+                }
+                let mut previous = None;
+                for sample in samples {
+                    if sample.delay_ns == 0
+                        || sample.at_ns < contact.start_ns
+                        || sample.at_ns >= contact.end_ns
+                        || previous.is_some_and(|at| sample.at_ns <= at)
+                    {
+                        return Err(format!(
+                            "invalid propagation delay sample for {}",
+                            contact.link_id
+                        ));
+                    }
+                    previous = Some(sample.at_ns);
+                }
             }
             windows
                 .entry(&contact.link_id)
@@ -320,6 +370,7 @@ mod tests {
             start_ns: 10,
             end_ns: 20,
             propagation_delay_ns: Some(1_900_000),
+            propagation_delay_samples: vec![],
         });
         assert!(s.validate().is_ok());
         s.contacts.push(ContactWindow {
@@ -327,6 +378,7 @@ mod tests {
             start_ns: 19,
             end_ns: 22,
             propagation_delay_ns: None,
+            propagation_delay_samples: vec![],
         });
         assert!(s.validate().unwrap_err().contains("overlapping"));
         s.contacts[1].start_ns = 20;
@@ -343,11 +395,36 @@ mod tests {
             start_ns: 10,
             end_ns: 20,
             propagation_delay_ns: Some(2_000),
+            propagation_delay_samples: vec![],
         });
         assert!(s.validate().unwrap_err().contains("unknown contact"));
         s.contacts[0].link_id = "isl-a-b".into();
         s.contacts[0].end_ns = 10;
         assert!(s.validate().unwrap_err().contains("invalid contact"));
+    }
+
+    #[test]
+    fn sampled_delays_require_bounded_ordered_positive_samples() {
+        let mut s = Scenario::from_json(&fixture()).unwrap();
+        s.contacts.push(ContactWindow {
+            link_id: "user-ue-a".into(),
+            start_ns: 10,
+            end_ns: 20,
+            propagation_delay_ns: Some(1_900_000),
+            propagation_delay_samples: vec![
+                PropagationDelaySample { at_ns: 10, delay_ns: 1_000_000 },
+                PropagationDelaySample { at_ns: 19, delay_ns: 2_000_000 },
+            ],
+        });
+        assert!(s.validate().is_ok());
+        s.contacts[0].propagation_delay_samples[1].at_ns = 10;
+        assert!(s.validate().unwrap_err().contains("span the contact"));
+        s.contacts[0].propagation_delay_samples[1].at_ns = 19;
+        s.contacts[0].propagation_delay_samples[1].delay_ns = 0;
+        assert!(s.validate().unwrap_err().contains("invalid propagation delay sample"));
+        s.contacts[0].propagation_delay_samples[1].delay_ns = 2_000_000;
+        s.contacts[0].propagation_delay_ns = None;
+        assert!(s.validate().unwrap_err().contains("requires midpoint"));
     }
 
     #[test]
