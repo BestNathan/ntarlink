@@ -2,7 +2,7 @@
 
 ## Operational P0 and P1 orbital-contact bridge
 
-The existing P0 Rust packet simulator executes a deterministic packet journey across user RF, satellite optical ISL, feeder station, terrestrial backhaul and internet endpoint. The new **P1 orbital bridge** provides offline TLE/SGP4 propagation, Skyfield TEME-to-ITRS transformation, WGS84 elevation and Earth-occlusion geometry, sampled contact windows and propagation delay.
+The existing P0 Rust packet simulator executes a deterministic packet journey across user RF, satellite optical ISL, feeder station, terrestrial backhaul and internet endpoint. The new **P1 orbital bridge** provides offline TLE/SGP4 propagation, Skyfield TEME-to-ITRS transformation, WGS84 elevation and Earth-occlusion geometry, sampled contact windows with optional bisection-refined boundaries and propagation delay.
 
 **Implemented in code:** contact windows with half-open `[start_ns,end_ns)` bounds and optional midpoint geometric delay; `contact_mode: "scheduled"` prevents space links without visibility from being treated as always available; Rust contact transitions drive link state and delayed route recomputation. The same packet engine reports delivered and dropped packets as contacts open/close. Python runs offline and writes a versioned JSON scenario plus a provenance sidecar.
 
@@ -13,7 +13,7 @@ The existing P0 Rust packet simulator executes a deterministic packet journey ac
 - Python dependency pins: `skyfield==1.55`, `sgp4==2.27`; zero network downloads during propagation (`timescale(builtin=True)`).
 - Orbital input TLE and absolute historical `epoch_utc` are explicitly recorded and checked for freshness (configurable maximum 14 days from TLE epoch).
 - Skyfield converts SGP4 TEME output to ITRS Earth-fixed coordinates before WGS84 elevation/occlusion calculations.
-- Contacts are **sample-aligned** with timing uncertainty up to the step interval. A contact's delay is computed at its midpoint and held constant for that window.
+- Contacts use a coarse visibility scan; optional bisection refines **detected** rise/set transitions to a configured tolerance, conservatively rounding into visibility. Two transitions within one sample interval can still be missed. A contact's delay is computed at its midpoint and held constant for that window.
 - A geometric contact is a **candidate**, not proof of beam scheduling, modem synchronization, optical PAT acquisition or resource admission.
 - Packet transmissions already admitted before a contact closes finish under the P0 `complete_after_departure` convention. Physical interruption and retransmission models remain future work.
 - Linux IP, real PHY/MAC, BER, interference, handover signaling and satellite control remain unimplemented.
