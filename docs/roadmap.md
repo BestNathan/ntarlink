@@ -28,6 +28,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Bounded satellite-major JSONL streaming ITRS ephemeris with atomic artifact replacement, SHA-256 provenance and historical ISS CI (not a columnar format or scale benchmark).
 - [x] Offline JSONL reader with full-stream schema/grid/digest verification before consumption and bounded disk snapshot (not a trusted-signature or live streaming protocol).
 - [x] Reproducible synthetic SYS-01 JSONL exporter/verified-reader throughput and Python-heap baseline with 1k/10k CI smoke workloads (not real SGP4 constellation scaling or a performance SLA).
+- [x] Bounded real SGP4/Skyfield ITRS throughput smoke using replicated historical TLEs, with separate provider-build timing and position digest (not a real constellation or large-scale capacity validation).
 - [ ] Independent published multi-epoch ITRF reference verification, certified IERS/leap-second archive handling, columnar ephemerides and large constellation benchmarks.
 - [x] First-order Doppler/range-rate observations at contact midpoints, exported as a separate analytical artifact (not PHY carrier recovery).
 - [x] Initial SYS-05 analytical RF link-budget sidecar from SYS-01 midpoint contact delays (Friis, thermal C/N, reference margin); no PHY/MAC admission.
