@@ -60,6 +60,57 @@ class OrbitalContactTests(unittest.TestCase):
         self.assertEqual(windows[0]["end_ns"], 40_000_000_000)
         self.assertAlmostEqual(windows[0]["propagation_delay_ns"], 1_834_600, delta=5_000)
 
+    def test_refined_ground_pass_edges_are_conservative(self):
+        # Synthetic ECEF pass with analytically known 30-degree crossings.
+        # The motion is deliberately not a physical SGP4 trajectory.
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 2000,
+            "nodes": [
+                {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+                {"id": "sat", "kind": "satellite"},
+            ],
+            "links": [{"id": "access", "kind": "user_rf", "from": "ue", "to": "sat"}],
+        }
+        config = {
+            "step_ns": 100,
+            "refine_tolerance_ns": 1,
+            "min_elevation_deg": 30,
+            "satellites": [{"id": "sat"}],
+        }
+        position = lambda _sat, t: (6_378_137 + 550_000, (t - 1000) * 2000.0, 0)
+        windows = generate_contact_windows(scenario, config, position)
+        self.assertEqual(len(windows), 1)
+        window = windows[0]
+        exact_half_width = 550_000 / math.tan(math.radians(30)) / 2000
+        exact_rise = 1000 - exact_half_width
+        exact_set = 1000 + exact_half_width
+        self.assertGreaterEqual(window["start_ns"], exact_rise)
+        self.assertLessEqual(window["end_ns"], exact_set)
+        self.assertLessEqual(window["start_ns"] - exact_rise, 1)
+        self.assertLessEqual(exact_set - window["end_ns"], 1)
+        self.assertLess(window["start_ns"], window["end_ns"])
+        self.assertGreater(window["propagation_delay_ns"], 0)
+
+    def test_refinement_configuration_is_validated(self):
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 100,
+            "nodes": [
+                {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+                {"id": "sat", "kind": "satellite"},
+            ],
+            "links": [{"id": "access", "kind": "user_rf", "from": "ue", "to": "sat"}],
+        }
+        for invalid in (0, -1, 101, 0.5, True):
+            config = {
+                "step_ns": 100,
+                "refine_tolerance_ns": invalid,
+                "satellites": [{"id": "sat"}],
+            }
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                generate_contact_windows(scenario, config, lambda *_: (7e6, 0, 0))
+
     def test_iss_historical_reference_pass_from_skyfield_docs(self):
         root = Path(__file__).resolve().parents[4]
         scenario = json.loads((root / "scenarios/orbital-pass.json").read_text())
