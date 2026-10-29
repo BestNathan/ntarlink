@@ -238,14 +238,11 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
             windows.append(window)
 
         def transition_boundary(left_ns, right_ns, left_visible):
-            # Without bisection, a setting edge must never extend the
-            # contact into an interval known to contain invisible samples.
-            # Preserve an exact right-endpoint set when right_ns - 1 is
-            # still visible; otherwise use the last known visible sample.
+            # Without bisection, close a setting contact at the last
+            # known-visible sample, never at the first invisible sample.
+            # A coarse set can therefore discard up to one sample interval.
             if tolerance_ns == step_ns:
-                if left_visible:
-                    return right_ns if visible_at(right_ns - 1) else left_ns
-                return right_ns
+                return left_ns if left_visible else right_ns
             return _refine_transition(
                 visible_at, left_ns, right_ns, left_visible, tolerance_ns
             )
