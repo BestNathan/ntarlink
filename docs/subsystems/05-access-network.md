@@ -81,3 +81,12 @@ requires an explicit resource/bearer contract and packet-grant event bridge.
 Radio power and SINR calculation against independent reference values; Doppler sign/units; beam footprint and steering limits; two terminals exceeding shared beam capacity produce constrained grants; weighted fairness and no starvation; interference reduces effective rate; radio blackout/handover causes measurable packet/service interruption; handover does not accidentally re-create an authorized service session. Report beam goodput, scheduled resources, BLER, packet queue delay, attach completion, handover outages and radio coverage.
 
 **Milestones:** analytic RF/link budget → deterministic beam scheduler → admission/session coordination → handover → external protocol comparison.
+## Opt-in uplink MAC packet integration
+
+The L1 shared-beam bridge now connects the standalone weighted frame allocator
+to the packet runtime for explicitly configured terminal-to-satellite user RF
+uplinks. It enforces a common per-frame wire-byte budget, accounts queue delay
+and drops ungranted bearer packets on contact loss. Legacy links are unchanged.
+This does **not** implement physical acquisition, SINR-based rate adaptation,
+subscriber admission, downlink scheduling or handover. See
+[beam-frame packet bridge](../design/beam-frame-packet-bridge.md).
