@@ -36,6 +36,7 @@ jobs:
       - name: Generate real SGP4 visibility windows and run the Rust packet engine
         run: |
           python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json
+          python -c 'import json; x=json.load(open("/tmp/orbital-pass-compiled.json.orbit-kinematics.json")); ids={s["link_id"] for s in x["samples"]}; assert ids=={"user-iss", "feeder-iss"}, ids; assert all(abs(s["range_rate_mps"])<8000 for s in x["samples"]); print("Doppler observations:", len(x["samples"]))'
           cargo run -p ntarlink-cli -- simulate /tmp/orbital-pass-compiled.json --json > /tmp/orbital-report.json
           python -c 'import json; x=json.load(open("/tmp/orbital-report.json")); assert x["delivered"] > 0 and x["dropped"] > 0, x; print("Orbital E2E:", x["delivered"], "delivered,", x["dropped"], "dropped")'
   python:
