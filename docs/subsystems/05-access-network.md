@@ -50,6 +50,15 @@ Commands: `RequestAccess`, `ReserveBeamResources`, `ScheduleTraffic`, `PrepareHa
 
 **Baseline:** Rust simplified RF budget + directional beam queue/scheduler + attachment/handover state machine, with independent unit tests. Python/SYS-01 supplies position/elevation and Doppler inputs. **Protocol fidelity:** evaluate [SNS3](https://github.com/sns3/sns3-satellite) for multi-spot beam, DVB-S2/RCS2 scheduling, error and interference models; [OpenSAND](https://www.opensand.org/overview.html) for interactive satellite broadband packet emulation. These model other documented standards, **not** a verified Starlink waveform. [OpenAirInterface](https://openairinterface.org/) only for an explicitly separate 3GPP NTN profile (current CSSL terms).
 
+## Current analytical milestone
+
+The initial `systems/access/python` implementation is a standalone SYS-05
+consumer of SYS-01's compiled contact JSON. It produces directional,
+midpoint-only Friis/290 K C/N budgets with explicit loss and reference-margin
+inputs. It does not install RF links or change packet capacity. See
+[access implementation](../../systems/access/README.md). Full interference,
+beam scheduling, antenna patterns, MAC and handover remain planned.
+
 ## Required verification
 
 Radio power and SINR calculation against independent reference values; Doppler sign/units; beam footprint and steering limits; two terminals exceeding shared beam capacity produce constrained grants; weighted fairness and no starvation; interference reduces effective rate; radio blackout/handover causes measurable packet/service interruption; handover does not accidentally re-create an authorized service session. Report beam goodput, scheduled resources, BLER, packet queue delay, attach completion, handover outages and radio coverage.
