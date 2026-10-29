@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "description": "Illustrative, non-Starlink directed RF parameters for the 2014 ISS laboratory pass. No interference or MAC allocation.",
+  "rf_link_budgets": {
+    "user-iss": {
+      "carrier_hz": 12000000000,
+      "bandwidth_hz": 20000000,
+      "tx_power_dbm": 30,
+      "tx_gain_dbi": 35,
+      "rx_gain_dbi": 35,
+      "noise_figure_db": 3,
+      "other_losses_db": 2,
+      "required_cn_db": 8
+    },
+    "feeder-iss": {
+      "carrier_hz": 18000000000,
+      "bandwidth_hz": 50000000,
+      "tx_power_dbm": 40,
+      "tx_gain_dbi": 40,
+      "rx_gain_dbi": 40,
+      "noise_figure_db": 3,
+      "other_losses_db": 2,
+      "required_cn_db": 8
+    }
+  }
+}

@@ -30,9 +30,22 @@ The existing P0 Rust packet simulator executes a deterministic packet journey ac
 
 Read [historical pass instructions](../scenarios/ORBITAL-README.md) for the end-to-end command. This demo uses the ISS and a co-located laboratory ground site for reproducibility; it **does not** represent an operational Starlink constellation.
 
+## First SYS-05 analytical RF budget
+
+A separate `systems/access/python` package now consumes the compiled
+SYS-01 scheduled-contact artifact, using each directed RF contact's midpoint
+`propagation_delay_ns` to recover an approximate geometric range. It
+calculates free-space path loss, received power, 290 K thermal noise, C/N0,
+C/N and margin against an explicitly configured reference threshold.
+The JSON output includes input SHA-256 provenance and per-contact samples.
+The original Rust link capacity and packet decisions are unchanged.
+This is **not** an RF waveform, actual SINR, beam allocation or radio bearer
+acquisition; results assume no interference and no unconfigured losses.
+See [access subsystem instructions](../systems/access/README.md).
+
 ## Remaining subsystem work
 
-P1 next: reference-grade contact boundary refinement, orbit catalog/ephemeris output, differential propagation delays, time-resolved Doppler/PHY correction, antenna/beam RF budget, MAC access/scheduler, optical PAT and spacecraft constraints.
+P1 next: reference-grade contact boundary refinement, orbit catalog/ephemeris output, differential propagation delays, time-resolved Doppler/PHY correction, calibrated beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints.
 
 P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
 
