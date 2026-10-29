@@ -14,6 +14,7 @@ from pathlib import Path
 
 MAX_ARTIFACT_BYTES = 128_000_000
 MAX_PAIRS = 500_000
+MAX_PROBES = 500_000
 
 
 def _digest(raw: bytes) -> str:
@@ -28,12 +29,15 @@ def _vector(value, label: str) -> tuple[float, float, float]:
     return tuple(float(x) for x in value)
 
 
-def audit_interpolation(document: dict, position, max_midpoint_error_m: float) -> dict:
-    """Audit every *complete* adjacent sample interval at its midpoint."""
+def audit_interpolation(document: dict, position, max_midpoint_error_m: float,
+                        probes_per_interval: int = 1) -> dict:
+    """Audit fixed interior probes on every complete sample interval."""
     if (isinstance(max_midpoint_error_m, bool)
             or not isinstance(max_midpoint_error_m, (int, float))
             or not math.isfinite(max_midpoint_error_m) or max_midpoint_error_m <= 0):
         raise ValueError("max_midpoint_error_m must be finite and positive")
+    if isinstance(probes_per_interval, bool) or probes_per_interval not in (1, 3, 7):
+        raise ValueError("probes_per_interval must be 1, 3, or 7")
     if (document.get("schema_version") != 1 or document.get("frame") != "ITRS"
             or document.get("time_scale") != "UTC"
             or document.get("position_unit") != "m"
@@ -41,9 +45,10 @@ def audit_interpolation(document: dict, position, max_midpoint_error_m: float) -
         raise ValueError("unsupported ITRS ephemeris contract")
     step = document.get("sample_step_ns")
     duration = document.get("duration_ns")
-    if (isinstance(step, bool) or not isinstance(step, int) or step < 2000
-            or step % 2000 != 0):
-        raise ValueError("sample_step_ns must be a positive multiple of 2000 for midpoint audit")
+    quantum = 1000 * (probes_per_interval + 1)
+    if (isinstance(step, bool) or not isinstance(step, int) or step < quantum
+            or step % quantum != 0):
+        raise ValueError(f"sample_step_ns must be a positive multiple of {quantum} for probes")
     if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
         raise ValueError("duration_ns must be positive")
     satellites = document.get("satellites")
@@ -52,6 +57,8 @@ def audit_interpolation(document: dict, position, max_midpoint_error_m: float) -
     expected_count = (duration - 1) // step + 1
     if expected_count < 2 or expected_count * len(satellites) > MAX_PAIRS:
         raise ValueError("ephemeris midpoint audit requires 2+ samples and at most 500000 pairs")
+    if (expected_count - 1) * len(satellites) * probes_per_interval > MAX_PROBES:
+        raise ValueError("ephemeris audit exceeds 500000 interior probe limit")
     if document.get("sample_count") != expected_count * len(satellites):
         raise ValueError("ephemeris sample_count mismatch")
     ids = [s.get("id") for s in satellites if isinstance(s, dict)]
@@ -75,43 +82,65 @@ def audit_interpolation(document: dict, position, max_midpoint_error_m: float) -
         validated.append((sat["id"], vectors))
 
     results = []
-    total_sq = 0.0
-    maximum = 0.0
+    midpoint_sq = 0.0
+    probe_sq = 0.0
+    midpoint_max = 0.0
+    probe_max = 0.0
+    midpoint_index = (probes_per_interval + 1) // 2
     for sat_id, vectors in validated:
-        errors = []
+        midpoint_errors = []
+        probe_errors = []
         for i in range(len(vectors) - 1):
-            midpoint_ns = i * step + step // 2
-            actual = _vector(list(position(sat_id, midpoint_ns)), sat_id)
-            predicted = [(a + b) / 2.0 for a, b in zip(vectors[i], vectors[i + 1])]
-            error = math.dist(actual, predicted)
-            if not math.isfinite(error):
-                raise ValueError("nonfinite interpolation error")
-            errors.append(error)
-        sat_max = max(errors)
-        maximum = max(maximum, sat_max)
-        square_sum = sum(e * e for e in errors)
-        total_sq += square_sum
-        results.append({"id": sat_id, "midpoint_count": len(errors),
-                        "max_error_m": sat_max,
-                        "rms_error_m": math.sqrt(square_sum / len(errors))})
-    count = sum(x["midpoint_count"] for x in results)
-    return {"schema_version": 1, "model": "held-out linear interpolation midpoint audit",
+            for k in range(1, probes_per_interval + 1):
+                at_ns = i * step + (step // (probes_per_interval + 1)) * k
+                actual = _vector(list(position(sat_id, at_ns)), sat_id)
+                fraction = k / (probes_per_interval + 1)
+                predicted = [a + (b - a) * fraction
+                             for a, b in zip(vectors[i], vectors[i + 1])]
+                error = math.dist(actual, predicted)
+                if not math.isfinite(error):
+                    raise ValueError("nonfinite interpolation error")
+                probe_errors.append(error)
+                if k == midpoint_index:
+                    midpoint_errors.append(error)
+        sat_midpoint_sq = sum(e * e for e in midpoint_errors)
+        sat_probe_sq = sum(e * e for e in probe_errors)
+        midpoint_sq += sat_midpoint_sq
+        probe_sq += sat_probe_sq
+        midpoint_max = max(midpoint_max, max(midpoint_errors))
+        probe_max = max(probe_max, max(probe_errors))
+        results.append({"id": sat_id, "midpoint_count": len(midpoint_errors),
+                        "max_error_m": max(midpoint_errors),
+                        "rms_error_m": math.sqrt(sat_midpoint_sq / len(midpoint_errors)),
+                        "probe_count": len(probe_errors),
+                        "max_probe_error_m": max(probe_errors),
+                        "rms_probe_error_m": math.sqrt(sat_probe_sq / len(probe_errors))})
+    midpoint_count = sum(x["midpoint_count"] for x in results)
+    probe_count = midpoint_count * probes_per_interval
+    return {"schema_version": 1, "model": ("held-out linear interpolation midpoint audit"
+                      if probes_per_interval == 1
+                      else "held-out linear interpolation interior probe audit"),
             "frame": "ITRS", "error_unit": "m", "sample_step_ns": step,
-            "midpoint_count": count, "max_midpoint_error_m": maximum,
-            "rms_midpoint_error_m": math.sqrt(total_sq / count),
+            "probes_per_interval": probes_per_interval, "probe_count": probe_count,
+            "max_probe_error_m": probe_max,
+            "rms_probe_error_m": math.sqrt(probe_sq / probe_count),
+            "midpoint_count": midpoint_count, "max_midpoint_error_m": midpoint_max,
+            "rms_midpoint_error_m": math.sqrt(midpoint_sq / midpoint_count),
             "threshold_m": float(max_midpoint_error_m),
-            "passed": maximum <= max_midpoint_error_m,
-            "limitations": "same SGP4 provider; midpoints only; no continuous error guarantee",
+            "passed": probe_max <= max_midpoint_error_m,
+            "limitations": "same SGP4 provider; fixed interior probes only; no continuous error guarantee",
             "satellites": results}
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Audit ITRS ephemeris midpoint interpolation")
+    parser = argparse.ArgumentParser(description="Audit ITRS ephemeris interpolation at held-out interior probes")
     parser.add_argument("scenario", type=Path)
     parser.add_argument("orbit_config", type=Path)
     parser.add_argument("ephemeris", type=Path)
     parser.add_argument("--source-manifest", type=Path, required=True)
-    parser.add_argument("--max-midpoint-error-m", type=float, required=True)
+    parser.add_argument("--max-midpoint-error-m", "--max-probe-error-m",
+                        dest="max_probe_error_m", type=float, required=True)
+    parser.add_argument("--probes-per-interval", type=int, choices=(1, 3, 7), default=1)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     for path in (args.ephemeris, args.source_manifest):
@@ -141,14 +170,15 @@ def main(argv=None):
     from .contacts import build_sgp4_provider
     provider = build_sgp4_provider(orbit_config, document["duration_ns"],
                                    args.orbit_config.resolve().parent)
-    result = audit_interpolation(document, provider, args.max_midpoint_error_m)
+    result = audit_interpolation(document, provider, args.max_probe_error_m,
+                                 args.probes_per_interval)
     result.update({"ephemeris_sha256": _digest(ephemeris_raw),
                    "scenario_input_sha256": _digest(scenario_raw),
                    "orbit_input_sha256": _digest(orbit_raw),
                    "earth_orientation": getattr(provider, "earth_orientation", None)})
     args.out.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    print(f"Audited {result['midpoint_count']} ITRS midpoints: "
-          f"max error {result['max_midpoint_error_m']:.6f} m; "
+    print(f"Audited {result['probe_count']} ITRS interior probes: "
+          f"max error {result['max_probe_error_m']:.6f} m; "
           f"passed={result['passed']}")
     if not result["passed"]:
         raise SystemExit(1)
