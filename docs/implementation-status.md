@@ -93,6 +93,17 @@ serialization and verified-read baseline, not a real constellation, SGP4
 propagation benchmark, process-RSS measurement or performance guarantee.
 See [benchmark protocol](design/orbital-ephemeris-benchmark.md).
 
+## Production-provider SGP4/ITRS compute benchmark
+
+The opt-in `ntarlink_orbital.sgp4_scale_benchmark` invokes the real
+Skyfield/SGP4 ITRS position provider on a bounded UTC grid, using replicated
+historical TLE records under distinct IDs. It reports provider-build time,
+position throughput, sample count and a deterministic position digest.
+Python unit tests cover failure handling and CI exercises a small historical
+ISS case. This is a computation baseline, not a physically diverse
+constellation, multi-epoch orbit validation, or a 100k/500k performance
+measurement. See [benchmark scope](design/orbital-sgp4-scale-benchmark.md).
+
 ## Opt-in production SYS-01 Earth-orientation input
 
 The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A
