@@ -1,7 +1,7 @@
 """Deterministic, interference-free analytical RF budgets for geometric contacts.
 
-SYS-05 consumes SYS-01 midpoint geometric delays; no radio bearer is established,
-predict MAC capacity, or reproduce a proprietary satellite air interface.
+SYS-05 consumes SYS-01 midpoint geometric delays. It does not establish a
+radio bearer, predict MAC capacity, or reproduce a proprietary air interface.
 """
 from __future__ import annotations
 
