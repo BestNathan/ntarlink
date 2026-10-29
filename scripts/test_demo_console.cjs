@@ -57,7 +57,7 @@ function route(hash) {
 }
 for (const system of window.NTARLINK_DEMO.systems) {
   route("#/system/" + system.id + "/overview");
-  assert(app.innerHTML.includes(system.name), system.id + " overview");
+  assert(app.innerHTML.includes(system.name.replaceAll("&", "&amp;")), system.id + " overview");
   assert(app.innerHTML.includes("Primary capabilities"), system.id + " capabilities");
   route("#/system/" + system.id + "/assets");
   assert(app.innerHTML.includes("<table>"), system.id + " inventory");
