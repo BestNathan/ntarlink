@@ -22,6 +22,10 @@ cd applications/console && npm install && npm run check
 
 The JSON report includes per-packet status, drop reason, route revisions and a timestamped, hop-by-hop packet trace.
 
+## GitHub Pages system showcase
+
+The [interactive system showcase](https://bestnathan.github.io/ntarlink/) presents all 16 subsystem capability areas, network topology, simulated event timelines and failure scenarios using explicitly **mock data**. The site is built from [applications/console/pages/index.html](applications/console/pages/index.html) and published by [.github/workflows/pages.yml](.github/workflows/pages.yml) after GitHub Pages has been enabled for the repository. If the URL is not yet active, see [Pages setup and deployment](docs/pages.md).
+
 ## Repository architecture
 
 ```text
