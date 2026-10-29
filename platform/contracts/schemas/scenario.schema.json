@@ -247,6 +247,34 @@
         "propagation_delay_ns": {
           "type": "integer",
           "minimum": 1
+        },
+        "propagation_delay_samples": {
+          "type": "array",
+          "maxItems": 500000,
+          "items": {
+            "$ref": "#/$defs/delay_sample"
+          },
+          "description": "Optional ordered, positive delay samples spanning [start_ns, end_ns); Rust validates first/last timestamps, monotonicity, and total budget. Interpolated at TX completion; propagation_delay_ns remains routing weight."
+        }
+      }
+    },
+    "delay_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at_ns",
+        "delay_ns"
+      ],
+      "properties": {
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Scenario-relative virtual time in nanoseconds."
+        },
+        "delay_ns": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "One-way geometric propagation delay in nanoseconds."
         }
       }
     }

@@ -4,7 +4,7 @@
 
 ntarlink is organized by **subsystem responsibility**, not by programming language. Rust drives deterministic packet and event simulation, Python provides orbital/geometry experiments, and TypeScript describes console-facing scenario and trace data. Existing ns-3, SNS3, OpenSAND and SDR tools remain potential external adapters, not claimed to be integrated.
 
-> **Current fidelity: L1 packet simulation with an optional P1 offline orbital-contact bridge.** The deterministic Rust runner models packet paths, finite queues, per-hop delay, link faults and control-plane convergence. Python now generates geometric contact windows from historical TLEs using SGP4/Skyfield and WGS84, which drive timed link availability and routing changes. This is **not** a real RF modem, laser PAT, access MAC or proprietary Starlink protocol.
+> **Current fidelity: L1 packet simulation with an optional P1 offline orbital-contact bridge.** The deterministic Rust runner models packet paths, finite queues, per-hop delay, link faults and control-plane convergence. Python now generates geometric contact windows from historical TLEs using SGP4/Skyfield and WGS84, which drive timed link availability and routing changes. An optional offline delay sample series drives deterministic per-packet geometric propagation delay in Rust; route weights still use contact midpoint delay. This is **not** a real RF modem, laser PAT, access MAC or proprietary Starlink protocol.
 
 ## Try it
 

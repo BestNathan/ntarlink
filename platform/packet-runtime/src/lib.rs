@@ -1,10 +1,34 @@
-use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, Scenario};
+use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySample, Scenario};
 use ntarlink_network_control::next_hops;
 use ntarlink_simulation::Scheduler;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 
 const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
+
+/// Piecewise-linear delay at the completion of packet serialization.
+/// Integer arithmetic and nearest-nanosecond rounding preserve reproducibility.
+fn interpolated_delay(samples: &[PropagationDelaySample], at_ns: u64) -> u64 {
+    let upper = samples.partition_point(|sample| sample.at_ns <= at_ns);
+    if upper == 0 {
+        return samples[0].delay_ns;
+    }
+    if upper == samples.len() {
+        return samples[upper - 1].delay_ns;
+    }
+    let a = &samples[upper - 1];
+    let b = &samples[upper];
+    let span = u128::from(b.at_ns - a.at_ns);
+    let elapsed = u128::from(at_ns - a.at_ns);
+    let scaled = u128::from(a.delay_ns.abs_diff(b.delay_ns)) * elapsed;
+    let rounded = scaled / span + u128::from(scaled % span >= span.div_ceil(2));
+    let change = u64::try_from(rounded).expect("interpolated delta is bounded by endpoint delta");
+    if b.delay_ns >= a.delay_ns {
+        a.delay_ns + change
+    } else {
+        a.delay_ns - change
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -82,6 +106,7 @@ struct LinkRuntime {
     admin_up: bool,
     contact_up: bool,
     contact_delay_ns: Option<u64>,
+    active_contact: Option<usize>,
     transmitter_free_ns: u64,
     bytes_in_queue: u64,
     pending_tx: VecDeque<(u64, u64)>,
@@ -117,11 +142,13 @@ impl<'a> Runtime<'a> {
                 let initial = scenario
                     .contacts
                     .iter()
-                    .find(|c| c.link_id == link.id && c.start_ns == 0);
+                    .enumerate()
+                    .find(|(_, c)| c.link_id == link.id && c.start_ns == 0);
                 LinkRuntime {
                     admin_up: link.up,
                     contact_up: (!contact_defined && !schedule_required) || initial.is_some(),
-                    contact_delay_ns: initial.and_then(|c| c.propagation_delay_ns),
+                    contact_delay_ns: initial.and_then(|(_, c)| c.propagation_delay_ns),
+                    active_contact: initial.map(|(index, _)| index),
                     ..LinkRuntime::default()
                 }
             })
@@ -230,7 +257,6 @@ impl<'a> Runtime<'a> {
         }
         let link = &self.scenario.links[link_index];
         let state = &mut self.links[link_index];
-        let propagation_ns = state.contact_delay_ns.unwrap_or(link.propagation_delay_ns);
         while state
             .pending_tx
             .front()
@@ -251,6 +277,13 @@ impl<'a> Runtime<'a> {
         let completed_ns = start_ns
             .checked_add(serialization_ns)
             .ok_or("transmission time overflow")?;
+        let propagation_ns = state
+            .active_contact
+            .and_then(|index| {
+                let samples = &self.scenario.contacts[index].propagation_delay_samples;
+                (!samples.is_empty()).then(|| interpolated_delay(samples, completed_ns))
+            })
+            .unwrap_or_else(|| state.contact_delay_ns.unwrap_or(link.propagation_delay_ns));
         let arrived_ns = completed_ns
             .checked_add(propagation_ns)
             .and_then(|t| t.checked_add(link.processing_delay_ns))
@@ -303,6 +336,7 @@ impl<'a> Runtime<'a> {
             .ok_or_else(|| format!("unknown contact link: {}", contact.link_id))?;
         let state = &mut self.links[link_index];
         state.contact_up = opened;
+        state.active_contact = if opened { Some(contact_index) } else { None };
         state.contact_delay_ns = if opened {
             contact.propagation_delay_ns
         } else {
@@ -480,6 +514,81 @@ mod tests {
                 .sum();
             assert_eq!(packet.completed_ns.unwrap() - packet.injected_ns, total);
         }
+    }
+
+    #[test]
+    fn sampled_delay_interpolates_and_clamps_without_floating_point() {
+        let samples = [
+            PropagationDelaySample {
+                at_ns: 10,
+                delay_ns: 10,
+            },
+            PropagationDelaySample {
+                at_ns: 20,
+                delay_ns: 31,
+            },
+            PropagationDelaySample {
+                at_ns: 30,
+                delay_ns: 11,
+            },
+        ];
+        assert_eq!(interpolated_delay(&samples, 0), 10);
+        assert_eq!(interpolated_delay(&samples, 15), 21);
+        assert_eq!(interpolated_delay(&samples, 25), 21);
+        assert_eq!(interpolated_delay(&samples, 35), 11);
+    }
+
+    #[test]
+    fn packet_propagation_uses_transmission_completion_time() {
+        let mut scenario = basic();
+        let end_ns = scenario.duration_ns;
+        scenario.contacts.push(ntarlink_contracts::ContactWindow {
+            link_id: "user-ue-a".into(),
+            start_ns: 0,
+            end_ns,
+            propagation_delay_ns: Some(2_000_000),
+            propagation_delay_samples: vec![
+                PropagationDelaySample {
+                    at_ns: 0,
+                    delay_ns: 1_000_000,
+                },
+                PropagationDelaySample {
+                    at_ns: end_ns - 1,
+                    delay_ns: 3_000_000,
+                },
+            ],
+        });
+        let result = run(&scenario).unwrap();
+        assert_eq!(result.delivered, 3);
+        let samples = &scenario.contacts[0].propagation_delay_samples;
+        let user_hops: Vec<_> = result
+            .packets
+            .iter()
+            .map(|packet| {
+                packet
+                    .hops
+                    .iter()
+                    .find(|hop| hop.link_id == "user-ue-a")
+                    .unwrap()
+            })
+            .collect();
+        assert!(user_hops
+            .windows(2)
+            .all(|pair| pair[0].propagation_ns < pair[1].propagation_ns));
+        for hop in user_hops {
+            assert_eq!(
+                hop.propagation_ns,
+                interpolated_delay(samples, hop.transmit_completed_ns)
+            );
+            assert_eq!(
+                hop.arrived_ns - hop.transmit_completed_ns,
+                hop.propagation_ns + hop.processing_ns
+            );
+        }
+        assert_eq!(
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap(),
+            serde_json::to_vec(&result).unwrap()
+        );
     }
 
     #[test]
