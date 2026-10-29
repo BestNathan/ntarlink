@@ -412,8 +412,14 @@ mod tests {
             end_ns: 20,
             propagation_delay_ns: Some(1_900_000),
             propagation_delay_samples: vec![
-                PropagationDelaySample { at_ns: 10, delay_ns: 1_000_000 },
-                PropagationDelaySample { at_ns: 19, delay_ns: 2_000_000 },
+                PropagationDelaySample {
+                    at_ns: 10,
+                    delay_ns: 1_000_000,
+                },
+                PropagationDelaySample {
+                    at_ns: 19,
+                    delay_ns: 2_000_000,
+                },
             ],
         });
         assert!(s.validate().is_ok());
@@ -421,7 +427,10 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("span the contact"));
         s.contacts[0].propagation_delay_samples[1].at_ns = 19;
         s.contacts[0].propagation_delay_samples[1].delay_ns = 0;
-        assert!(s.validate().unwrap_err().contains("invalid propagation delay sample"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid propagation delay sample"));
         s.contacts[0].propagation_delay_samples[1].delay_ns = 2_000_000;
         s.contacts[0].propagation_delay_ns = None;
         assert!(s.validate().unwrap_err().contains("requires midpoint"));
