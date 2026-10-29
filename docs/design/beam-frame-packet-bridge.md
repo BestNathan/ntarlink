@@ -61,6 +61,11 @@ cargo test --workspace
 cargo run -p ntarlink-cli -- simulate scenarios/beam-uplink-contention.json --json > /tmp/beam-report.json
 ```
 
+The JSON report exposes `beam_grants[]` with beam ID, frame start, bearer,
+packet ID, wire-byte allocation and transmit start/completion timestamps;
+legacy scenarios omit this empty field. Grant evidence is distinct from
+PHY acquisition or authenticated service.
+
 The fixture has two terminals sharing one 1,220-wire-byte frame every 10 ms
 at 976 kbit/s. Eight 1,200-byte packets with 20-byte overhead compete for
 the beam. Expected: 8 deliveries, 0 drops, one uplink grant per frame, with
