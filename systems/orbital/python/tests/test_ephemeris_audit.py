@@ -37,6 +37,7 @@ class EphemerisAuditTests(unittest.TestCase):
         result = audit_interpolation(self.doc, self.quadratic, 1.0)
         self.assertEqual(self.calls, [("sat-a", 1_000_000_000),
                                       ("sat-a", 3_000_000_000)])
+        self.assertEqual(result["model"], "held-out linear interpolation midpoint audit")
         self.assertEqual(result["midpoint_count"], 2)
         self.assertEqual(result["max_midpoint_error_m"], 1.0)
         self.assertEqual(result["rms_midpoint_error_m"], 1.0)
