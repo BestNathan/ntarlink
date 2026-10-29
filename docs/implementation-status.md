@@ -73,7 +73,12 @@ replacement after successful validation, and a companion SHA-256 provenance
 manifest. Python CI exercises a real historical ISS stream, deterministic
 ordering, failure cleanup and resource limits. This does not replace the
 original nested JSON exporter or its interpolation audit, and is neither
-columnar output nor a measured constellation-scale benchmark. See
+columnar output nor a measured constellation-scale benchmark. A separate
+`ntarlink_orbital.ephemeris_reader` validates the full JSONL schema, ordering,
+UTC grid, finite positions, byte count and SHA-256 manifest before yielding
+records. It uses a bounded temporary disk snapshot to prevent source changes
+between validation and consumption; this is not authenticated provenance,
+a live feed or a measured throughput benchmark. See
 [streaming design](design/orbital-ephemeris-stream.md).
 
 ## Opt-in production SYS-01 Earth-orientation input
