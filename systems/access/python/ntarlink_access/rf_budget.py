@@ -1,4 +1,4 @@
-"""Deterministic, interference-free analytical RF budgets for geometric contacts.
+"""Deterministic analytical RF budgets with optional received interference.
 
 SYS-05 consumes SYS-01 midpoint geometric delays. It does not establish a
 radio bearer, predict MAC capacity, or reproduce a proprietary air interface.
@@ -20,6 +20,7 @@ PARAMETERS = {
     "carrier_hz", "bandwidth_hz", "tx_power_dbm", "tx_gain_dbi",
     "rx_gain_dbi", "noise_figure_db", "other_losses_db", "required_cn_db",
 }
+OPTIONAL_PARAMETERS = {"interference_power_dbm", "required_sinr_db"}
 
 
 def _number(name: str, value: object, *, positive=False, nonnegative=False) -> float:
@@ -44,12 +45,16 @@ def calculate_rf_budget(
     noise_figure_db: float,
     other_losses_db: float,
     required_cn_db: float,
+    interference_power_dbm: float | None = None,
+    required_sinr_db: float | None = None,
 ) -> dict:
-    """One-way Friis + 290 K thermal-noise budget; all power is in dBm.
+    """One-way Friis + 290 K noise, optionally with aggregate in-band interference.
 
-    C/N0 is in dB-Hz, C/N and margin in dB. The configured required C/N
-    is a *reference threshold*, not a measured MODCOD/BLER or admission rule.
-    Interference, fading, weather, pointing and resource allocation are absent.
+    Received interference is already integrated over the occupied bandwidth
+    at the receiver input (dBm); do not add receiver noise figure to it.
+    SINR is calculated by summing thermal noise and interference in *linear*
+    power, using a stable dB expression. Reference thresholds are illustrative,
+    never PHY admission decisions or MODCOD/BLER claims.
     """
     distance = _number("range_m", range_m, positive=True)
     frequency = _number("carrier_hz", carrier_hz, positive=True)
@@ -60,6 +65,14 @@ def calculate_rf_budget(
     noise_figure = _number("noise_figure_db", noise_figure_db, nonnegative=True)
     other_losses = _number("other_losses_db", other_losses_db, nonnegative=True)
     required_cn = _number("required_cn_db", required_cn_db)
+    interference = (
+        None if interference_power_dbm is None
+        else _number("interference_power_dbm", interference_power_dbm)
+    )
+    required_sinr = (
+        None if required_sinr_db is None
+        else _number("required_sinr_db", required_sinr_db)
+    )
 
     # Logarithmic form avoids overflow for large, otherwise finite inputs.
     fspl_db = 20 * (
@@ -75,6 +88,16 @@ def calculate_rf_budget(
     cn0_db_hz = received_dbm - noise_density_dbm_hz
     cn_db = received_dbm - noise_dbm
     margin_db = cn_db - required_cn
+    if interference is None:
+        noise_plus_interference_dbm = noise_dbm
+    else:
+        # Stable even when noise and interference differ by hundreds of dB.
+        peak = max(noise_dbm, interference)
+        noise_plus_interference_dbm = peak + 10 * math.log10(
+            1 + 10 ** (-abs(noise_dbm - interference) / 10)
+        )
+    sinr_db = received_dbm - noise_plus_interference_dbm
+    sinr_margin_db = None if required_sinr is None else sinr_db - required_sinr
     outputs = {
         "range_m": distance,
         "carrier_hz": frequency,
@@ -88,6 +111,14 @@ def calculate_rf_budget(
         "required_cn_db": required_cn,
         "link_margin_db": margin_db,
         "meets_reference_cn": margin_db >= 0,
+        "interference_power_dbm": interference,
+        "noise_plus_interference_dbm": noise_plus_interference_dbm,
+        "sinr_db": sinr_db,
+        "required_sinr_db": required_sinr,
+        "sinr_margin_db": sinr_margin_db,
+        "meets_reference_sinr": (
+            None if required_sinr is None else sinr_margin_db >= 0
+        ),
     }
     if not all(math.isfinite(v) for v in outputs.values() if isinstance(v, float)):
         raise ValueError("RF budget result is nonfinite")
@@ -114,8 +145,13 @@ def generate_rf_budget_samples(scenario: dict, config: dict) -> list[dict]:
     for link_id, params in budgets.items():
         if link_id not in links or links[link_id]["kind"] not in RF_KINDS:
             raise ValueError(f"unknown or non-RF budget link: {link_id}")
-        if not isinstance(params, dict) or set(params) != PARAMETERS:
-            raise ValueError(f"RF budget {link_id} must provide exactly {sorted(PARAMETERS)}")
+        if (not isinstance(params, dict)
+                or not PARAMETERS.issubset(params)
+                or not set(params).issubset(PARAMETERS | OPTIONAL_PARAMETERS)):
+            raise ValueError(
+                f"RF budget {link_id} requires {sorted(PARAMETERS)} "
+                f"and allows only {sorted(OPTIONAL_PARAMETERS)} as extras"
+            )
         calculate_rf_budget(range_m=1.0, **params)
 
     samples = []
@@ -166,8 +202,12 @@ def main(argv=None):
     samples = generate_rf_budget_samples(scenario, config)
     document = {
         "schema_version": 1,
-        "model": "one-way Friis free-space loss and 290 K thermal-noise C/N",
-        "fidelity": "analytical; no interference, fading, pointing, MAC or PHY",
+        "model": "one-way Friis, 290 K thermal C/N and optional aggregate in-band C/(N+I)",
+        "fidelity": (
+            "analytical; interference is a configured received-power assumption, "
+            "not computed from beam geometry, spectral overlap or live PHY; "
+            "no fading, pointing, MAC or link admission"
+        ),
         "source": "SYS-01 midpoint geometric propagation delay (integer nanoseconds)",
         "reference_temperature_k": REFERENCE_TEMPERATURE_K,
         "compiled_scenario_sha256": hashlib.sha256(raw_scenario).hexdigest(),

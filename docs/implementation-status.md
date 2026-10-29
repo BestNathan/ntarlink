@@ -38,9 +38,13 @@ SYS-01 scheduled-contact artifact, using each directed RF contact's midpoint
 calculates free-space path loss, received power, 290 K thermal noise, C/N0,
 C/N and margin against an explicitly configured reference threshold.
 The JSON output includes input SHA-256 provenance and per-contact samples.
+An optional per-directed-link received aggregate in-band interference
+power (dBm) now yields analytical C/(N+I), noise-plus-interference power
+and a separately configured SINR reference margin. This interference is
+**supplied**, not calculated from beams, channels, reuse or pointing.
 The original Rust link capacity and packet decisions are unchanged.
-This is **not** an RF waveform, actual SINR, beam allocation or radio bearer
-acquisition; results assume no interference and no unconfigured losses.
+This is **not** an RF waveform, physically predicted interference, beam
+allocation or radio bearer acquisition; unconfigured losses remain absent.
 See [access subsystem instructions](../systems/access/README.md).
 
 ## Remaining subsystem work
