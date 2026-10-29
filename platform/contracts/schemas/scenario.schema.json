@@ -69,6 +69,14 @@
         "scheduled"
       ],
       "description": "Static: unspecified orbital links remain available; scheduled: orbital links need a contact window to be usable."
+    },
+    "access_beams": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/access_beam"
+      },
+      "description": "Optional shared uplink MAC beam resources. Unlisted user RF links keep legacy independent transport."
     }
   },
   "$defs": {
@@ -275,6 +283,75 @@
           "type": "integer",
           "minimum": 1,
           "description": "One-way geometric propagation delay in nanoseconds."
+        }
+      }
+    },
+    "access_beam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "capacity_bps",
+        "frame_duration_ns",
+        "quantum_bytes",
+        "packet_overhead_bytes",
+        "queue_limit_bytes",
+        "bearers"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capacity_bps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frame_duration_ns": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "quantum_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "packet_overhead_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "queue_limit_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bearers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/beam_bearer"
+          }
+        }
+      }
+    },
+    "beam_bearer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "terminal_id",
+        "link_id",
+        "weight"
+      ],
+      "properties": {
+        "terminal_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }
