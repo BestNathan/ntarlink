@@ -15,7 +15,10 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
-- [ ] Orbit catalog/SGP4 adapter, TEME to Earth-fixed/WGS84 conversion, reference datasets and timed contact windows (SYS-01).
+- [x] Initial offline historical TLE/SGP4 propagation, Skyfield TEME→ITRS conversion and sampled WGS84 user/feeder/ISL geometric contact windows (SYS-01).
+- [x] Scheduled half-open contacts feed Rust link availability and delayed route recomputation; synthetic contact handover and historical ISS pass test fixtures.
+- [ ] Boundary refinement, Earth orientation reference vectors, ephemeris artifact batching and large constellation benchmarks.
+- [ ] Actual access/optical acquisition feasibility, physical link-budget output and live per-hop varying propagation delay.
 - [ ] Spacecraft payload/optical terminal availability and pointing constraints (SYS-02).
 - [ ] Optical PAT acquisition/tracking and link-budget models (SYS-03).
 - [ ] Terminal modem and beam selection, user RF budget, frequency reuse, MAC scheduling and handover (SYS-04/05).

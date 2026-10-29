@@ -1,4 +1,4 @@
-use ntarlink_contracts::{LinkAction, Scenario};
+use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, Scenario};
 use ntarlink_network_control::next_hops;
 use ntarlink_simulation::Scheduler;
 use serde::Serialize;
@@ -109,13 +109,15 @@ impl<'a> Runtime<'a> {
             .iter()
             .map(|link| {
                 let contact_defined = scenario.contacts.iter().any(|c| c.link_id == link.id);
+                let schedule_required = scenario.contact_mode == ContactMode::Scheduled
+                    && matches!(link.kind, LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl);
                 let initial = scenario
                     .contacts
                     .iter()
                     .find(|c| c.link_id == link.id && c.start_ns == 0);
                 LinkRuntime {
                     admin_up: link.up,
-                    contact_up: !contact_defined || initial.is_some(),
+                    contact_up: (!contact_defined && !schedule_required) || initial.is_some(),
                     contact_delay_ns: initial.and_then(|c| c.propagation_delay_ns),
                     ..LinkRuntime::default()
                 }

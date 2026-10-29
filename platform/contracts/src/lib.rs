@@ -92,6 +92,14 @@ pub struct ContactWindow {
     pub propagation_delay_ns: Option<u64>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContactMode {
+    #[default]
+    Static,
+    Scheduled,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scenario {
@@ -99,6 +107,8 @@ pub struct Scenario {
     pub name: String,
     pub duration_ns: u64,
     pub control_delay_ns: u64,
+    #[serde(default)]
+    pub contact_mode: ContactMode,
     pub nodes: Vec<Node>,
     pub links: Vec<Link>,
     pub flows: Vec<Flow>,

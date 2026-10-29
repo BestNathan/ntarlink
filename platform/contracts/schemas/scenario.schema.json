@@ -61,6 +61,14 @@
       "items": {
         "$ref": "#/$defs/contact"
       }
+    },
+    "contact_mode": {
+      "type": "string",
+      "enum": [
+        "static",
+        "scheduled"
+      ],
+      "description": "Static: unspecified orbital links remain available; scheduled: orbital links need a contact window to be usable."
     }
   },
   "$defs": {

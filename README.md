@@ -4,7 +4,7 @@
 
 ntarlink is organized by **subsystem responsibility**, not by programming language. Rust drives deterministic packet and event simulation, Python provides orbital/geometry experiments, and TypeScript describes console-facing scenario and trace data. Existing ns-3, SNS3, OpenSAND and SDR tools remain potential external adapters, not claimed to be integrated.
 
-> **Current fidelity: L1, static-contact modeled packets.** The simulator now executes packet events across a configured user RF link, optical ISL, feeder gateway, terrestrial backhaul and internet edge, and models per-hop propagation/serialization/processing/queue delay, finite queues, link failure and delayed routing reconvergence. Link availability and timing are scenario inputs; **no orbital propagation, real RF waveform, PAT acquisition, MAC scheduling or Starlink proprietary protocol is implemented.**
+> **Current fidelity: L1 packet simulation with an optional P1 offline orbital-contact bridge.** The deterministic Rust runner models packet paths, finite queues, per-hop delay, link faults and control-plane convergence. Python now generates geometric contact windows from historical TLEs using SGP4/Skyfield and WGS84, which drive timed link availability and routing changes. This is **not** a real RF modem, laser PAT, access MAC or proprietary Starlink protocol.
 
 ## Try it
 
@@ -13,7 +13,10 @@ cargo test --workspace
 cargo run -p ntarlink-cli -- validate scenarios/minimal.json
 cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
 cargo run -p ntarlink-cli -- simulate scenarios/isl-failure.json --json > report.json
+python -m pip install -e systems/orbital/python
 python3 -m unittest discover -s systems/orbital/python/tests
+python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass.json
+cargo run -p ntarlink-cli -- simulate /tmp/orbital-pass.json --json > /tmp/orbital-report.json
 cd applications/console && npm install && npm run check
 ```
 
@@ -29,7 +32,7 @@ systems/network-control/      # Routing and delayed convergence
 systems/orbital/python/       # WGS84 geometry/scenario preprocessing
 applications/cli/            # Validate, simulate and export JSON trace
 applications/console/        # Typed UI contracts; interactive UI planned
-scenarios/                   # Minimal and ISL-failure examples
+scenarios/                   # Static, fault, contact handover and historical ISS orbit fixtures
 docs/                        # Full system and 16 subsystem engineering designs
 ```
 

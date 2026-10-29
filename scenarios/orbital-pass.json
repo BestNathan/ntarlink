@@ -78,5 +78,6 @@
       "interval_ns": 5000000000
     }
   ],
-  "faults": []
+  "faults": [],
+  "contact_mode": "scheduled"
 }
