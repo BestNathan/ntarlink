@@ -45,11 +45,20 @@ partial sampling interval. A 250 ns synthetic scenario with 100 ns steps
 and a transition at 225 ns verifies both late rise and late set; a 1 ns
 refinement test verifies the original bisection result.
 
-Default coarse sampling still places a detected edge at the last sample,
-not the physical transition. For a late rise this may produce only a short
-terminal window; for a late set it may overstate visibility. Use refinement
-when a conservative bound is required. Multiple transitions within one
-sampling interval can still be missed, including in the final interval.
+Default coarse sampling remains conservative for **detected** transitions:
+a rise opens at the first visible sample, while a set closes at the previous
+known-visible sample, including when the actual set occurs exactly on a
+coarse sample boundary. This can omit up to one
+coarse sampling interval of valid contact, but does not extend a detected
+setting window into a known-invisible interval. The trailing partial
+interval uses the same rule. A late rise may produce only a short terminal
+window. Optional propagation-delay samples are therefore never generated
+past a detected coarse set.
+
+Use bisection refinement for tighter rise/set bounds. No finite sampling
+step proves continuous visibility: multiple transitions within a single
+sample interval may still be missed, including in the final interval.
+These guarantees apply to bracketed transitions, not unobserved ones.
 
 ## Verification
 
