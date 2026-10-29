@@ -66,6 +66,11 @@ jobs:
         run: |
           python -m ntarlink_orbital.ephemeris_stream scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --step-ns 5000000000 --out /tmp/ntarlink-iss-reader.jsonl
           python -m ntarlink_orbital.ephemeris_reader /tmp/ntarlink-iss-reader.jsonl
+      - name: Measure bounded synthetic JSONL producer and verified reader
+        run: |
+          python -m ntarlink_orbital.ephemeris_benchmark --satellites 10 --samples-per-satellite 100 --report /tmp/ntarlink-bench-1k.json
+          python -m ntarlink_orbital.ephemeris_benchmark --satellites 100 --samples-per-satellite 100 --report /tmp/ntarlink-bench-10k.json
+          python -c 'import json; a=json.load(open("/tmp/ntarlink-bench-1k.json")); b=json.load(open("/tmp/ntarlink-bench-10k.json")); assert (a["sample_count"],a["verified_sample_count"],b["sample_count"],b["verified_sample_count"]) == (1000,1000,10000,10000); assert b["artifact_bytes"]>a["artifact_bytes"]; assert all(x[k]>0 for x in (a,b) for k in ("export_samples_per_second","verified_read_samples_per_second","export_python_heap_peak_bytes","verified_read_python_heap_peak_bytes")); print("Synthetic JSONL benchmark:",a["artifact_bytes"],b["artifact_bytes"],"bytes")'
       - run: python -m pip install -e systems/access/python
       - run: python -m unittest discover -s systems/access/python/tests
   typescript:

@@ -77,4 +77,8 @@ not an authenticated publisher signature: SHA-256 detects accidental or
 unauthorized modification relative to a separately trusted manifest, but an
 attacker who replaces both files can forge the pair. Future work includes
 independent frame references, scalable benchmarks and optional columnar
-formats with explicit memory/performance measurements.
+formats with explicit memory/performance measurements. A separate
+[synthetic producer/reader scale baseline](orbital-ephemeris-benchmark.md)
+now measures JSONL serialization and full verified-read throughput on
+bounded synthetic grids; it does not measure SGP4 propagation or prove
+constellation-scale performance.
