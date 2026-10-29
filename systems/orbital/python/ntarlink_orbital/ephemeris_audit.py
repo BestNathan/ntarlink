@@ -14,6 +14,7 @@ from pathlib import Path
 
 MAX_ARTIFACT_BYTES = 128_000_000
 MAX_PAIRS = 500_000
+MAX_PROBES = 500_000
 
 
 def _digest(raw: bytes) -> str:
@@ -56,6 +57,8 @@ def audit_interpolation(document: dict, position, max_midpoint_error_m: float,
     expected_count = (duration - 1) // step + 1
     if expected_count < 2 or expected_count * len(satellites) > MAX_PAIRS:
         raise ValueError("ephemeris midpoint audit requires 2+ samples and at most 500000 pairs")
+    if (expected_count - 1) * len(satellites) * probes_per_interval > MAX_PROBES:
+        raise ValueError("ephemeris audit exceeds 500000 interior probe limit")
     if document.get("sample_count") != expected_count * len(satellites):
         raise ValueError("ephemeris sample_count mismatch")
     ids = [s.get("id") for s in satellites if isinstance(s, dict)]
