@@ -26,6 +26,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Small pinned excerpts of published IERS 2004/2014 observed rows and 2026 predicted rows, with production EOP parsing and two-epoch independent GMST82 comparison (not a complete authenticated archive or external multi-epoch ITRF reference).
 - [x] Production SGP4/ITRS adapter cross-checked at three 2014 UTC instants against raw SGP4 TEME and an independent test-only Vallado GMST82/polar-motion path using pinned official IERS excerpt (not independent orbit truth or published multi-epoch ITRF reference).
 - [x] Bounded satellite-major JSONL streaming ITRS ephemeris with atomic artifact replacement, SHA-256 provenance and historical ISS CI (not a columnar format or scale benchmark).
+- [x] Offline JSONL reader with full-stream schema/grid/digest verification before consumption and bounded disk snapshot (not a trusted-signature or live streaming protocol).
 - [ ] Independent published multi-epoch ITRF reference verification, certified IERS/leap-second archive handling, columnar ephemerides and large constellation benchmarks.
 - [x] First-order Doppler/range-rate observations at contact midpoints, exported as a separate analytical artifact (not PHY carrier recovery).
 - [x] Initial SYS-05 analytical RF link-budget sidecar from SYS-01 midpoint contact delays (Friis, thermal C/N, reference margin); no PHY/MAC admission.

@@ -62,6 +62,10 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install -e systems/orbital/python
       - run: python -m unittest discover -s systems/orbital/python/tests
+      - name: Verify historical ISS JSONL producer-consumer contract
+        run: |
+          python -m ntarlink_orbital.ephemeris_stream scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --step-ns 5000000000 --out /tmp/ntarlink-iss-reader.jsonl
+          python -m ntarlink_orbital.ephemeris_reader /tmp/ntarlink-iss-reader.jsonl
       - run: python -m pip install -e systems/access/python
       - run: python -m unittest discover -s systems/access/python/tests
   typescript:

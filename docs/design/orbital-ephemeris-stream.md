@@ -58,6 +58,23 @@ and alias-protection tests. The existing JSON exporter is not replaced.
 JSONL records are **sampled analytical ITRS positions**, not continuous
 trajectories or independently verified orbit truth. Neither a continuous
 interpolation error bound nor externally certified IERS/leap-second source
-is established. Follow-up work includes a streaming reader with schema and
-digest validation, independent frame references, scalable benchmarks and
-optional columnar formats with explicit memory/performance measurements.
+is established. The companion `ntarlink_orbital.ephemeris_reader` validates the complete
+JSONL file and SHA-256 manifest **before yielding any position**. It checks
+version, frame, UTC epoch, units, sorted unique satellite IDs, half-open time
+grid, record count, finite vectors, exact byte count and digest. A bounded
+on-disk snapshot prevents source mutation between verification and consumption.
+It enforces 128 MB total bytes, 16 MB per line, 1 MB manifest and 500,000
+samples; memory is O(header + one record), plus the snapshot's disk usage.
+
+```sh
+python -m ntarlink_orbital.ephemeris_reader /tmp/iss-itrs.jsonl
+```
+
+The reader is **offline and fail-closed**, not a low-latency live feed:
+validation requires one full input pass and disk snapshot before iteration.
+The snapshot is deleted when the iterator is exhausted or closed. This is
+not an authenticated publisher signature: SHA-256 detects accidental or
+unauthorized modification relative to a separately trusted manifest, but an
+attacker who replaces both files can forge the pair. Future work includes
+independent frame references, scalable benchmarks and optional columnar
+formats with explicit memory/performance measurements.
