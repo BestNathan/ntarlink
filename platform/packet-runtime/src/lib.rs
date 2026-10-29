@@ -74,6 +74,19 @@ pub struct ControlEvent {
     pub route_revision: u64,
 }
 
+/// An actual shared uplink MAC grant issued by SYS-05 in virtual time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BeamGrantTrace {
+    pub beam_id: String,
+    pub frame_start_ns: u64,
+    pub terminal_id: String,
+    pub link_id: String,
+    pub packet_id: String,
+    pub wire_bytes: u64,
+    pub transmit_started_ns: u64,
+    pub transmit_completed_ns: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SimulationReport {
     pub scenario: String,
@@ -86,6 +99,8 @@ pub struct SimulationReport {
     pub dropped: usize,
     pub packets: Vec<PacketTrace>,
     pub control_events: Vec<ControlEvent>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub beam_grants: Vec<BeamGrantTrace>,
 }
 
 enum Event {
@@ -136,6 +151,7 @@ struct Runtime<'a> {
     route_revision: u64,
     packets: Vec<PacketRecord>,
     control_events: Vec<ControlEvent>,
+    beam_grants: Vec<BeamGrantTrace>,
 }
 
 impl<'a> Runtime<'a> {
@@ -210,6 +226,7 @@ impl<'a> Runtime<'a> {
             route_revision: 0,
             packets: Vec::new(),
             control_events: Vec::new(),
+            beam_grants: Vec::new(),
         };
         runtime.install_routes(0);
         runtime
@@ -505,6 +522,16 @@ impl<'a> Runtime<'a> {
                 .checked_add(propagation_ns)
                 .and_then(|t| t.checked_add(link.processing_delay_ns))
                 .ok_or("beam packet arrival time overflow")?;
+            self.beam_grants.push(BeamGrantTrace {
+                beam_id: self.scenario.access_beams[beam_index].id.clone(),
+                frame_start_ns: at_ns,
+                terminal_id: grant.terminal_id,
+                link_id: link.id.clone(),
+                packet_id: self.packets[packet_index].trace.packet_id.clone(),
+                wire_bytes: grant.wire_bytes,
+                transmit_started_ns: start_ns,
+                transmit_completed_ns: completed_ns,
+            });
             if arrived_ns >= self.scenario.duration_ns {
                 self.drop_packet(packet_index, at_ns, "simulation_horizon");
                 continue;
@@ -715,6 +742,7 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
         dropped,
         packets,
         control_events: state.control_events,
+        beam_grants: state.beam_grants,
     })
 }
 
@@ -998,6 +1026,11 @@ mod tests {
             (report.injected, report.delivered, report.dropped),
             (8, 8, 0)
         );
+        assert_eq!(report.beam_grants.len(), 8);
+        assert!(report.beam_grants.iter().enumerate().all(|(i, g)|
+            g.frame_start_ns == i as u64 * 10_000_000 && g.wire_bytes == 1220
+                && g.transmit_completed_ns - g.transmit_started_ns == 10_000_000
+        ));
         let mut hops: Vec<_> = report
             .packets
             .iter()
