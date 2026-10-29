@@ -32,6 +32,48 @@ def _mjd(value: datetime) -> float:
     return (value - MJD_EPOCH).total_seconds() / 86_400.0
 
 
+def _classify_eop_rows(raw: bytes, mjd, start_mjd: float, end_mjd: float,
+                       allow_predictions: bool) -> dict:
+    """Check both IERS quality flags for every parsed daily record.
+
+    The Skyfield parser intentionally ignores the I/P quality columns.
+    Finals2000A uses byte offsets 16 and 57 for polar motion and UT1;
+    either P flag makes that day's frame input predicted. Interpolation
+    may use the next daily record, so include both bracketing UTC days.
+    """
+    days = {int(day) for day in mjd}
+    flags = {}
+    for row in raw.splitlines():
+        try:
+            day = float(row[6:15])
+        except (ValueError, IndexError):
+            continue
+        if day not in days:
+            continue
+        if day in flags:
+            raise ValueError("duplicate EOP quality-flag day")
+        if (len(row) <= 57 or row[16:17] not in (b"I", b"P")
+                or row[57:58] not in (b"I", b"P")):
+            raise ValueError("EOP records require I/P polar-motion and UT1 quality flags")
+        flags[day] = (row[16:17], row[57:58])
+    if len(flags) != len(mjd):
+        raise ValueError("EOP quality flags missing for parsed daily records")
+
+    predicted = {day for day, (polar, ut1) in flags.items()
+                 if polar == b"P" or ut1 == b"P"}
+    first_needed, last_needed = math.floor(start_mjd), math.ceil(end_mjd)
+    predicted_in_window = sorted(day for day in predicted
+                                 if first_needed <= day <= last_needed)
+    if predicted_in_window and not allow_predictions:
+        raise ValueError("predicted EOP within simulation interpolation window; "
+                         "set allow_predictions=true to opt in")
+    return {
+        "prediction_policy": "allow" if allow_predictions else "reject",
+        "predicted_source_days": len(predicted),
+        "predicted_interpolation_days": len(predicted_in_window),
+    }
+
+
 def build_timescale(earth_orientation: dict | None, epoch: datetime,
                     duration_ns: int, config_dir: Path | None = None):
     """Return (Skyfield timescale, frame-input provenance).
@@ -60,6 +102,9 @@ def build_timescale(earth_orientation: dict | None, epoch: datetime,
         raise ValueError("earth_orientation path is required")
     if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
         raise ValueError("earth_orientation sha256 must be lowercase SHA-256 hex")
+    allow_predictions = earth_orientation.get("allow_predictions", False)
+    if not isinstance(allow_predictions, bool):
+        raise ValueError("earth_orientation allow_predictions must be boolean")
     valid_until = _utc(earth_orientation.get("valid_until_utc"))
     end = epoch + timedelta(microseconds=(duration_ns - 1) // 1000)
     if epoch > valid_until or end > valid_until:
@@ -86,12 +131,16 @@ def build_timescale(earth_orientation: dict | None, epoch: datetime,
             or not np.all(np.isfinite(yp)) or not np.all(np.isfinite(dut1))
             or not np.all(np.abs(xp) <= 2.0) or not np.all(np.abs(yp) <= 2.0)
             or not np.all(np.abs(dut1) <= 1.0)
+            or not np.all(np.abs(mjd - np.rint(mjd)) < 1e-8)
             or not np.all(np.abs(np.diff(mjd) - 1.0) < 1e-8)):
         raise ValueError("EOP records must be finite, bounded and consecutive UTC days")
     if _mjd(epoch) < mjd[0] or _mjd(end) > mjd[-1]:
         raise ValueError("EOP coverage does not contain the full simulation interval")
     if _mjd(valid_until) > mjd[-1]:
         raise ValueError("EOP valid_until_utc exceeds the last tabulated UTC epoch")
+
+    quality = _classify_eop_rows(raw, mjd, _mjd(epoch), _mjd(end),
+                                 allow_predictions)
 
     # Use the release-pinned leap table, not a guessed TAI-UTC offset.
     # Delta-T = (TAI-UTC) + 32.184 - (UT1-UTC), in SI seconds.
@@ -111,6 +160,7 @@ def build_timescale(earth_orientation: dict | None, epoch: datetime,
         "first_utc_mjd": float(mjd[0]),
         "last_utc_mjd": float(mjd[-1]),
         "sample_count": len(values),
+        **quality,
         "valid_until_utc": earth_orientation["valid_until_utc"],
         "leap_seconds": "skyfield==1.55 builtin",
         "interpolation": "Skyfield linear UT1 and polar-motion interpolation",
