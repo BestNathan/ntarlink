@@ -170,7 +170,9 @@ impl BeamScheduler {
     /// Drop all queued packets for a bearer when contact or link availability is lost.
     /// Already-issued grants are not revoked (P0 completion-after-departure).
     pub fn discard_terminal(&mut self, terminal_id: &str) -> Result<Vec<String>, String> {
-        let index = self.terminals.binary_search_by(|t| t.id.as_str().cmp(terminal_id))
+        let index = self
+            .terminals
+            .binary_search_by(|t| t.id.as_str().cmp(terminal_id))
             .map_err(|_| format!("unknown terminal: {terminal_id}"))?;
         let mut removed = Vec::new();
         let terminal = &mut self.terminals[index];
