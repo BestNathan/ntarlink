@@ -15,5 +15,6 @@
     "user-iss": 12000000000,
     "feeder-iss": 18000000000
   },
-  "doppler_half_span_ns": 500000000
+  "doppler_half_span_ns": 500000000,
+  "propagation_delay_sample_step_ns": 5000000000
 }
