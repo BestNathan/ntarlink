@@ -17,7 +17,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 - [x] Initial offline historical TLE/SGP4 propagation, Skyfield TEME→ITRS conversion and sampled WGS84 user/feeder/ISL geometric contact windows (SYS-01).
 - [x] Scheduled half-open contacts feed Rust link availability and delayed route recomputation; synthetic contact handover and historical ISS pass test fixtures.
-- [x] Optional bisection refinement of bracketed geometric contact boundaries (SYS-01); sample step and tolerance are recorded in the manifest.
+- [x] Optional bisection refinement of bracketed geometric contact boundaries (SYS-01); sample step and tolerance are recorded in the manifest. Detected coarse setting edges are now conservative rather than admitting known-invisible time.
 - [x] Published historical ISS GCRS/geodetic/topocentric regression and coarse trailing-interval coverage (not independent EOP validation).
 - [ ] Independent Earth orientation reference vectors, ephemeris artifact batching and large constellation benchmarks.
 - [x] First-order Doppler/range-rate observations at contact midpoints, exported as a separate analytical artifact (not PHY carrier recovery).
