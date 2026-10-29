@@ -4,58 +4,242 @@
   "title": "ntarlink deterministic packet simulation scenario v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "name", "duration_ns", "control_delay_ns", "nodes", "links", "flows"],
+  "required": [
+    "schema_version",
+    "name",
+    "duration_ns",
+    "control_delay_ns",
+    "nodes",
+    "links",
+    "flows"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
-    "name": {"type": "string", "minLength": 1},
-    "duration_ns": {"type": "integer", "minimum": 1},
-    "control_delay_ns": {"type": "integer", "minimum": 0},
-    "nodes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/node"}},
-    "links": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/link"}},
-    "flows": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/flow"}},
-    "faults": {"type": "array", "items": {"$ref": "#/$defs/fault"}}
+    "schema_version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_ns": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "control_delay_ns": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "links": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/link"
+      }
+    },
+    "flows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/flow"
+      }
+    },
+    "faults": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fault"
+      }
+    },
+    "contacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contact"
+      }
+    }
   },
   "$defs": {
     "node": {
-      "type": "object", "additionalProperties": false, "required": ["id", "kind"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind"
+      ],
       "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["terminal", "satellite", "ground_station", "pop", "internet"]},
-        "latitude_deg": {"type": "number", "minimum": -90, "maximum": 90},
-        "longitude_deg": {"type": "number", "minimum": -180, "maximum": 180}
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "terminal",
+            "satellite",
+            "ground_station",
+            "pop",
+            "internet"
+          ]
+        },
+        "latitude_deg": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude_deg": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        }
       }
     },
     "link": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "from", "to", "kind", "capacity_bps", "propagation_delay_ns", "queue_limit_bytes"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "from",
+        "to",
+        "kind",
+        "capacity_bps",
+        "propagation_delay_ns",
+        "queue_limit_bytes"
+      ],
       "properties": {
-        "id": {"type": "string", "minLength": 1}, "from": {"type": "string"}, "to": {"type": "string"},
-        "kind": {"enum": ["user_rf", "optical_isl", "feeder", "backhaul", "internet"]},
-        "capacity_bps": {"type": "integer", "minimum": 1},
-        "propagation_delay_ns": {"type": "integer", "minimum": 0},
-        "processing_delay_ns": {"type": "integer", "minimum": 0},
-        "queue_limit_bytes": {"type": "integer", "minimum": 1},
-        "up": {"type": "boolean"}
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "user_rf",
+            "optical_isl",
+            "feeder",
+            "backhaul",
+            "internet"
+          ]
+        },
+        "capacity_bps": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "propagation_delay_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "processing_delay_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "queue_limit_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "up": {
+          "type": "boolean"
+        }
       }
     },
     "flow": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "source", "destination", "packet_size_bytes", "packet_count", "start_ns", "interval_ns"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "destination",
+        "packet_size_bytes",
+        "packet_count",
+        "start_ns",
+        "interval_ns"
+      ],
       "properties": {
-        "id": {"type": "string"}, "source": {"type": "string"}, "destination": {"type": "string"},
-        "packet_size_bytes": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "packet_count": {"type": "integer", "minimum": 1},
-        "start_ns": {"type": "integer", "minimum": 0},
-        "interval_ns": {"type": "integer", "minimum": 0}
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "packet_size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "packet_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interval_ns": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "fault": {
-      "type": "object", "additionalProperties": false,
-      "required": ["at_ns", "link_id", "action"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at_ns",
+        "link_id",
+        "action"
+      ],
       "properties": {
-        "at_ns": {"type": "integer", "minimum": 0},
-        "link_id": {"type": "string"},
-        "action": {"enum": ["down", "up"]}
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "link_id": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "down",
+            "up"
+          ]
+        }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "start_ns",
+        "end_ns"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_ns": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "propagation_delay_ns": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     }
   }
