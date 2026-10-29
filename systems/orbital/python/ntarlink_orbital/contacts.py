@@ -237,17 +237,27 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
                 window["propagation_delay_samples"] = samples
             windows.append(window)
 
+        def transition_boundary(left_ns, right_ns, left_visible):
+            # Without bisection, a setting edge must never extend the
+            # contact into an interval known to contain invisible samples.
+            # Preserve an exact right-endpoint set when right_ns - 1 is
+            # still visible; otherwise use the last known visible sample.
+            if tolerance_ns == step_ns:
+                if left_visible:
+                    return right_ns if visible_at(right_ns - 1) else left_ns
+                return right_ns
+            return _refine_transition(
+                visible_at, left_ns, right_ns, left_visible, tolerance_ns
+            )
+
         previous_ns = 0
         previous_visible = visible_at(0)
         opened_ns = 0 if previous_visible else None
         for time_ns in range(step_ns, duration_ns, step_ns):
             current_visible = visible_at(time_ns)
             if current_visible != previous_visible:
-                boundary_ns = time_ns if tolerance_ns == step_ns else (
-                    _refine_transition(
-                        visible_at, previous_ns, time_ns,
-                        previous_visible, tolerance_ns,
-                    )
+                boundary_ns = transition_boundary(
+                    previous_ns, time_ns, previous_visible
                 )
                 if current_visible:
                     opened_ns = boundary_ns
@@ -263,11 +273,8 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
             final_ns = duration_ns - 1
             final_visible = visible_at(final_ns)
             if final_visible != previous_visible:
-                boundary_ns = final_ns if tolerance_ns == step_ns else (
-                    _refine_transition(
-                        visible_at, previous_ns, final_ns,
-                        previous_visible, tolerance_ns,
-                    )
+                boundary_ns = transition_boundary(
+                    previous_ns, final_ns, previous_visible
                 )
                 if final_visible:
                     opened_ns = boundary_ns
