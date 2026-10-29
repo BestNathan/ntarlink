@@ -33,7 +33,7 @@ jobs:
       - name: Verify shared-beam uplink grant packet accounting
         run: |
           cargo run -p ntarlink-cli -- simulate scenarios/beam-uplink-contention.json --json > /tmp/beam-report.json
-          python3 -c 'import json; x=json.load(open("/tmp/beam-report.json")); assert (x["injected"], x["delivered"], x["dropped"]) == (8,8,0), x; h=sorted((h for p in x["packets"] for h in p["hops"] if h["link_id"].startswith("user-")), key=lambda h:h["transmit_started_ns"]); assert [q["transmit_started_ns"] for q in h]==[i*10000000 for i in range(8)]; assert all(q["transmit_completed_ns"]-q["transmit_started_ns"]==10000000 for q in h); print("Shared uplink beam:", len(h), "grants")'
+          python3 -c 'import json; x=json.load(open("/tmp/beam-report.json")); assert (x["injected"], x["delivered"], x["dropped"]) == (8,8,0), x; assert len(x["beam_grants"])==8 and all(g["wire_bytes"]==1220 for g in x["beam_grants"]); h=sorted((h for p in x["packets"] for h in p["hops"] if h["link_id"].startswith("user-")), key=lambda h:h["transmit_started_ns"]); assert [q["transmit_started_ns"] for q in h]==[i*10000000 for i in range(8)]; assert all(q["transmit_completed_ns"]-q["transmit_started_ns"]==10000000 for q in h); print("Shared uplink beam:", len(h), "grants")'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
