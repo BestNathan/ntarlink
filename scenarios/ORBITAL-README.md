@@ -27,4 +27,21 @@ The sample orbit config uses a 5-second coarse scan and 100-millisecond bisectio
 
 The Rust runner uses half-open geometric contacts `[start_ns, end_ns)`, sets affected links DOWN outside visibility and applies a configured control-plane convergence delay before route installation. The optional `propagation_delay_sample_step_ns: 5000000000` setting generates ECEF range/c samples every five seconds plus both window endpoints (the last representable nanosecond before closure). Rust linearly interpolates these values at **transmission completion**, recording each hop's effective `propagation_ns`. The original midpoint `propagation_delay_ns` remains the route weight; no route reinstallation is triggered by a delay sample. Delivered packets are expected only during the pass; out-of-contact packets drop rather than teleporting.
 
+## Export a bounded ITRS ephemeris
+
+```sh
+python -m ntarlink_orbital.ephemeris \
+  scenarios/orbital-pass.json scenarios/orbit-sources.sample.json \
+  --step-ns 5000000000 --out /tmp/ntarlink-ephemeris.json
+```
+
+This separate SYS-01 artifact contains 240 historical ISS position snapshots
+at 5-second intervals, explicitly tagged as ITRS meters at UTC-relative
+timestamps. Its companion `.ephemeris-manifest.json` records exact
+scenario/config/output SHA-256 digests and dependency versions. The
+[artifact contract](../docs/design/orbital-ephemeris-artifacts.md) documents
+resource limits, microsecond time resolution and the absence of
+interpolation or independent EOP validation. It does not affect packet
+forwarding or contact admission.
+
 **Limitations:** with refinement enabled, bracketed contact boundaries have at most the chosen bisection tolerance, while unbracketed short contacts may still be missed by the coarse scan. Dynamic delay uses sampled vacuum geometric range and piecewise-linear interpolation, not light-time iteration, atmospheric group delay or changing route weights; without the optional samples, delay is fixed at contact midpoint. Antenna pointing, acquisition delays, RF SINR/MCS, rain fade and time-resolved Doppler correction remain future models. Orbit propagation is SGP4, Earth frame uses Skyfield ITRS, Earth shape is WGS84. Contact is geometric feasibility, not PHY acquisition.
