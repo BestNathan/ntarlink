@@ -133,23 +133,49 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
     return visible, geometric_delay_ns(length) if visible else None
 
 
-def generate_contact_windows(scenario: dict, config: dict, position) -> list[dict]:
-    """Generate sample-aligned, half-open contact windows for supported links.
+def _refine_transition(evaluate, left_ns: int, right_ns: int,
+                       left_visible: bool, tolerance_ns: int) -> int:
+    """Conservatively bracket a visibility edge within a coarse sample.
 
-    Contact boundaries have sampling uncertainty up to step_ns; propagation
-    delay is estimated from the midpoint and held constant for each window.
+    The returned boundary lies on the visible side of the crossing: rising
+    edges round forward, setting edges round backward. The caller must have
+    verified opposite visibility at the endpoints.
+    """
+    while right_ns - left_ns > tolerance_ns:
+        midpoint = left_ns + (right_ns - left_ns) // 2
+        if evaluate(midpoint) == left_visible:
+            left_ns = midpoint
+        else:
+            right_ns = midpoint
+    return left_ns if left_visible else right_ns
+
+
+def generate_contact_windows(scenario: dict, config: dict, position) -> list[dict]:
+    """Generate half-open geometric contact windows for configured links.
+
+    Coarse samples bracket candidate transitions; optional bisection refines
+    their boundaries to refine_tolerance_ns. This cannot detect two or more
+    transitions inside a single sample interval. Propagation delay remains
+    fixed at the contact midpoint (not a continuously varying path delay).
     """
     if scenario.get("schema_version") != 1:
         raise ValueError("scenario schema_version must be 1")
     duration_ns = int(scenario["duration_ns"])
-    step_ns = int(config["step_ns"])
+    step_ns = config["step_ns"]
+    tolerance_ns = config.get("refine_tolerance_ns", step_ns)
+    if any(isinstance(value, bool) or not isinstance(value, int)
+           for value in (step_ns, tolerance_ns)):
+        raise ValueError("step_ns and refine_tolerance_ns must be integer nanoseconds")
     if duration_ns <= 0 or step_ns <= 0:
         raise ValueError("duration_ns and step_ns must be positive")
+    if not 0 < tolerance_ns <= step_ns:
+        raise ValueError("refine_tolerance_ns must be within (0, step_ns]")
     if (duration_ns + step_ns - 1) // step_ns > 500_000:
         raise ValueError("orbital sampling budget exceeded (500,000 steps)")
     nodes = {node["id"]: node for node in scenario["nodes"]}
     orbital_ids = {sat["id"] for sat in config["satellites"]}
     windows = []
+
     for link in scenario["links"]:
         if link["kind"] not in GEOMETRIC_LINKS:
             continue
@@ -160,31 +186,66 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
             node = nodes[link[endpoint]]
             if node["kind"] == "satellite" and node["id"] not in orbital_ids:
                 raise ValueError(f"TLE not provided for {node['id']}")
-        start = None
-        for time_ns in range(0, duration_ns + step_ns, step_ns):
-            t = min(time_ns, duration_ns)
-            open_now = False if t == duration_ns else link_geometry_at(
-                link, nodes, t, position, config
-            )[0]
-            if open_now and start is None:
-                start = t
-            elif not open_now and start is not None:
-                midpoint = start + (t - start) // 2
-                _, delay_ns = link_geometry_at(link, nodes, midpoint, position, config)
-                if delay_ns is None:
-                    raise ValueError(f"invalid contact midpoint for {link['id']}")
-                windows.append({
-                    "link_id": link["id"],
-                    "start_ns": start,
-                    "end_ns": t,
-                    "propagation_delay_ns": delay_ns,
-                })
-                start = None
-            if t == duration_ns:
-                break
+
+        def visible_at(time_ns):
+            return link_geometry_at(link, nodes, time_ns, position, config)[0]
+
+        def record_window(opened_ns, closed_ns):
+            if opened_ns >= closed_ns:
+                return
+            midpoint = opened_ns + (closed_ns - opened_ns) // 2
+            _, delay_ns = link_geometry_at(link, nodes, midpoint, position, config)
+            if delay_ns is None:
+                raise ValueError(f"invalid contact midpoint for {link['id']}")
+            windows.append({
+                "link_id": link["id"],
+                "start_ns": opened_ns,
+                "end_ns": closed_ns,
+                "propagation_delay_ns": delay_ns,
+            })
+
+        previous_ns = 0
+        previous_visible = visible_at(0)
+        opened_ns = 0 if previous_visible else None
+        for time_ns in range(step_ns, duration_ns, step_ns):
+            current_visible = visible_at(time_ns)
+            if current_visible != previous_visible:
+                boundary_ns = time_ns if tolerance_ns == step_ns else (
+                    _refine_transition(
+                        visible_at, previous_ns, time_ns,
+                        previous_visible, tolerance_ns,
+                    )
+                )
+                if current_visible:
+                    opened_ns = boundary_ns
+                elif opened_ns is not None:
+                    record_window(opened_ns, boundary_ns)
+                    opened_ns = None
+            previous_ns, previous_visible = time_ns, current_visible
+
+        # The scenario end is an exclusive cutoff, not a geometric sample.
+        # A final partial interval must still be inspected to catch a contact
+        # that starts or ends between the last coarse sample and duration.
+        if previous_ns < duration_ns - 1:
+            final_ns = duration_ns - 1
+            final_visible = visible_at(final_ns)
+            if final_visible != previous_visible:
+                boundary_ns = final_ns if tolerance_ns == step_ns else (
+                    _refine_transition(
+                        visible_at, previous_ns, final_ns,
+                        previous_visible, tolerance_ns,
+                    )
+                )
+                if final_visible:
+                    opened_ns = boundary_ns
+                elif opened_ns is not None:
+                    record_window(opened_ns, boundary_ns)
+                    opened_ns = None
+        if opened_ns is not None:
+            record_window(opened_ns, duration_ns)
+
     windows.sort(key=lambda w: (w["start_ns"], w["link_id"]))
     return windows
-
 
 def generate_scenario(scenario: dict, config: dict, position):
     if scenario.get("contacts"):
@@ -215,7 +276,10 @@ def main(argv=None):
         "model": "SGP4 with Skyfield TEME-to-ITRS and WGS84 sampled geometry",
         "epoch_utc": config["epoch_utc"],
         "step_ns": config["step_ns"],
-        "contact_boundary_resolution_ns": config["step_ns"],
+        "contact_boundary_resolution_ns": config.get("refine_tolerance_ns", config["step_ns"]),
+        "contact_boundary_method": "sampled" if config.get("refine_tolerance_ns", config["step_ns"]) == config["step_ns"] else "bracketed_bisection",
+        "sampling_step_ns": config["step_ns"],
+        "contact_detection_limit": "Multiple visibility transitions within one sampling interval may be missed",
         "propagation_model": "vacuum geometric delay sampled per contact midpoint",
         "orbit_input_sha256": hashlib.sha256(raw_config).hexdigest(),
         "skyfield_version": version("skyfield"),
