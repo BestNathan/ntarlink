@@ -42,16 +42,42 @@ throughput should be compared only under equivalent hardware, Python
 version, workload and filesystem conditions. Do not assert exact timing
 or memory thresholds from shared GitHub-hosted runners.
 
+## Isolated repeated benchmark and RSS
+
+The separate suite repeats the same production exporter/verified-reader
+roundtrip in **fresh Python interpreter processes**. Each child records the
+whole-process resident-set high-water mark after completing both stages,
+using `resource.getrusage(RUSAGE_SELF).ru_maxrss`. Linux KiB and macOS byte
+units are normalized to bytes; unsupported platforms report JSON `null`
+rather than an invented measurement. This is not stage-specific RSS and
+does not include kernel page cache or a measured peak disk footprint.
+
+    python -m ntarlink_orbital.ephemeris_benchmark_suite --satellites 10 --samples-per-satellite 100 --repetitions 3 --report /tmp/ephemeris-repeat-1k.json
+    python -m ntarlink_orbital.ephemeris_benchmark_suite --satellites 100 --samples-per-satellite 1000 --repetitions 3 --report /tmp/ephemeris-repeat-100k.json
+    python -m ntarlink_orbital.ephemeris_benchmark_suite --satellites 500 --samples-per-satellite 1000 --repetitions 3 --report /tmp/ephemeris-repeat-500k.json
+
+The suite accepts 1 to 10 repetitions and enforces the original 500,000
+sample budget **before** spawning any worker. It verifies the exact artifact
+byte count and SHA-256 agree across repetitions, then reports individual
+measurements, median export/read throughput and wall time, and maximum
+whole-process peak RSS. Worker import/startup allocations count toward RSS
+but not the inner benchmark wall times. Run this on pinned hardware with
+documented Python version, filesystem, CPU and RAM for comparisons; do not
+treat a small GitHub-hosted smoke run as a capacity guarantee. Child
+processes have a 20-minute timeout to prevent indefinite benchmark hangs.
+
 ## CI and future work
 
 CI runs 1,000 and 10,000 synthetic sample cases and checks report integrity
-and positive measured values, not performance thresholds. A 100,000-sample
-case is available on demand for scaling experiments. The test suite covers
-round trips, deterministic output hashes, workload scaling and fail-fast
-resource validation. The historical ISS provider-to-reader contract remains
-a separate real-SGP4 correctness smoke test.
+and positive measured values, not performance thresholds. The discovered
+Python test suite additionally runs two small isolated repetitions and
+checks deterministic digests, RSS availability on Linux, report output and
+fail-fast invalid workloads. Larger 100,000/500,000 sample repeated cases
+are opt-in and are **not** CI performance gates. The historical ISS
+provider-to-reader contract remains a separate real-SGP4 correctness smoke
+test.
 
-Future work: collect repeated 100k/500k measurements on pinned hardware
-with separate process RSS and peak disk metrics, benchmark actual SGP4
-propagation at constellation scale, and evaluate columnar alternatives.
-These measurements do not establish production scalability.
+Future work: collect repeated 100k/500k measurements on pinned hardware,
+measure peak disk footprint separately, benchmark actual SGP4 propagation
+at constellation scale, and evaluate columnar alternatives. These
+measurements do not establish production scalability.
