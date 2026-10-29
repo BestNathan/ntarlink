@@ -57,6 +57,10 @@ leap seconds still use Skyfield 1.55's bundled schedule. Both output
 manifests record EOP source provenance. The default remains the built-in
 timescale, and no IERS file is bundled or fetched. Synthetic EOP fixtures
 exercise the production adapter and Vallado single-epoch reference.
+The opt-in loader now checks both daily IERS observation/prediction flags,
+rejects forecast rows in the interpolation window by default and requires
+explicit operator opt-in to use predicted EOP. Quality-policy counts are
+recorded in the frame-input manifest; this does not authenticate the source.
 This is not independent multi-epoch calibration, authenticated IERS data,
 or validation of future leap seconds. See [EOP design](design/earth-orientation-data.md).
 
