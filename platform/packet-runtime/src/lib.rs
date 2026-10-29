@@ -428,7 +428,13 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
     }
     Ok(SimulationReport {
         scenario: scenario.name.clone(),
-        fidelity: "l1_static_contact_packet_model".into(),
+        fidelity: if scenario.contact_mode == ContactMode::Scheduled {
+            "l1_sampled_orbital_contact_packet_model".into()
+        } else if scenario.contacts.is_empty() {
+            "l1_static_contact_packet_model".into()
+        } else {
+            "l1_scheduled_contact_fixture_packet_model".into()
+        },
         duration_ns: scenario.duration_ns,
         processed_events,
         route_revision: state.route_revision,
@@ -543,6 +549,16 @@ mod tests {
             .packets
             .iter()
             .all(|p| p.status != PacketStatus::InFlight));
+    }
+
+    #[test]
+    fn scheduled_contact_mode_does_not_allow_unscheduled_rf_or_feeder_links() {
+        let mut scenario = basic();
+        scenario.contact_mode = ntarlink_contracts::ContactMode::Scheduled;
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.delivered, 0);
+        assert_eq!(report.dropped, report.injected);
+        assert_eq!(report.fidelity, "l1_sampled_orbital_contact_packet_model");
     }
 
     #[test]
