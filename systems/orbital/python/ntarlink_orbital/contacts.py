@@ -16,6 +16,8 @@ from functools import lru_cache
 from importlib.metadata import version
 from pathlib import Path
 
+from .kinematics import estimate_range_rate_mps, first_order_doppler_shift_hz
+
 from .geometry import (
     distance_m,
     earth_occludes_segment,
@@ -247,6 +249,70 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
     windows.sort(key=lambda w: (w["start_ns"], w["link_id"]))
     return windows
 
+def generate_contact_kinematics(
+    scenario: dict, config: dict, position, contacts: list[dict]
+) -> list[dict]:
+    """Sample first-order one-way Doppler at each geometric contact midpoint.
+
+    This produces an observational sidecar, not MAC/PHY synchronization or
+    per-packet Doppler. Reference frequencies are explicitly configured per
+    directed link; all positions must be Earth-fixed at the same epoch.
+    """
+    frequencies = config.get("doppler_reference_frequencies_hz")
+    if frequencies is None:
+        return []
+    if not isinstance(frequencies, dict):
+        raise ValueError("doppler_reference_frequencies_hz must be a link-to-Hz object")
+    links = {link["id"]: link for link in scenario["links"]}
+    nodes = {node["id"]: node for node in scenario["nodes"]}
+    for link_id, frequency in frequencies.items():
+        if link_id not in links or links[link_id]["kind"] not in GEOMETRIC_LINKS:
+            raise ValueError(f"unknown or nongeometric Doppler link: {link_id}")
+        if (isinstance(frequency, bool) or not isinstance(frequency, (int, float))
+                or not math.isfinite(frequency) or frequency <= 0):
+            raise ValueError(f"invalid Doppler reference frequency for {link_id}")
+
+    requested_span_ns = config.get("doppler_half_span_ns", 500_000_000)
+    if (isinstance(requested_span_ns, bool) or not isinstance(requested_span_ns, int)
+            or requested_span_ns <= 0):
+        raise ValueError("doppler_half_span_ns must be positive integer nanoseconds")
+
+    samples = []
+    for window in contacts:
+        link_id = window["link_id"]
+        if link_id not in frequencies:
+            continue
+        start_ns, end_ns = window["start_ns"], window["end_ns"]
+        midpoint_ns = start_ns + (end_ns - start_ns - 1) // 2
+        half_span_ns = min(
+            requested_span_ns, midpoint_ns - start_ns, end_ns - 1 - midpoint_ns
+        )
+        if half_span_ns <= 0:
+            raise ValueError(f"contact too short to estimate Doppler: {link_id}")
+        link = links[link_id]
+
+        def range_at(time_ns):
+            return distance_m(
+                _geo_endpoint(nodes[link["from"]], time_ns, position),
+                _geo_endpoint(nodes[link["to"]], time_ns, position),
+            )
+
+        rate = estimate_range_rate_mps(range_at, midpoint_ns, half_span_ns)
+        samples.append({
+            "link_id": link_id,
+            "contact_start_ns": start_ns,
+            "contact_end_ns": end_ns,
+            "sample_ns": midpoint_ns,
+            "sample_half_span_ns": half_span_ns,
+            "range_rate_mps": round(rate, 6),
+            "reference_frequency_hz": frequencies[link_id],
+            "doppler_shift_hz": round(
+                first_order_doppler_shift_hz(rate, frequencies[link_id]), 6
+            ),
+        })
+    return samples
+
+
 def generate_scenario(scenario: dict, config: dict, position):
     if scenario.get("contacts"):
         raise ValueError("input scenario must not already contain contacts")
@@ -268,6 +334,7 @@ def main(argv=None):
     config = json.loads(raw_config)
     provider = build_sgp4_provider(config, int(scenario["duration_ns"]))
     result = generate_scenario(scenario, config, provider)
+    kinematics = generate_contact_kinematics(scenario, config, provider, result["contacts"])
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     manifest_path = args.manifest or Path(str(args.out) + ".orbit-manifest.json")
     manifest = {
@@ -292,6 +359,25 @@ def main(argv=None):
         "sgp4_version": version("sgp4"),
         "generated_contacts": len(result["contacts"]),
     }
+    if config.get("doppler_reference_frequencies_hz"):
+        kinematics_path = Path(str(args.out) + ".orbit-kinematics.json")
+        kinematics_document = {
+            "schema_version": 1,
+            "model": "one-way first-order Doppler from finite-difference ECEF range",
+            "epoch_utc": config["epoch_utc"],
+            "samples": kinematics,
+        }
+        kinematics_text = json.dumps(kinematics_document, indent=2, allow_nan=False) + "\n"
+        kinematics_path.write_text(kinematics_text, encoding="utf-8")
+        manifest["kinematics"] = {
+            "artifact": kinematics_path.name,
+            "sha256": hashlib.sha256(kinematics_text.encode("utf-8")).hexdigest(),
+            "sample_count": len(kinematics),
+            "reference_frequencies_hz": config["doppler_reference_frequencies_hz"],
+            "requested_half_span_ns": config.get("doppler_half_span_ns", 500_000_000),
+            "method": "central_range_difference_at_contact_midpoint",
+            "limitations": "not a continuous Doppler trace or PHY frequency correction",
+        }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"generated {len(result['contacts'])} contact windows in {args.out}")
 
