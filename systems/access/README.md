@@ -97,3 +97,14 @@ It does not create service sessions, model control slots, implement BLER or
 transmit RF signals. Each frame currently discards fractional-bit capacity;
 unused bytes do not carry over. Per-frame work is proportional to active
 terminals plus granted packets, with queue storage bounded in wire bytes.
+
+## Opt-in shared-beam packet runtime bridge
+
+`access_beams[]` can now bind multiple terminal-to-satellite uplink links
+onto one shared finite beam resource in the Rust scenario. At a frame boundary,
+SYS-05 issues weighted grants that drive packet hop start/completion times.
+Shared queue overflow and contact-loss drops are accounted, while unconfigured
+links keep legacy independent serialization. See
+[beam-frame packet integration](../../docs/design/beam-frame-packet-bridge.md)
+and `scenarios/beam-uplink-contention.json` for a reproducible example.
+This is a modeled uplink MAC, not a modem, authenticated bearer or PHY.
