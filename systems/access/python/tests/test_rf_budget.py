@@ -57,6 +57,47 @@ class AnalyticalRfBudgetTests(unittest.TestCase):
         self.assertFalse(poor["meets_reference_cn"])
         self.assertLess(poor["link_margin_db"], 0)
 
+    def test_equal_thermal_noise_and_interference_degrades_sinr_by_three_db(self):
+        clean = calculate_rf_budget(range_m=1000, **PARAMS)
+        noisy = calculate_rf_budget(
+            range_m=1000, **PARAMS,
+            interference_power_dbm=clean["thermal_noise_dbm"],
+            required_sinr_db=clean["cn_db"] - 2,
+        )
+        self.assertAlmostEqual(clean["cn_db"], noisy["cn_db"], places=6)
+        self.assertAlmostEqual(
+            clean["cn_db"] - noisy["sinr_db"], 10 * math.log10(2), places=5
+        )
+        self.assertAlmostEqual(
+            noisy["noise_plus_interference_dbm"] - noisy["thermal_noise_dbm"],
+            10 * math.log10(2), places=5
+        )
+        self.assertFalse(noisy["meets_reference_sinr"])
+        self.assertTrue(noisy["meets_reference_cn"])
+
+    def test_absent_or_negligible_interference_preserves_cn(self):
+        clean = calculate_rf_budget(range_m=1000, **PARAMS)
+        weak = calculate_rf_budget(
+            range_m=1000, **PARAMS, interference_power_dbm=-300,
+            required_sinr_db=10,
+        )
+        self.assertIsNone(clean["interference_power_dbm"])
+        self.assertIsNone(clean["meets_reference_sinr"])
+        self.assertEqual(clean["sinr_db"], clean["cn_db"])
+        self.assertAlmostEqual(weak["sinr_db"], clean["cn_db"], places=5)
+        self.assertTrue(weak["meets_reference_sinr"])
+
+    def test_invalid_interference_and_sinr_threshold(self):
+        for key, value in (
+            ("interference_power_dbm", float("nan")),
+            ("interference_power_dbm", True),
+            ("interference_power_dbm", float("inf")),
+            ("required_sinr_db", False),
+            ("required_sinr_db", float("-inf")),
+        ):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                calculate_rf_budget(range_m=1000, **PARAMS, **{key: value})
+
     def test_invalid_physical_inputs(self):
         for field, value in (
             ("range_m", 0), ("carrier_hz", 0), ("bandwidth_hz", -1),
@@ -98,12 +139,25 @@ class ContactRfIntegrationTests(unittest.TestCase):
         self.assertGreater(samples[0]["free_space_path_loss_db"], 100)
         self.assertEqual(samples[0]["source_propagation_delay_ns"], 2_000_000)
 
+    def test_configured_interference_is_observational_only(self):
+        self.config["rf_link_budgets"]["access"] = {
+            **PARAMS, "interference_power_dbm": -100,
+            "required_sinr_db": 15,
+        }
+        before = self.scenario["contacts"][0].copy()
+        sample = generate_rf_budget_samples(self.scenario, self.config)[0]
+        self.assertEqual(sample["interference_power_dbm"], -100)
+        self.assertLess(sample["sinr_db"], sample["cn_db"])
+        self.assertEqual(sample["required_sinr_db"], 15)
+        self.assertEqual(self.scenario["contacts"][0], before)
+
     def test_non_rf_link_and_incomplete_budget_rejected(self):
         for bad in (
             {"backhaul": PARAMS},
             {"missing": PARAMS},
             {"access": {key: value for key, value in PARAMS.items()
                         if key != "bandwidth_hz"}},
+            {"access": {**PARAMS, "unknown": 1}},
         ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 generate_rf_budget_samples(
