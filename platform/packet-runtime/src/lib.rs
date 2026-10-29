@@ -1027,10 +1027,13 @@ mod tests {
             (8, 8, 0)
         );
         assert_eq!(report.beam_grants.len(), 8);
-        assert!(report.beam_grants.iter().enumerate().all(|(i, g)|
-            g.frame_start_ns == i as u64 * 10_000_000 && g.wire_bytes == 1220
-                && g.transmit_completed_ns - g.transmit_started_ns == 10_000_000
-        ));
+        assert!(report
+            .beam_grants
+            .iter()
+            .enumerate()
+            .all(|(i, g)| g.frame_start_ns == i as u64 * 10_000_000
+                && g.wire_bytes == 1220
+                && g.transmit_completed_ns - g.transmit_started_ns == 10_000_000));
         let mut hops: Vec<_> = report
             .packets
             .iter()
