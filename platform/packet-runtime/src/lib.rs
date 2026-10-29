@@ -110,7 +110,10 @@ impl<'a> Runtime<'a> {
             .map(|link| {
                 let contact_defined = scenario.contacts.iter().any(|c| c.link_id == link.id);
                 let schedule_required = scenario.contact_mode == ContactMode::Scheduled
-                    && matches!(link.kind, LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl);
+                    && matches!(
+                        link.kind,
+                        LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl
+                    );
                 let initial = scenario
                     .contacts
                     .iter()
@@ -512,30 +515,41 @@ mod tests {
 
     #[test]
     fn geometric_contacts_drive_handover_without_teleportation() {
-        let scenario = Scenario::from_json(include_str!(
-            "../../../scenarios/visibility-handover.json"
-        ))
-        .unwrap();
+        let scenario =
+            Scenario::from_json(include_str!("../../../scenarios/visibility-handover.json"))
+                .unwrap();
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, 12);
         assert!(report.delivered > 0);
         assert!(report.dropped > 0);
         assert!(report.route_revision >= 3);
-        assert!(report.control_events.iter().any(|e| e.kind == "contact_close"));
-        assert!(report.control_events.iter().any(|e| e.kind == "contact_open"));
-        assert!(report.packets.iter().any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
-        assert!(report.packets.iter().any(|p| p.hops.iter().any(|h| {
-            h.link_id == "user-ue-a" && h.propagation_ns == 1_800_000
-        })));
-        assert!(report.packets.iter().all(|p| p.status != PacketStatus::InFlight));
+        assert!(report
+            .control_events
+            .iter()
+            .any(|e| e.kind == "contact_close"));
+        assert!(report
+            .control_events
+            .iter()
+            .any(|e| e.kind == "contact_open"));
+        assert!(report
+            .packets
+            .iter()
+            .any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
+        assert!(report.packets.iter().any(|p| p
+            .hops
+            .iter()
+            .any(|h| { h.link_id == "user-ue-a" && h.propagation_ns == 1_800_000 })));
+        assert!(report
+            .packets
+            .iter()
+            .all(|p| p.status != PacketStatus::InFlight));
     }
 
     #[test]
     fn a_link_remains_down_when_faulted_during_visible_contact() {
-        let mut scenario = Scenario::from_json(include_str!(
-            "../../../scenarios/visibility-handover.json"
-        ))
-        .unwrap();
+        let mut scenario =
+            Scenario::from_json(include_str!("../../../scenarios/visibility-handover.json"))
+                .unwrap();
         scenario.faults.push(ntarlink_contracts::Fault {
             at_ns: 20_000_000,
             link_id: "user-ue-a".into(),
@@ -544,7 +558,10 @@ mod tests {
         let result = run(&scenario).unwrap();
         assert!(result.dropped > 0);
         assert!(result.control_events.iter().any(|e| e.kind == "link_down"));
-        assert!(result.packets.iter().any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
+        assert!(result
+            .packets
+            .iter()
+            .any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
     }
 
     #[test]

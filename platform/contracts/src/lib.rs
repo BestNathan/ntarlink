@@ -240,16 +240,28 @@ impl Scenario {
             let Some(link) = self.links.iter().find(|l| l.id == contact.link_id) else {
                 return Err(format!("unknown contact link: {}", contact.link_id));
             };
-            if !matches!(link.kind, LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl) {
-                return Err(format!("contact window not supported for terrestrial link: {}", contact.link_id));
+            if !matches!(
+                link.kind,
+                LinkKind::UserRf | LinkKind::Feeder | LinkKind::OpticalIsl
+            ) {
+                return Err(format!(
+                    "contact window not supported for terrestrial link: {}",
+                    contact.link_id
+                ));
             }
             if contact.start_ns >= contact.end_ns || contact.end_ns > self.duration_ns {
                 return Err(format!("invalid contact interval for {}", contact.link_id));
             }
             if contact.propagation_delay_ns == Some(0) {
-                return Err(format!("contact propagation delay must be positive for {}", contact.link_id));
+                return Err(format!(
+                    "contact propagation delay must be positive for {}",
+                    contact.link_id
+                ));
             }
-            windows.entry(&contact.link_id).or_default().push((contact.start_ns, contact.end_ns));
+            windows
+                .entry(&contact.link_id)
+                .or_default()
+                .push((contact.start_ns, contact.end_ns));
         }
         for (link_id, intervals) in &mut windows {
             intervals.sort_unstable();
