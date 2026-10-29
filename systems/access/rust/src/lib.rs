@@ -146,7 +146,12 @@ impl BeamScheduler {
         if wire_bytes > self.capacity_bytes {
             return Err("packet cannot fit in one frame".into());
         }
-        if wire_bytes > self.config.queue_limit_bytes.saturating_sub(self.queued_bytes) {
+        if wire_bytes
+            > self
+                .config
+                .queue_limit_bytes
+                .saturating_sub(self.queued_bytes)
+        {
             return Err("beam queue is full".into());
         }
         let packet_id = packet_id.into();
@@ -166,14 +171,18 @@ impl BeamScheduler {
     /// once per frame, capped at one frame. Idle terminals lose old credit.
     /// A rotating starting terminal avoids fixed-order tight-budget bias.
     pub fn schedule_frame(&mut self) -> Result<FrameReport, String> {
-        let next_frame = self.next_frame.checked_add(1).ok_or("frame index overflow")?;
+        let next_frame = self
+            .next_frame
+            .checked_add(1)
+            .ok_or("frame index overflow")?;
         for terminal in &mut self.terminals {
             if terminal.pending.is_empty() {
                 terminal.deficit_bytes = 0;
             } else {
                 let earned = u128::from(terminal.weight) * u128::from(self.config.quantum_bytes);
                 terminal.deficit_bytes = (u128::from(terminal.deficit_bytes) + earned)
-                    .min(u128::from(self.capacity_bytes)) as u64;
+                    .min(u128::from(self.capacity_bytes))
+                    as u64;
             }
         }
         let mut grants = Vec::new();
@@ -232,8 +241,14 @@ mod tests {
 
     fn terminals() -> Vec<TerminalSpec> {
         vec![
-            TerminalSpec { id: "ue-b".into(), weight: 1 },
-            TerminalSpec { id: "ue-a".into(), weight: 3 },
+            TerminalSpec {
+                id: "ue-b".into(),
+                weight: 1,
+            },
+            TerminalSpec {
+                id: "ue-a".into(),
+                weight: 3,
+            },
         ]
     }
 
@@ -252,8 +267,16 @@ mod tests {
             assert_eq!(report.capacity_bytes, 400);
             assert_eq!(report.used_bytes, 400);
             assert_eq!(report.grants.len(), 4);
-            a += report.grants.iter().filter(|g| g.terminal_id == "ue-a").count();
-            b += report.grants.iter().filter(|g| g.terminal_id == "ue-b").count();
+            a += report
+                .grants
+                .iter()
+                .filter(|g| g.terminal_id == "ue-a")
+                .count();
+            b += report
+                .grants
+                .iter()
+                .filter(|g| g.terminal_id == "ue-b")
+                .count();
         }
         assert_eq!((a, b), (30, 10));
         assert_eq!(beam.queued_packets(), 80);
@@ -274,17 +297,23 @@ mod tests {
                 report.grants[0].terminal_id.clone()
             })
             .collect();
-        assert_eq!(served, vec![
-            "ue-a", "ue-b", "ue-a", "ue-b", "ue-a", "ue-b", "ue-a", "ue-b"
-        ]);
+        assert_eq!(
+            served,
+            vec!["ue-a", "ue-b", "ue-a", "ue-b", "ue-a", "ue-b", "ue-a", "ue-b"]
+        );
         assert_eq!(beam.queued_bytes(), 0);
     }
 
     #[test]
     fn large_packet_accrues_credit_and_is_eventually_granted() {
-        let mut beam = BeamScheduler::new(config(500), vec![
-            TerminalSpec { id: "ue".into(), weight: 1 }
-        ]).unwrap();
+        let mut beam = BeamScheduler::new(
+            config(500),
+            vec![TerminalSpec {
+                id: "ue".into(),
+                weight: 1,
+            }],
+        )
+        .unwrap();
         beam.enqueue("ue", "large", 380).unwrap();
         for _ in 0..3 {
             assert!(beam.schedule_frame().unwrap().grants.is_empty());
@@ -301,19 +330,46 @@ mod tests {
         invalid.quantum_bytes = 0;
         assert!(BeamScheduler::new(invalid, terminals()).is_err());
         assert!(BeamScheduler::new(config(400), vec![]).is_err());
-        assert!(BeamScheduler::new(config(400), vec![
-            TerminalSpec { id: "x".into(), weight: 0 }
-        ]).is_err());
-        assert!(BeamScheduler::new(config(400), vec![
-            TerminalSpec { id: "x".into(), weight: 1 },
-            TerminalSpec { id: "x".into(), weight: 1 },
-        ]).is_err());
-        assert!(BeamScheduler::new(BeamConfig {
-            capacity_bps: 1, frame_duration_ns: 1, ..config(400)
-        }, terminals()).is_err());
-        assert!(BeamScheduler::new(BeamConfig {
-            capacity_bps: u64::MAX, frame_duration_ns: u64::MAX, ..config(400)
-        }, terminals()).is_err());
+        assert!(BeamScheduler::new(
+            config(400),
+            vec![TerminalSpec {
+                id: "x".into(),
+                weight: 0
+            }]
+        )
+        .is_err());
+        assert!(BeamScheduler::new(
+            config(400),
+            vec![
+                TerminalSpec {
+                    id: "x".into(),
+                    weight: 1
+                },
+                TerminalSpec {
+                    id: "x".into(),
+                    weight: 1
+                },
+            ]
+        )
+        .is_err());
+        assert!(BeamScheduler::new(
+            BeamConfig {
+                capacity_bps: 1,
+                frame_duration_ns: 1,
+                ..config(400)
+            },
+            terminals()
+        )
+        .is_err());
+        assert!(BeamScheduler::new(
+            BeamConfig {
+                capacity_bps: u64::MAX,
+                frame_duration_ns: u64::MAX,
+                ..config(400)
+            },
+            terminals()
+        )
+        .is_err());
     }
 
     #[test]
@@ -322,8 +378,10 @@ mod tests {
         config.queue_limit_bytes = 200;
         let mut beam = BeamScheduler::new(config, terminals()).unwrap();
         for (terminal, id, size) in [
-            ("missing", "p", 80), ("ue-a", "p", 0),
-            ("ue-a", "p", 181), ("ue-a", "p", u64::MAX),
+            ("missing", "p", 80),
+            ("ue-a", "p", 0),
+            ("ue-a", "p", 181),
+            ("ue-a", "p", u64::MAX),
             ("ue-a", "", 80),
         ] {
             assert!(beam.enqueue(terminal, id, size).is_err());
@@ -340,9 +398,8 @@ mod tests {
     #[test]
     fn input_order_does_not_change_deterministic_grants() {
         let mut a = BeamScheduler::new(config(400), terminals()).unwrap();
-        let mut b = BeamScheduler::new(
-            config(400), terminals().into_iter().rev().collect()
-        ).unwrap();
+        let mut b =
+            BeamScheduler::new(config(400), terminals().into_iter().rev().collect()).unwrap();
         for beam in [&mut a, &mut b] {
             assert!(beam.schedule_frame().unwrap().grants.is_empty());
             beam.enqueue("ue-b", "b", 80).unwrap();
