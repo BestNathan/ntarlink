@@ -15,7 +15,7 @@ def main() -> None:
     html = PAGE.read_text(encoding="utf-8")
     required = [
         "MOCK DATA", "DEMO DATA", "SYNTHETIC",
-        "CONSTELLATION NETWORK", "PACKET", "SYSTEM CATALOG",
+        "CONSTELLATION NETWORK", "DATA PLANE", "SYSTEM CATALOG",
         "ISL failure", "Gateway outage", "Traffic surge",
         "const S=", "const MODES=", "data-system",
         "Read full subsystem design",
