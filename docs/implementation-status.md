@@ -73,6 +73,21 @@ scenario links still use their existing independent per-link capacities, and
 there is no PHY admission, MAC grant scheduling of real simulated packets,
 beam steering, contact-driven eligibility or subscriber authorization.
 
+## Optional SYS-05 shared-beam packet grant bridge
+
+The opt-in `access_beams[]` scenario contract now connects SYS-05's
+deterministic weighted beam-frame scheduler to Rust packet forwarding for
+multiple terminal-to-satellite uplinks sharing one finite directional
+resource. Packet grants serialize within a common frame budget and account
+for framing overhead. Contact loss or link failure cancels ungranted
+bearer packets, with bounded shared queue and deterministic drop reasons.
+Unconfigured links retain their legacy independent capacity behavior.
+See [beam-frame integration design](design/beam-frame-packet-bridge.md)
+and `scenarios/beam-uplink-contention.json` for the cross-subsystem fixture.
+
+This remains a **modeled L1 MAC** without RF-derived capacity, bearer
+authorization, modem acquisition, downlink scheduling or handover signaling.
+
 ## Remaining subsystem work
 
 P1 next: independent Earth-orientation reference vectors, orbit catalog/ephemeris output, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
