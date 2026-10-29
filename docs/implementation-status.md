@@ -47,17 +47,18 @@ contact windows or RF budgets. It has no interpolation accuracy bound,
 velocity output, EOP calibration or constellation-scale benchmark.
 See [ephemeris artifact design](design/orbital-ephemeris-artifacts.md).
 
-## Offline SYS-01 ephemeris midpoint interpolation audit
+## Offline SYS-01 ephemeris fixed interior-probe interpolation audit
 
 The optional `ntarlink_orbital.ephemeris_audit` command validates a pinned
-ITRS snapshot against the same SGP4/Skyfield provider at held-out midpoints
-of complete adjacent sample pairs. It reports per-satellite and global
-maximum/RMS position error in meters and fails its CLI gate when a configured
-threshold is exceeded. The audit verifies the exporter manifest's exact
+ITRS snapshot against the same SGP4/Skyfield provider at 1, 3 or 7
+evenly spaced interior probes per complete adjacent sample pair. It reports
+midpoint and all-probe per-satellite/global maximum and RMS position errors
+in meters, and fails its CLI gate when the selected probes exceed the
+configured threshold. The audit verifies the exporter manifest's exact
 scenario/orbit/artifact SHA-256 provenance and rejects malformed time grids,
 coordinates and satellite catalogs before propagation. Historical ISS
-midpoint checks run in CI. This is a **same-provider, midpoint-only**
-self-consistency probe; it neither proves continuous interpolation accuracy
+three-probe checks run in CI. This is a **same-provider, finite-probe**
+self-consistency check; it neither proves continuous interpolation accuracy
 nor independently validates orbit truth or EOP. See
 [ephemeris audit design](design/orbital-ephemeris-audit.md).
 
