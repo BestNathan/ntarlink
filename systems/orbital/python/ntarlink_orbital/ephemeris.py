@@ -103,7 +103,9 @@ def main(argv=None):
     orbit_config = json.loads(orbit_bytes)
     # Validate the time grid and satellite catalog before invoking SGP4.
     _validate_request(scenario, orbit_config, args.step_ns)
-    provider = build_sgp4_provider(orbit_config, scenario["duration_ns"])
+    provider = build_sgp4_provider(
+        orbit_config, scenario["duration_ns"], args.orbit_config.resolve().parent
+    )
     document = compile_ephemeris(scenario, orbit_config, provider, args.step_ns)
     output = json.dumps(document, indent=2, allow_nan=False) + "\n"
     args.out.write_text(output, encoding="utf-8")
@@ -115,6 +117,9 @@ def main(argv=None):
         "artifact_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
         "scenario_input_sha256": hashlib.sha256(scenario_bytes).hexdigest(),
         "orbit_input_sha256": hashlib.sha256(orbit_bytes).hexdigest(),
+        "earth_orientation": getattr(
+            provider, "earth_orientation", {"mode": "external_position_provider"}
+        ),
         "skyfield_version": version("skyfield"),
         "sgp4_version": version("sgp4"),
         "frame": "ITRS",
@@ -122,7 +127,7 @@ def main(argv=None):
         "time_resolution_ns": TIME_RESOLUTION_NS,
         "sample_step_ns": args.step_ns,
         "sample_count": document["sample_count"],
-        "limitations": "discrete geometric positions; no interpolation accuracy, velocity, or EOP calibration",
+        "limitations": "discrete geometric positions; no interpolation accuracy, velocity, or multi-epoch independent EOP calibration",
     }
     manifest_path = args.manifest or Path(str(args.out) + ".ephemeris-manifest.json")
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

@@ -21,7 +21,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Published historical ISS GCRS/geodetic/topocentric regression and coarse trailing-interval coverage (not independent EOP validation).
 - [x] Bounded offline SYS-01 ITRS ephemeris JSON artifact with stable UTC sampling, source hashes and historical ISS CI validation (not interpolation or EOP validation).
 - [x] Independent published Vallado/Astropy/Orekit TEME-to-PEF-to-ITRF reference position with pinned historical UT1/polar motion and a separate Skyfield transform regression (test-only; no production EOP ingestion).
-- [ ] Versioned IERS EOP ingestion, multi-epoch production-frame verification, streaming/columnar ephemerides and large constellation benchmarks.
+- [x] Opt-in versioned, SHA-256-pinned local IERS finals2000A ingestion for production Skyfield timescales, with strict coverage/expiry checks and provenance (no bundled IERS archive or independent multi-epoch calibration).
+- [ ] Independent multi-epoch production-frame verification, certified IERS/leap-second archive handling, streaming/columnar ephemerides and large constellation benchmarks.
 - [x] First-order Doppler/range-rate observations at contact midpoints, exported as a separate analytical artifact (not PHY carrier recovery).
 - [x] Initial SYS-05 analytical RF link-budget sidecar from SYS-01 midpoint contact delays (Friis, thermal C/N, reference margin); no PHY/MAC admission.
 - [x] Optional receiver-input aggregate in-band interference assumption and analytical C/(N+I) with separate SINR reference threshold (not a physical beam interference model).

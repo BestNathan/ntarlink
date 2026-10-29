@@ -47,6 +47,19 @@ contact windows or RF budgets. It has no interpolation accuracy bound,
 velocity output, EOP calibration or constellation-scale benchmark.
 See [ephemeris artifact design](design/orbital-ephemeris-artifacts.md).
 
+## Opt-in production SYS-01 Earth-orientation input
+
+The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A
+file into a Skyfield timescale for both contact prediction and ITRS
+ephemeris export. Daily UT1−UTC and xp/yp polar motion are interpolated
+with strict source coverage and an explicit operator-supplied expiry;
+leap seconds still use Skyfield 1.55's bundled schedule. Both output
+manifests record EOP source provenance. The default remains the built-in
+timescale, and no IERS file is bundled or fetched. Synthetic EOP fixtures
+exercise the production adapter and Vallado single-epoch reference.
+This is not independent multi-epoch calibration, authenticated IERS data,
+or validation of future leap seconds. See [EOP design](design/earth-orientation-data.md).
+
 ## First SYS-05 analytical RF budget
 
 A separate `systems/access/python` package now consumes the compiled
@@ -107,7 +120,7 @@ authorization, modem acquisition, downlink scheduling or handover signaling.
 
 ## Remaining subsystem work
 
-P1 next: production IERS EOP ingestion and multi-epoch frame verification (an independent published Vallado TEME/PEF/ITRF position regression with explicit UT1/polar motion now exists, but does not configure the production timescale), large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
+P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog/ephemeris streaming, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
 
 P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
 

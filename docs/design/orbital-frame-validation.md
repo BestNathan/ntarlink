@@ -33,8 +33,9 @@ TEME-to-ITRF software verification, a high-accuracy IERS EOP reference,
 or a guarantee of real ISS positional accuracy. TLE prediction errors,
 built-in Earth orientation assumptions and rounding of guide outputs limit
 the physical claims. The independent reference-vector regression below closes only the
-single-epoch transform-vector gap. Production EOP ingestion, multi-epoch
-comparison, and leap-second provenance remain future acceptance work.
+single-epoch transform-vector gap. An opt-in EOP adapter now exists; independent multi-epoch comparison,
+authentic IERS archive validation and future leap-second provenance remain
+acceptance work.
 
 ## Independent 2004 TEME/PEF/ITRF reference vectors
 
@@ -71,13 +72,14 @@ than 10 meters for this vector.
 
 This validates a reference transformation with **supplied** EOP and
 independent published vectors. The production `build_sgp4_provider()`
-still uses Skyfield's offline built-in timescale, **does not ingest or pin
-an external IERS EOP series**, and is not thereby independently calibrated
-for the 2014 ISS scenario. No production propagation or packet behavior
-changes. A separate milestone must ingest versioned IERS EOP data,
-define interpolation and out-of-range behavior, compare the actual
-production provider with independent vectors at several epochs, and
-document leap-second/UT1 provenance. Velocity/LOD and full
+still defaults to Skyfield's offline built-in timescale, but now supports
+an **opt-in checksum-pinned local IERS finals2000A table** for UT1 and
+polar motion. See [Earth-orientation input](earth-orientation-data.md).
+The opt-in implementation has explicit interpolation, coverage, expiry and
+provenance, but is **not independently calibrated across multiple epochs**
+and does not bundle an authenticated IERS archive. Further work must compare
+the production provider with independent vectors at several epochs and
+validate future leap-second updates. Velocity/LOD and full
 precession-nutation validation remain out of scope.
 
 ## Trailing partial sample interval
