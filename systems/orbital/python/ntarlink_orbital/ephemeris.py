@@ -117,7 +117,9 @@ def main(argv=None):
         "artifact_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
         "scenario_input_sha256": hashlib.sha256(scenario_bytes).hexdigest(),
         "orbit_input_sha256": hashlib.sha256(orbit_bytes).hexdigest(),
-        "earth_orientation": provider.earth_orientation,
+        "earth_orientation": getattr(
+            provider, "earth_orientation", {"mode": "external_position_provider"}
+        ),
         "skyfield_version": version("skyfield"),
         "sgp4_version": version("sgp4"),
         "frame": "ITRS",
