@@ -45,7 +45,7 @@ See [access subsystem instructions](../systems/access/README.md).
 
 ## Remaining subsystem work
 
-P1 next: reference-grade contact boundary refinement, orbit catalog/ephemeris output, differential propagation delays, time-resolved Doppler/PHY correction, antenna/beam RF budget, MAC access/scheduler, optical PAT and spacecraft constraints.
+P1 next: reference-grade contact boundary refinement, orbit catalog/ephemeris output, differential propagation delays, time-resolved Doppler/PHY correction, calibrated beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints.
 
 P2/P3: user session/core/IPAM, terrestrial routing emulation, realistic subscriber service and gateway handover, RF weather and interference, NOC/telemetry/security, Cesium console, large-scale event benchmarks and external SNS3/OpenSAND/OAI comparisons. The sixteen-system [engineering blueprint](subsystems/README.md) remains the overall target.
 
