@@ -81,6 +81,18 @@ between validation and consumption; this is not authenticated provenance,
 a live feed or a measured throughput benchmark. See
 [streaming design](design/orbital-ephemeris-stream.md).
 
+## Synthetic SYS-01 ephemeris scale baseline
+
+The optional `ntarlink_orbital.ephemeris_benchmark` command creates a
+bounded, deterministic synthetic satellite/time grid, exports JSONL using
+the production streaming writer and validates every record through the
+production snapshotting reader. It reports artifact bytes/digest, measured
+wall-clock throughput and peak traced Python heap for each stage. CI checks
+1,000 and 10,000 position pairs without timing gates. This is a synthetic
+serialization and verified-read baseline, not a real constellation, SGP4
+propagation benchmark, process-RSS measurement or performance guarantee.
+See [benchmark protocol](design/orbital-ephemeris-benchmark.md).
+
 ## Opt-in production SYS-01 Earth-orientation input
 
 The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A
