@@ -24,6 +24,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Initial SYS-05 analytical RF link-budget sidecar from SYS-01 midpoint contact delays (Friis, thermal C/N, reference margin); no PHY/MAC admission.
 - [x] Optional receiver-input aggregate in-band interference assumption and analytical C/(N+I) with separate SINR reference threshold (not a physical beam interference model).
 - [x] Optional SYS-01 time-sampled geometric delay compiled into scheduled contacts and interpolated at each Rust packet transmission completion (not light-time iteration or live PHY).
+- [x] Optional SYS-05 time-resolved analytical RF sidecar at validated SYS-01 geometric delay sample instants (not continuously interpolated SINR or PHY/MAC).
 - [ ] Actual access/optical acquisition feasibility, calibrated link budgets with interference, and validated relativistic/light-time delay models.
 - [ ] Spacecraft payload/optical terminal availability and pointing constraints (SYS-02).
 - [ ] Optical PAT acquisition/tracking and link-budget models (SYS-03).
