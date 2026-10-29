@@ -10,5 +10,10 @@
       "tle_line2": "2 25544  51.6498 109.4756 0003572  55.9686 274.8005 15.49815350868473"
     }
   ],
-  "refine_tolerance_ns": 100000000
+  "refine_tolerance_ns": 100000000,
+  "doppler_reference_frequencies_hz": {
+    "user-iss": 12000000000,
+    "feeder-iss": 18000000000
+  },
+  "doppler_half_span_ns": 500000000
 }
