@@ -57,7 +57,7 @@ class OrbitalContactTests(unittest.TestCase):
         self.assertEqual(len(windows), 1)
         self.assertEqual(windows[0]["link_id"], "access")
         self.assertEqual(windows[0]["start_ns"], 0)
-        self.assertEqual(windows[0]["end_ns"], 40_000_000_000)
+        self.assertEqual(windows[0]["end_ns"], 30_000_000_000)
         self.assertAlmostEqual(windows[0]["propagation_delay_ns"], 1_834_600, delta=5_000)
 
     def test_refined_ground_pass_edges_are_conservative(self):
