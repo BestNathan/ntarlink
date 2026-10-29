@@ -32,9 +32,9 @@ and production adapter both rely on Skyfield/SGP4. They are **not** independent
 TEME-to-ITRF software verification, a high-accuracy IERS EOP reference,
 or a guarantee of real ISS positional accuracy. TLE prediction errors,
 built-in Earth orientation assumptions and rounding of guide outputs limit
-the physical claims. A future acceptance milestone must pin external EOP
-tables and an independent Vallado/Orekit or equivalent TEME/ITRF reference
-vector, with explicit UT1, polar motion and leap-second provenance.
+the physical claims. The independent reference-vector regression below closes only the
+single-epoch transform-vector gap. Production EOP ingestion, multi-epoch
+comparison, and leap-second provenance remain future acceptance work.
 
 ## Independent 2004 TEME/PEF/ITRF reference vectors
 
