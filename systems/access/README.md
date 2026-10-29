@@ -34,5 +34,5 @@ capacity is **not changed** by these numbers. A contact is geometric
 potential, not an acquired link. Results are midpoint snapshots, not
 continuous time-series or calibrated Starlink performance.
 
-See [SYS-05 design](../../../docs/subsystems/05-access-network.md) and
-[SYS-01 orbital contacts](../../../scenarios/ORBITAL-README.md).
+See [SYS-05 design](../../docs/subsystems/05-access-network.md) and
+[SYS-01 orbital contacts](../../scenarios/ORBITAL-README.md).
