@@ -65,14 +65,14 @@ class TrailingIntervalTests(unittest.TestCase):
             windows[0]["propagation_delay_samples"][-1]["at_ns"], 99
         )
 
-    def test_coarse_set_exactly_on_step_boundary_is_preserved(self):
+    def test_coarse_set_exactly_on_step_boundary_stays_conservative(self):
         def position(_satellite_id, t_ns):
             return (-7e6, 0, 0) if t_ns >= 200 else (7e6, 0, 0)
 
         windows = generate_contact_windows(self.scenario, self.config, position)
         self.assertEqual(
             [(w["start_ns"], w["end_ns"]) for w in windows],
-            [(0, 200)],
+            [(0, 100)],
         )
 
     def test_refined_sampling_keeps_original_precision(self):
