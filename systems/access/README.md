@@ -15,6 +15,9 @@ python -m ntarlink_orbital.contacts \
 python -m ntarlink_access.rf_budget \
   /tmp/ntarlink-orbital-pass.json scenarios/rf-budgets.sample.json \
   --out /tmp/ntarlink-rf-budget.json
+python -m ntarlink_access.rf_time_series \\
+  /tmp/ntarlink-orbital-pass.json scenarios/rf-budgets.sample.json \\
+  --out /tmp/ntarlink-rf-time-series.json
 python -m unittest discover -s systems/access/python/tests
 ```
 
@@ -29,6 +32,24 @@ Inputs are explicit: carrier frequency
 (Hz), occupied bandwidth (Hz), transmit power (dBm), directional antenna gains
 (dBi), receiver noise figure (dB), other losses (dB), required C/N (dB).
 The noise reference is 290 K with exact SI Boltzmann constant.
+
+## Optional time-resolved RF analysis
+
+The separate `python -m ntarlink_access.rf_time_series` command evaluates the
+same Friis, thermal C/N and configured-interference SINR equations at **each
+actual SYS-01 `propagation_delay_samples` timestamp**, rather than only at
+contact midpoints. Its JSON sidecar includes `sample_ns`, contact bounds,
+direction, source delay, derived geometric range, RF metrics, sample count and
+SHA-256 input digests. This is a deterministic O(samples) batch transform;
+the 500,000-sample scenario limit is also enforced by the adapter.
+
+Every configured RF contact must have a complete, strictly ordered series
+starting at `start_ns` and ending at `end_ns - 1`; missing or malformed
+samples fail closed. The original midpoint RF command and Rust forwarding
+remain unchanged. The time-resolved sidecar does not interpolate between RF
+observations, simulate interference variations, predict PHY acquisition,
+change packet capacity, or claim a continuously valid SINR. Sample times
+are scenario-relative virtual nanoseconds, not Unix timestamps.
 
 **Fidelity:** analytical only. Reference margin is not modem admission.
 Interference is only an **exogenous, aggregate receiver-input power** assumption;
