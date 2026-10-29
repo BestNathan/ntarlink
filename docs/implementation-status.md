@@ -47,6 +47,18 @@ This is **not** an RF waveform, physically predicted interference, beam
 allocation or radio bearer acquisition; unconfigured losses remain absent.
 See [access subsystem instructions](../systems/access/README.md).
 
+## Time-resolved SYS-05 RF observations
+
+An optional separate `ntarlink_access.rf_time_series` batch command now
+evaluates the existing analytical Friis/C/N/SINR equations at every validated
+SYS-01 geometric propagation-delay sample. The midpoint RF sidecar and
+the Rust data plane remain unchanged. The output carries contact and
+scenario-relative sample timestamps, directed link IDs, source delays and
+SHA-256 input provenance. Incomplete or malformed RF contact series fail
+closed, and the 500,000-sample bound is enforced. This is **discrete sampled
+analysis**, not a live RF waveform, continuously interpolated SINR, physical
+interference prediction, admission or MAC scheduling.
+
 ## Remaining subsystem work
 
 P1 next: independent Earth-orientation reference vectors, orbit catalog/ephemeris output, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
