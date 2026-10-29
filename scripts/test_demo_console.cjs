@@ -72,4 +72,31 @@ route("#/overview");
 assert(app.innerHTML.includes("Experiment Scenarios"));
 assert(app.innerHTML.includes("Nominal orbit"));
 
-console.log("Demo console smoke tests passed: 16 systems × 4 pages, home, scenario and mock-data indicators.");
+
+/* Exercise delegated controls, not only static markup. */
+function clickAs(selector, attributes) {
+  const target = new context.Element();
+  target.closest = (candidate) => candidate === selector ? {
+    getAttribute: (key) => attributes[key],
+  } : null;
+  callbacks["doc:click"]({target});
+}
+route("#/overview");
+clickAs("[data-scenario]", {"data-scenario": "isl"});
+assert(app.innerHTML.includes("44.7"), "ISL failure should change the displayed RTT");
+assert(app.innerHTML.includes("TRACKING LOST"), "ISL failure should affect network topology");
+
+route("#/system/orbital/operations");
+clickAs("[data-action]", {"data-action": "orbital", "data-operation": "0"});
+assert(app.innerHTML.includes("Executed locally in the demo UI"), "mock operation should append an event");
+route("#/system/orbital/assets");
+assert(app.innerHTML.includes("Degraded"), "mock operation should change local inventory status");
+
+clickAs("[data-inspect]", {"data-inspect": "orbital", "data-asset": "LEO-SAT-0412"});
+assert(dialog.innerHTML.includes('role="dialog"'), "entity inspector should open");
+assert(dialog.innerHTML.includes("LEO-SAT-0412"), "inspector should show selected asset");
+clickAs("[data-close]", {});
+assert.equal(dialog.textContent, "", "entity inspector should close");
+
+console.log("Demo console smoke tests passed: 16 systems × 4 pages, scenario switching, mock operations and entity inspection.");
+
