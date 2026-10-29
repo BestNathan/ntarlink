@@ -1,3 +1,4 @@
+use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
 use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySample, Scenario};
 use ntarlink_network_control::next_hops;
 use ntarlink_simulation::Scheduler;
@@ -94,6 +95,7 @@ enum Event {
     ContactOpen { index: usize },
     ContactClose { index: usize },
     InstallRoutes,
+    BeamFrame { beam: usize },
 }
 
 struct PacketRecord {
@@ -118,9 +120,18 @@ impl LinkRuntime {
     }
 }
 
+/// Pending packets are owned by SYS-05 until a frame issues a grant.
+struct BeamRuntime {
+    scheduler: BeamScheduler,
+    pending: HashMap<usize, (u64, usize)>,
+    next_frame_at: Option<u64>,
+}
+
 struct Runtime<'a> {
     scenario: &'a Scenario,
     links: Vec<LinkRuntime>,
+    beams: Vec<BeamRuntime>,
+    beam_for_link: Vec<Option<usize>>,
     routes: Vec<HashMap<String, usize>>,
     route_revision: u64,
     packets: Vec<PacketRecord>,
@@ -153,9 +164,36 @@ impl<'a> Runtime<'a> {
                 }
             })
             .collect();
+        let mut beam_for_link = vec![None; scenario.links.len()];
+        let beams = scenario.access_beams.iter().enumerate().map(|(index, beam)| {
+            for bearer in &beam.bearers {
+                let link_index = scenario.links.iter().position(|l| l.id == bearer.link_id)
+                    .expect("validated access bearer link");
+                beam_for_link[link_index] = Some(index);
+            }
+            let config = BeamConfig {
+                capacity_bps: beam.capacity_bps,
+                frame_duration_ns: beam.frame_duration_ns,
+                quantum_bytes: beam.quantum_bytes,
+                packet_overhead_bytes: beam.packet_overhead_bytes,
+                queue_limit_bytes: beam.queue_limit_bytes,
+            };
+            let terminals = beam.bearers.iter().map(|b| TerminalSpec {
+                id: b.terminal_id.clone(),
+                weight: b.weight,
+            }).collect();
+            BeamRuntime {
+                scheduler: BeamScheduler::new(config, terminals)
+                    .expect("validated access beam configuration"),
+                pending: HashMap::new(),
+                next_frame_at: None,
+            }
+        }).collect();
         let mut runtime = Self {
             scenario,
             links,
+            beams,
+            beam_for_link,
             routes: Vec::new(),
             route_revision: 0,
             packets: Vec::new(),
@@ -255,6 +293,9 @@ impl<'a> Runtime<'a> {
             self.drop_packet(packet_index, at_ns, "link_unavailable");
             return Ok(());
         }
+        if let Some(beam_index) = self.beam_for_link[link_index] {
+            return self.enqueue_beam(beam_index, link_index, packet_index, at_ns, events);
+        }
         let link = &self.scenario.links[link_index];
         let state = &mut self.links[link_index];
         while state
@@ -320,6 +361,150 @@ impl<'a> Runtime<'a> {
         )
     }
 
+    /// Schedule only when there is a pending packet; idle beams do not tick.
+    /// Packet arrivals (priority 20) precede frame allocation (priority 30).
+    fn ensure_beam_frame(
+        &mut self,
+        beam_index: usize,
+        at_ns: u64,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        let beam = &mut self.beams[beam_index];
+        if beam.next_frame_at.is_some() || beam.pending.is_empty() {
+            return Ok(());
+        }
+        let duration = self.scenario.access_beams[beam_index].frame_duration_ns;
+        let next = u128::from(at_ns).div_ceil(u128::from(duration)) * u128::from(duration);
+        if next >= u128::from(self.scenario.duration_ns) {
+            return Ok(());
+        }
+        let next = u64::try_from(next).map_err(|_| "beam frame time overflow")?;
+        events.schedule(next, 30, Event::BeamFrame { beam: beam_index })?;
+        beam.next_frame_at = Some(next);
+        Ok(())
+    }
+
+    fn enqueue_beam(
+        &mut self,
+        beam_index: usize,
+        link_index: usize,
+        packet_index: usize,
+        at_ns: u64,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        let link = &self.scenario.links[link_index];
+        let flow = &self.scenario.flows[self.packets[packet_index].flow];
+        match self.beams[beam_index].scheduler.enqueue(
+            &link.from, packet_index.to_string(), flow.packet_size_bytes,
+        ) {
+            Ok(()) => {
+                self.beams[beam_index].pending.insert(packet_index, (at_ns, link_index));
+                self.ensure_beam_frame(beam_index, at_ns, events)
+            }
+            Err(reason) => {
+                let kind = if reason.contains("queue is full") {
+                    "beam_queue_overflow"
+                } else {
+                    "beam_packet_unserviceable"
+                };
+                self.drop_packet(packet_index, at_ns, kind);
+                Ok(())
+            }
+        }
+    }
+
+    fn discard_beam_link(&mut self, link_index: usize, at_ns: u64) -> Result<(), String> {
+        let Some(beam_index) = self.beam_for_link[link_index] else {
+            return Ok(());
+        };
+        let terminal_id = &self.scenario.links[link_index].from;
+        let removed = self.beams[beam_index].scheduler.discard_terminal(terminal_id)?;
+        for id in removed {
+            let packet_index: usize = id.parse().map_err(|_| "invalid grant packet ID")?;
+            self.beams[beam_index].pending.remove(&packet_index)
+                .ok_or("missing queued beam packet")?;
+            self.drop_packet(packet_index, at_ns, "beam_link_lost");
+        }
+        Ok(())
+    }
+
+    /// Grant packets in a shared frame, with sequential wire-byte serialization.
+    /// Issued grants finish under the existing completion-after-departure policy.
+    fn beam_frame(
+        &mut self,
+        at_ns: u64,
+        beam_index: usize,
+        events: &mut Scheduler<Event>,
+    ) -> Result<(), String> {
+        self.beams[beam_index].next_frame_at = None;
+        if self.beams[beam_index].pending.is_empty() {
+            return Ok(());
+        }
+        let report = self.beams[beam_index].scheduler.schedule_frame()?;
+        let beam = &self.scenario.access_beams[beam_index];
+        let mut used_bytes = 0u64;
+        for grant in report.grants {
+            let packet_index: usize = grant.packet_id.parse()
+                .map_err(|_| "invalid grant packet ID")?;
+            let (enqueued_ns, link_index) = self.beams[beam_index].pending
+                .remove(&packet_index).ok_or("missing granted packet")?;
+            if !self.links[link_index].effective_up() {
+                self.drop_packet(packet_index, at_ns, "beam_link_lost");
+                continue;
+            }
+            let start_offset = u64::try_from(
+                (u128::from(used_bytes) * 8_000_000_000u128)
+                    .div_ceil(u128::from(beam.capacity_bps)),
+            ).map_err(|_| "beam start offset overflow")?;
+            used_bytes += grant.wire_bytes;
+            let end_offset = u64::try_from(
+                (u128::from(used_bytes) * 8_000_000_000u128)
+                    .div_ceil(u128::from(beam.capacity_bps)),
+            ).map_err(|_| "beam end offset overflow")?;
+            let start_ns = at_ns.checked_add(start_offset)
+                .ok_or("beam start time overflow")?;
+            let completed_ns = at_ns.checked_add(end_offset)
+                .ok_or("beam completion time overflow")?;
+            let link = &self.scenario.links[link_index];
+            let state = &self.links[link_index];
+            let propagation_ns = state.active_contact.and_then(|index| {
+                let samples = &self.scenario.contacts[index].propagation_delay_samples;
+                (!samples.is_empty()).then(|| interpolated_delay(samples, completed_ns))
+            }).unwrap_or_else(|| state.contact_delay_ns.unwrap_or(link.propagation_delay_ns));
+            let arrived_ns = completed_ns.checked_add(propagation_ns)
+                .and_then(|t| t.checked_add(link.processing_delay_ns))
+                .ok_or("beam packet arrival time overflow")?;
+            if arrived_ns >= self.scenario.duration_ns {
+                self.drop_packet(packet_index, at_ns, "simulation_horizon");
+                continue;
+            }
+            self.packets[packet_index].trace.hops.push(HopTrace {
+                link_id: link.id.clone(),
+                from: link.from.clone(),
+                to: link.to.clone(),
+                enqueued_ns,
+                transmit_started_ns: start_ns,
+                transmit_completed_ns: completed_ns,
+                arrived_ns,
+                queue_delay_ns: start_ns - enqueued_ns,
+                serialization_ns: completed_ns - start_ns,
+                propagation_ns,
+                processing_ns: link.processing_delay_ns,
+                route_revision: self.route_revision,
+            });
+            events.schedule(arrived_ns, 20, Event::Arrive {
+                packet: packet_index,
+                node: link.to.clone(),
+            })?;
+        }
+        if !self.beams[beam_index].pending.is_empty() {
+            if let Some(next) = at_ns.checked_add(beam.frame_duration_ns) {
+                self.ensure_beam_frame(beam_index, next, events)?;
+            }
+        }
+        Ok(())
+    }
+
     fn contact_transition(
         &mut self,
         at_ns: u64,
@@ -342,6 +527,9 @@ impl<'a> Runtime<'a> {
         } else {
             None
         };
+        if !self.links[link_index].effective_up() {
+            self.discard_beam_link(link_index, at_ns)?;
+        }
         self.control_events.push(ControlEvent {
             at_ns,
             kind: if opened {
@@ -374,6 +562,9 @@ impl<'a> Runtime<'a> {
             .position(|link| link.id == fault.link_id)
             .ok_or_else(|| format!("unknown link: {}", fault.link_id))?;
         self.links[index].admin_up = matches!(fault.action, LinkAction::Up);
+        if !self.links[index].effective_up() {
+            self.discard_beam_link(index, at_ns)?;
+        }
         self.control_events.push(ControlEvent {
             at_ns,
             kind: if self.links[index].admin_up {
@@ -446,7 +637,16 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
                 state.contact_transition(scheduled.at_ns, index, false, &mut scheduler)?;
             }
             Event::InstallRoutes => state.install_routes(scheduled.at_ns),
+            Event::BeamFrame { beam } => {
+                state.beam_frame(scheduled.at_ns, beam, &mut scheduler)?;
+            }
         }
+    }
+    // Queued grants beyond the scenario horizon cannot be delivered.
+    let remaining: Vec<usize> = state.beams.iter()
+        .flat_map(|beam| beam.pending.keys().copied()).collect();
+    for packet_index in remaining {
+        state.drop_packet(packet_index, scenario.duration_ns, "simulation_horizon");
     }
     let packets: Vec<PacketTrace> = state.packets.into_iter().map(|p| p.trace).collect();
     let delivered = packets
@@ -687,6 +887,86 @@ mod tests {
             .packets
             .iter()
             .any(|p| p.hops.iter().any(|h| h.link_id == "user-ue-c")));
+    }
+
+    fn two_terminal_beam() -> Scenario {
+        use ntarlink_contracts::{AccessBeam, BeamBearer, Flow, Link, Node, NodeKind};
+        let mut scenario = basic();
+        scenario.nodes.push(Node {
+            id: "ue-b".into(), kind: NodeKind::Terminal,
+            latitude_deg: None, longitude_deg: None,
+        });
+        scenario.links.push(Link {
+            id: "user-ue-b".into(), from: "ue-b".into(), to: "sat-a".into(),
+            kind: LinkKind::UserRf, capacity_bps: 100_000_000,
+            propagation_delay_ns: 2_000_000, processing_delay_ns: 300_000,
+            queue_limit_bytes: 4800, up: true,
+        });
+        scenario.flows = vec![
+            Flow {
+                id: "a".into(), source: "ue-a".into(), destination: "internet".into(),
+                packet_size_bytes: 1200, packet_count: 4, start_ns: 0, interval_ns: 1,
+            },
+            Flow {
+                id: "b".into(), source: "ue-b".into(), destination: "internet".into(),
+                packet_size_bytes: 1200, packet_count: 4, start_ns: 0, interval_ns: 1,
+            },
+        ];
+        scenario.access_beams.push(AccessBeam {
+            id: "beam-sat-a-uplink".into(), capacity_bps: 976_000,
+            frame_duration_ns: 10_000_000, quantum_bytes: 1220,
+            packet_overhead_bytes: 20, queue_limit_bytes: 20_000,
+            bearers: vec![
+                BeamBearer { terminal_id: "ue-a".into(), link_id: "user-ue-a".into(), weight: 1 },
+                BeamBearer { terminal_id: "ue-b".into(), link_id: "user-ue-b".into(), weight: 1 },
+            ],
+        });
+        scenario
+    }
+
+    #[test]
+    fn shared_beam_grants_bound_two_terminal_packet_throughput() {
+        let scenario = two_terminal_beam();
+        let report = run(&scenario).unwrap();
+        assert_eq!((report.injected, report.delivered, report.dropped), (8, 8, 0));
+        let mut hops: Vec<_> = report.packets.iter()
+            .map(|p| p.hops.iter().find(|h| h.link_id.starts_with("user-")).unwrap())
+            .collect();
+        hops.sort_by_key(|h| h.transmit_started_ns);
+        assert!(hops.windows(2).all(|w|
+            w[1].transmit_started_ns - w[0].transmit_started_ns >= 10_000_000
+        ));
+        assert_eq!(hops.last().unwrap().transmit_started_ns, 70_000_000);
+        assert!(hops.iter().any(|h| h.queue_delay_ns > 0));
+        assert_eq!(serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap());
+    }
+
+    #[test]
+    fn contact_close_cancels_only_ungranted_bearer_packets() {
+        let mut scenario = two_terminal_beam();
+        scenario.contacts.push(ntarlink_contracts::ContactWindow {
+            link_id: "user-ue-a".into(), start_ns: 0, end_ns: 25_000_000,
+            propagation_delay_ns: Some(2_000_000), propagation_delay_samples: vec![],
+        });
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert!(report.packets.iter().any(|p| p.drop_reason.as_deref() == Some("beam_link_lost")));
+        assert!(report.packets.iter().filter(|p| p.flow_id == "b")
+            .all(|p| p.status == PacketStatus::Delivered));
+        assert!(report.packets.iter().filter(|p| p.flow_id == "a")
+            .any(|p| p.status == PacketStatus::Delivered));
+    }
+
+    #[test]
+    fn shared_beam_queue_limit_drops_excess_without_leaking_packets() {
+        let mut scenario = two_terminal_beam();
+        scenario.access_beams[0].queue_limit_bytes = 2440;
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert!(report.packets.iter().any(|p|
+            p.drop_reason.as_deref() == Some("beam_queue_overflow")));
+        assert!(report.delivered > 0);
     }
 
     #[test]
