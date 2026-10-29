@@ -20,3 +20,11 @@ ntarlink aims to model a complete, reproducible, Starlink-like LEO broadband sat
 - Every feature requires contract tests, cross-subsystem acceptance evidence, observability, failure cases and performance notes.
 - Do not claim work completed unless compiled, tested or externally verified. A design file is not proof that its subsystem exists.
 - External dependencies require pinned versions, transitive license review and golden-test comparison before integration.
+
+## GitHub Pages showcase
+
+- The static console at `applications/console/pages/index.html` is a deliberately lightweight, **mock-data** product prototype. The user-facing page must label all telemetry, network events, maps and illustrative metrics as synthetic.
+- Its 16 subsystem entries must correspond exactly to `docs/subsystems`, with links to the real detailed engineering specifications.
+- Keep the GitHub Pages entrypoint self-contained and project-path-safe (`/ntarlink/`), with zero secrets or private data in the published artifact.
+- Do not represent the Pages demonstration as a live simulator; actual Rust/Python execution remains separate.
+- Update `scripts/check_pages_site.py` when adding subsystem or UI capabilities and verify the deployment workflow `.github/workflows/pages.yml`.
