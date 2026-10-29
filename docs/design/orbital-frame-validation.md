@@ -36,6 +36,50 @@ the physical claims. A future acceptance milestone must pin external EOP
 tables and an independent Vallado/Orekit or equivalent TEME/ITRF reference
 vector, with explicit UT1, polar motion and leap-second provenance.
 
+## Independent 2004 TEME/PEF/ITRF reference vectors
+
+The additional regression in `systems/orbital/python/tests/test_vallado_frame_reference.py`
+uses an **external** 2004-04-06 07:51:28.386009 UTC low-Earth-orbit
+position example from Vallado, Seago and Seidelmann (AAS-06-134), as
+reproduced by [Orekit 13.0's ITRF/GTOD reference test](https://github.com/CS-SI/Orekit/blob/13.0/src/test/java/org/orekit/frames/ITRFEquinoxProviderTest.java)
+and [Astropy 7.1.1's TEME/ITRS reference test](https://github.com/astropy/astropy/blob/v7.1.1/astropy/coordinates/tests/test_intermediate_transformations.py).
+
+The pinned reference EOP values are **UT1−UTC = −0.4399619 seconds**,
+**x polar motion = −0.140682 arcseconds**, and
+**y polar motion = +0.333309 arcseconds**. The example uses the historical
+Vallado GMST82 and IAU-1980 polar-motion convention, not an IAU-2006
+reduction or an assumed zero-EOP UTC approximation. All vectors are in
+kilometers at the same epoch:
+
+| Frame | X | Y | Z |
+| --- | ---: | ---: | ---: |
+| TEME | 5094.18016210 | 6127.64465050 | 6380.34453270 |
+| PEF (GTOD) | -1033.4750313 | 7901.3055856 | 6380.3445328 |
+| ITRF | -1033.4793830 | 7901.2952754 | 6380.3565958 |
+
+A **test-only, independent** GMST82 rotation and polar-motion matrix
+validate the published PEF and ITRF positions. The pinned
+`skyfield==1.55` TEME-to-ITRF helper is independently compared with the
+external ITRF vector, using the *same explicit EOP inputs*. Each
+three-dimensional position error must be less than **0.03 meters**.
+This tolerance includes the rounding of published reference vectors and
+the few-microsecond loss in a double-precision Julian-date calculation;
+it is a regression tolerance, **not** a claim of centimeter-level
+TLE orbit accuracy. Negative controls verify that replacing UT1 with UTC
+produces more than 100 meters of error and omitting polar motion more
+than 10 meters for this vector.
+
+This validates a reference transformation with **supplied** EOP and
+independent published vectors. The production `build_sgp4_provider()`
+still uses Skyfield's offline built-in timescale, **does not ingest or pin
+an external IERS EOP series**, and is not thereby independently calibrated
+for the 2014 ISS scenario. No production propagation or packet behavior
+changes. A separate milestone must ingest versioned IERS EOP data,
+define interpolation and out-of-range behavior, compare the actual
+production provider with independent vectors at several epochs, and
+document leap-second/UT1 provenance. Velocity/LOD and full
+precession-nutation validation remain out of scope.
+
 ## Trailing partial sample interval
 
 The contact predictor now samples the last representable time
