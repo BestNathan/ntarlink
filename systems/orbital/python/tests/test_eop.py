@@ -19,10 +19,10 @@ from ntarlink_orbital.contacts import build_sgp4_provider
 from ntarlink_orbital.eop import MJD_EPOCH, build_timescale
 
 
-def finals_row(day, xp, yp, dut1):
+def finals_row(day, xp, yp, dut1, polar_flag="I", ut1_flag="I"):
     mjd = (day - MJD_EPOCH).days
-    return (f"      {mjd:9.2f} I {xp:9.6f}{' ' * 9} "
-            f"{yp:9.6f}{' ' * 9}  I{dut1:10.7f}\n")
+    return (f"      {mjd:9.2f} {polar_flag} {xp:9.6f}{' ' * 9} "
+            f"{yp:9.6f}{' ' * 9}  {ut1_flag}{dut1:10.7f}\n")
 
 
 class PinnedEopTests(unittest.TestCase):
@@ -112,6 +112,42 @@ class PinnedEopTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exceeds the last"):
             self.timescale(self.config(until=self.day + timedelta(days=2)))
 
+    def test_predictions_are_rejected_only_when_used_for_interpolation(self):
+        # Forecasts elsewhere in a full IERS archive need not invalidate
+        # an experiment whose entire interpolation window is observed.
+        outside = [(*self.rows[0], "P", "I"), self.rows[1], self.rows[2]]
+        _, info = self.timescale(self.config(outside))
+        self.assertEqual(info["prediction_policy"], "reject")
+        self.assertEqual(info["predicted_source_days"], 1)
+        self.assertEqual(info["predicted_interpolation_days"], 0)
+
+        # Both independent IERS flags matter, including the following day
+        # needed to interpolate a sub-day simulation.
+        for polar, ut1 in (("P", "I"), ("I", "P")):
+            with self.subTest(polar=polar, ut1=ut1):
+                rows = [self.rows[0], self.rows[1],
+                        (*self.rows[2], polar, ut1)]
+                config = self.config(rows)
+                with self.assertRaisesRegex(ValueError, "predicted EOP"):
+                    self.timescale(config)
+                config["allow_predictions"] = True
+                ts, info = self.timescale(config)
+                self.assertTrue(math.isfinite(ts.from_datetime(self.day).dut1))
+                self.assertEqual(info["prediction_policy"], "allow")
+                self.assertEqual(info["predicted_interpolation_days"], 1)
+
+    def test_quality_flags_and_prediction_policy_fail_closed(self):
+        rows = [self.rows[0], (*self.rows[1], "X", "I"), self.rows[2]]
+        with self.assertRaisesRegex(ValueError, "quality flags"):
+            self.timescale(self.config(rows))
+        rows = [self.rows[0], (*self.rows[1], "I", " "), self.rows[2]]
+        with self.assertRaisesRegex(ValueError, "quality flags"):
+            self.timescale(self.config(rows))
+        config = self.config()
+        config["allow_predictions"] = "false"
+        with self.assertRaisesRegex(ValueError, "must be boolean"):
+            self.timescale(config)
+
     def test_sgp4_provider_uses_custom_timescale_and_records_provenance(self):
         root = Path(__file__).resolve().parents[4]
         config = json.loads((root / "scenarios/orbit-sources.sample.json").read_text())
@@ -125,6 +161,7 @@ class PinnedEopTests(unittest.TestCase):
             1_000_000_000,
         )
         self.assertEqual(custom.earth_orientation["mode"], "pinned_iers_finals2000a")
+        self.assertEqual(custom.earth_orientation["prediction_policy"], "reject")
         self.assertTrue(all(math.isfinite(x) for x in custom("iss-demo", 0)))
         self.assertGreater(math.dist(custom("iss-demo", 0), baseline("iss-demo", 0)), 0.1)
         self.assertEqual(baseline.earth_orientation["mode"], "skyfield_builtin")
