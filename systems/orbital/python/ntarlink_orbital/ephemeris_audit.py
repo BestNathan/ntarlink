@@ -117,7 +117,9 @@ def audit_interpolation(document: dict, position, max_midpoint_error_m: float,
                         "rms_probe_error_m": math.sqrt(sat_probe_sq / len(probe_errors))})
     midpoint_count = sum(x["midpoint_count"] for x in results)
     probe_count = midpoint_count * probes_per_interval
-    return {"schema_version": 1, "model": "held-out linear interpolation interior probe audit",
+    return {"schema_version": 1, "model": ("held-out linear interpolation midpoint audit"
+                      if probes_per_interval == 1
+                      else "held-out linear interpolation interior probe audit"),
             "frame": "ITRS", "error_unit": "m", "sample_step_ns": step,
             "probes_per_interval": probes_per_interval, "probe_count": probe_count,
             "max_probe_error_m": probe_max,
