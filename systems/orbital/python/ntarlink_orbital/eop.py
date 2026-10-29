@@ -106,7 +106,15 @@ def build_timescale(earth_orientation: dict | None, epoch: datetime,
     if not isinstance(allow_predictions, bool):
         raise ValueError("earth_orientation allow_predictions must be boolean")
     valid_until = _utc(earth_orientation.get("valid_until_utc"))
-    end = epoch + timedelta(microseconds=(duration_ns - 1) // 1000)
+    # The simulation interval is half-open in nanoseconds. Round its last
+    # included instant UP to the next representable microsecond, never down:
+    # truncation could admit an out-of-coverage or expired final nanosecond.
+    # Skyfield's datetime interface cannot represent submicrosecond instants.
+    last_offset_us = (duration_ns - 1 + 999) // 1000
+    try:
+        end = epoch + timedelta(microseconds=last_offset_us)
+    except OverflowError as exc:
+        raise ValueError("EOP simulation interval exceeds datetime range") from exc
     if epoch > valid_until or end > valid_until:
         raise ValueError("EOP validity expired before the simulation ends")
 
