@@ -32,7 +32,9 @@ as a static loss, beam steering, spectrum allocation, MODCOD/BLER curve,
 carrier recovery, RF waveform, or MAC scheduler. Existing scenario link
 capacity is **not changed** by these numbers. A contact is geometric
 potential, not an acquired link. Results are midpoint snapshots, not
-continuous time-series or calibrated Starlink performance.
+continuous time-series or calibrated Starlink performance. Computation scales
+linearly with contact count, with O(1) arithmetic per sample; the adapter
+never re-runs SGP4 or performs per-packet RF calculations.
 
 See [SYS-05 design](../../docs/subsystems/05-access-network.md) and
 [SYS-01 orbital contacts](../../scenarios/ORBITAL-README.md).
