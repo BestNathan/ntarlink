@@ -272,16 +272,19 @@ impl Scenario {
             if beam.id.trim().is_empty() || !beam_ids.insert(&beam.id) {
                 return Err("access beam IDs must be nonempty and unique".into());
             }
-            if beam.capacity_bps == 0 || beam.frame_duration_ns == 0
+            if beam.capacity_bps == 0
+                || beam.frame_duration_ns == 0
                 || beam.frame_duration_ns > self.duration_ns
-                || beam.quantum_bytes == 0 || beam.queue_limit_bytes == 0
+                || beam.quantum_bytes == 0
+                || beam.queue_limit_bytes == 0
                 || beam.bearers.is_empty()
             {
                 return Err(format!("invalid access beam configuration: {}", beam.id));
             }
-            let frame_bytes = u128::from(beam.capacity_bps)
-                * u128::from(beam.frame_duration_ns) / 8_000_000_000u128;
-            if frame_bytes == 0 || frame_bytes > u128::from(u64::MAX)
+            let frame_bytes = u128::from(beam.capacity_bps) * u128::from(beam.frame_duration_ns)
+                / 8_000_000_000u128;
+            if frame_bytes == 0
+                || frame_bytes > u128::from(u64::MAX)
                 || frame_bytes <= u128::from(beam.packet_overhead_bytes)
             {
                 return Err(format!("invalid access beam frame capacity: {}", beam.id));
@@ -289,22 +292,36 @@ impl Scenario {
             let mut terminal_ids = HashSet::new();
             let mut satellite: Option<&str> = None;
             for bearer in &beam.bearers {
-                if bearer.weight == 0 || bearer.terminal_id.trim().is_empty()
+                if bearer.weight == 0
+                    || bearer.terminal_id.trim().is_empty()
                     || !terminal_ids.insert(&bearer.terminal_id)
                     || !bearer_link_ids.insert(&bearer.link_id)
                 {
-                    return Err(format!("invalid or duplicate access bearer: {}", bearer.link_id));
+                    return Err(format!(
+                        "invalid or duplicate access bearer: {}",
+                        bearer.link_id
+                    ));
                 }
-                let link = self.links.iter().find(|l| l.id == bearer.link_id)
+                let link = self
+                    .links
+                    .iter()
+                    .find(|l| l.id == bearer.link_id)
                     .ok_or_else(|| format!("unknown access bearer link: {}", bearer.link_id))?;
-                if link.kind != LinkKind::UserRf || link.from != bearer.terminal_id
+                if link.kind != LinkKind::UserRf
+                    || link.from != bearer.terminal_id
                     || find_kind(&link.from) != Some(&NodeKind::Terminal)
                     || find_kind(&link.to) != Some(&NodeKind::Satellite)
                 {
-                    return Err(format!("access bearer must be a terminal uplink: {}", link.id));
+                    return Err(format!(
+                        "access bearer must be a terminal uplink: {}",
+                        link.id
+                    ));
                 }
                 if satellite.is_some_and(|id| id != link.to) {
-                    return Err(format!("access beam spans multiple satellites: {}", beam.id));
+                    return Err(format!(
+                        "access beam spans multiple satellites: {}",
+                        beam.id
+                    ));
                 }
                 satellite = Some(&link.to);
             }
@@ -531,7 +548,10 @@ mod tests {
         s.access_beams.push(s.access_beams[0].clone());
         assert!(s.validate().unwrap_err().contains("beam IDs"));
         s.access_beams[1].id = "beam-b".into();
-        assert!(s.validate().unwrap_err().contains("duplicate access bearer"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("duplicate access bearer"));
         s.access_beams.pop();
         s.access_beams[0].capacity_bps = 1;
         assert!(s.validate().unwrap_err().contains("frame capacity"));
