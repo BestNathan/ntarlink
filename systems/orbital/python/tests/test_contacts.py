@@ -92,6 +92,28 @@ class OrbitalContactTests(unittest.TestCase):
         self.assertLess(window["start_ns"], window["end_ns"])
         self.assertGreater(window["propagation_delay_ns"], 0)
 
+    def test_refined_contact_in_final_partial_interval(self):
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 250,
+            "nodes": [
+                {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+                {"id": "sat", "kind": "satellite"},
+            ],
+            "links": [{"id": "access", "kind": "user_rf", "from": "ue", "to": "sat"}],
+        }
+        config = {
+            "step_ns": 100,
+            "refine_tolerance_ns": 1,
+            "satellites": [{"id": "sat"}],
+        }
+        position = lambda _sat, t: ((7e6, 0, 0) if t >= 225 else (-7e6, 0, 0))
+        windows = generate_contact_windows(scenario, config, position)
+        self.assertEqual(
+            [(w["start_ns"], w["end_ns"]) for w in windows],
+            [(225, 250)],
+        )
+
     def test_refinement_configuration_is_validated(self):
         scenario = {
             "schema_version": 1,
