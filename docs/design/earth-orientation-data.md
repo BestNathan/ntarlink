@@ -24,7 +24,8 @@ In the orbit-source JSON, add:
     "format": "iers-finals2000a",
     "path": "data/iers/finals2000A.all",
     "sha256": "<64 lowercase hexadecimal characters>",
-    "valid_until_utc": "2014-01-24T00:00:00Z"
+    "valid_until_utc": "2014-01-24T00:00:00Z",
+    "allow_predictions": false
   }
 }
 ```
@@ -42,14 +43,34 @@ simulation coverage and explicit validity deadline. It **fails closed**
 outside that coverage; no silent extrapolation or auto-refresh is allowed.
 The deadline cannot exceed the last tabulated UTC epoch.
 
+### Observation/prediction quality policy
+
+The IERS finals2000A polar-motion and UT1 quality columns (zero-based byte
+offsets 16 and 57) independently indicate `I` (observed/rapid-service)
+or `P` (predicted). Skyfield's pinned numeric parser does not return these
+flags, so ntarlink validates them against every parsed daily record.
+Missing, unrecognized or duplicate quality rows fail closed.
+
+The default `allow_predictions: false` rejects either `P` flag in the
+UTC daily records bracketing the simulation interval (including the following
+day used for linear interpolation). Predictions elsewhere in a larger source
+archive are permitted but counted. An operator can explicitly set
+`allow_predictions: true` for a forecast experiment; this is a fidelity
+choice, not evidence that predicted EOP is equivalent to observations.
+
+The manifest records `prediction_policy`, `predicted_source_days` and
+`predicted_interpolation_days`. Both the EOP source SHA-256 and the
+orbit-source JSON SHA-256 still bind the run to its exact inputs.
+The flags are **not** cryptographic evidence of IERS authenticity; the
+operator must still archive and authenticate the upstream release.
+
 The source contains DUT1 (UT1−UTC, seconds) and polar motion xp/yp
 (arcseconds). The pinned Skyfield 1.55 **built-in leap-second table** supplies
 TAI−UTC. For each daily UTC record, the model computes
 `TT−UT1 = (TAI−UTC) + 32.184 s − DUT1`, builds a Skyfield timescale and
 installs the polar-motion table. Skyfield interpolates at simulation times.
 This implementation does not independently ingest or certify future leap
-seconds, classify IERS predicted versus observed rows, or guarantee EOP
-accuracy from a user-supplied file. The validity deadline is an operator
+seconds or guarantee EOP accuracy from a user-supplied file. The validity deadline is an operator
 assertion, not an IERS authenticity certificate.
 
 ## Provenance and verification
@@ -70,7 +91,8 @@ python -m ntarlink_orbital.ephemeris scenarios/orbital-pass.json \
 Tests use **synthetic** finals2000A-formatted daily tables, with the central
 2004 EOP values taken from the published Vallado reference. They verify
 DUT1/polar interpolation, a reference TEME→ITRF vector, production-provider
-opt-in behavior, provenance and invalid-data rejection. These fixtures are
+opt-in behavior, IERS quality-flag prediction gating, provenance and
+invalid-data rejection. These fixtures are
 not official IERS snapshots. The independent single-epoch Vallado test
 remains in `test_vallado_frame_reference.py`.
 
