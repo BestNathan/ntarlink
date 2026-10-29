@@ -47,8 +47,8 @@ positions and input/output digests.
 
 Memory and runtime grow linearly with the number of satellite-time pairs.
 The 500,000-pair cap bounds accidental large exports, but is **not** a
-measured constellation-scale performance benchmark. There is no streaming
-or columnar export, **continuous** interpolation error bound,
+measured constellation-scale performance benchmark. A separate [bounded JSONL streaming exporter](orbital-ephemeris-stream.md)
+now avoids retaining all samples in memory. There is no columnar export, **continuous** interpolation error bound,
 velocity/attitude data, independent EOP/UT1/polar-motion validation or
 light-time correction. The separate [midpoint interpolation audit](orbital-ephemeris-audit.md)
 measures held-out, same-provider linear interpolation error but does not
