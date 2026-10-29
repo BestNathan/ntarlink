@@ -66,7 +66,7 @@ nor independently validates orbit truth or EOP. See
 
 The optional `ntarlink_orbital.ephemeris_stream` CLI emits a versioned,
 frame-tagged, satellite-major JSONL artifact without retaining all position
-samples in memory. It shares the original exporter\'s UTC grid validation,
+samples in memory. It shares the original exporter's UTC grid validation,
 500,000 satellite-time-pair limit and pinned SGP4/EOP provider. Each stream
 has a header plus one record per sample, a 128 MB byte limit, atomic
 replacement after successful validation, and a companion SHA-256 provenance
