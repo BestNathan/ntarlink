@@ -71,10 +71,10 @@ derived from bitrate and frame duration, includes fixed per-packet wire
 overhead, and rejects packets larger than one frame or exceeding the shared
 queue budget. Tests cover two-terminal weighted service, finite capacity,
 eventual service for a larger packet and reproducible terminal ordering.
-This is a scheduling primitive only: it has **not** been integrated with
-the packet engine or linked to the SYS-01 contact schedule, physical
-SINR/MODCOD, terminal attach state or service-core authorization. Integration
-requires an explicit resource/bearer contract and packet-grant event bridge.
+The standalone scheduler is now consumed by an **opt-in** packet-runtime
+bridge with explicit beam/bearer configuration and contact-loss cancellation.
+Physical SINR/MODCOD, terminal attach state and service-core authorization
+remain unimplemented.
 
 ## Required verification
 
