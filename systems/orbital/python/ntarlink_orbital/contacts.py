@@ -226,7 +226,7 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
         # The scenario end is an exclusive cutoff, not a geometric sample.
         # A final partial interval must still be inspected to catch a contact
         # that starts or ends between the last coarse sample and duration.
-        if previous_ns < duration_ns - 1:
+        if tolerance_ns < step_ns and previous_ns < duration_ns - 1:
             final_ns = duration_ns - 1
             final_visible = visible_at(final_ns)
             if final_visible != previous_visible:
@@ -276,8 +276,14 @@ def main(argv=None):
         "model": "SGP4 with Skyfield TEME-to-ITRS and WGS84 sampled geometry",
         "epoch_utc": config["epoch_utc"],
         "step_ns": config["step_ns"],
-        "contact_boundary_resolution_ns": config.get("refine_tolerance_ns", config["step_ns"]),
-        "contact_boundary_method": "sampled" if config.get("refine_tolerance_ns", config["step_ns"]) == config["step_ns"] else "bracketed_bisection",
+        "contact_boundary_resolution_ns": config.get(
+            "refine_tolerance_ns", config["step_ns"]
+        ),
+        "contact_boundary_method": (
+            "sampled"
+            if config.get("refine_tolerance_ns", config["step_ns"]) == config["step_ns"]
+            else "bracketed_bisection"
+        ),
         "sampling_step_ns": config["step_ns"],
         "contact_detection_limit": "Multiple visibility transitions within one sampling interval may be missed",
         "propagation_model": "vacuum geometric delay sampled per contact midpoint",
