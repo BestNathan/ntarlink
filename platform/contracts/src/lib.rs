@@ -104,6 +104,28 @@ pub struct ContactWindow {
     pub propagation_delay_samples: Vec<PropagationDelaySample>,
 }
 
+/// A terminal's directional uplink radio bearer on a shared beam.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeamBearer {
+    pub terminal_id: String,
+    pub link_id: String,
+    pub weight: u32,
+}
+
+/// Opt-in finite shared MAC resource for multiple user RF uplinks.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccessBeam {
+    pub id: String,
+    pub capacity_bps: u64,
+    pub frame_duration_ns: u64,
+    pub quantum_bytes: u64,
+    pub packet_overhead_bytes: u64,
+    pub queue_limit_bytes: u64,
+    pub bearers: Vec<BeamBearer>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContactMode {
@@ -129,6 +151,9 @@ pub struct Scenario {
     /// Optional physical visibility/contact schedule. Empty means static-link mode.
     #[serde(default)]
     pub contacts: Vec<ContactWindow>,
+    /// Optional uplink beam-frame MAC; links not listed retain legacy packet transport.
+    #[serde(default)]
+    pub access_beams: Vec<AccessBeam>,
 }
 
 impl Scenario {
@@ -236,6 +261,52 @@ impl Scenario {
             packet_total += u64::from(flow.packet_count);
             if packet_total > 1_000_000 {
                 return Err("packet limit exceeded (1,000,000)".into());
+            }
+        }
+        if self.access_beams.len() > 10_000 {
+            return Err("access beam limit exceeded".into());
+        }
+        let mut beam_ids = HashSet::new();
+        let mut bearer_link_ids = HashSet::new();
+        for beam in &self.access_beams {
+            if beam.id.trim().is_empty() || !beam_ids.insert(&beam.id) {
+                return Err("access beam IDs must be nonempty and unique".into());
+            }
+            if beam.capacity_bps == 0 || beam.frame_duration_ns == 0
+                || beam.frame_duration_ns > self.duration_ns
+                || beam.quantum_bytes == 0 || beam.queue_limit_bytes == 0
+                || beam.bearers.is_empty()
+            {
+                return Err(format!("invalid access beam configuration: {}", beam.id));
+            }
+            let frame_bytes = u128::from(beam.capacity_bps)
+                * u128::from(beam.frame_duration_ns) / 8_000_000_000u128;
+            if frame_bytes == 0 || frame_bytes > u128::from(u64::MAX)
+                || frame_bytes <= u128::from(beam.packet_overhead_bytes)
+            {
+                return Err(format!("invalid access beam frame capacity: {}", beam.id));
+            }
+            let mut terminal_ids = HashSet::new();
+            let mut satellite: Option<&str> = None;
+            for bearer in &beam.bearers {
+                if bearer.weight == 0 || bearer.terminal_id.trim().is_empty()
+                    || !terminal_ids.insert(&bearer.terminal_id)
+                    || !bearer_link_ids.insert(&bearer.link_id)
+                {
+                    return Err(format!("invalid or duplicate access bearer: {}", bearer.link_id));
+                }
+                let link = self.links.iter().find(|l| l.id == bearer.link_id)
+                    .ok_or_else(|| format!("unknown access bearer link: {}", bearer.link_id))?;
+                if link.kind != LinkKind::UserRf || link.from != bearer.terminal_id
+                    || find_kind(&link.from) != Some(&NodeKind::Terminal)
+                    || find_kind(&link.to) != Some(&NodeKind::Satellite)
+                {
+                    return Err(format!("access bearer must be a terminal uplink: {}", link.id));
+                }
+                if satellite.is_some_and(|id| id != link.to) {
+                    return Err(format!("access beam spans multiple satellites: {}", beam.id));
+                }
+                satellite = Some(&link.to);
             }
         }
         for fault in &self.faults {
@@ -434,6 +505,36 @@ mod tests {
         s.contacts[0].propagation_delay_samples[1].delay_ns = 2_000_000;
         s.contacts[0].propagation_delay_ns = None;
         assert!(s.validate().unwrap_err().contains("requires midpoint"));
+    }
+
+    #[test]
+    fn access_beams_validate_direction_capacity_and_shared_resources() {
+        let mut s = Scenario::from_json(&fixture()).unwrap();
+        let beam = AccessBeam {
+            id: "beam-a".into(),
+            capacity_bps: 80_000,
+            frame_duration_ns: 10_000_000,
+            quantum_bytes: 100,
+            packet_overhead_bytes: 20,
+            queue_limit_bytes: 10_000,
+            bearers: vec![BeamBearer {
+                terminal_id: "ue-a".into(),
+                link_id: "user-ue-a".into(),
+                weight: 1,
+            }],
+        };
+        s.access_beams.push(beam);
+        assert!(s.validate().is_ok());
+        s.access_beams[0].bearers[0].link_id = "feeder-b-gw".into();
+        assert!(s.validate().unwrap_err().contains("terminal uplink"));
+        s.access_beams[0].bearers[0].link_id = "user-ue-a".into();
+        s.access_beams.push(s.access_beams[0].clone());
+        assert!(s.validate().unwrap_err().contains("beam IDs"));
+        s.access_beams[1].id = "beam-b".into();
+        assert!(s.validate().unwrap_err().contains("duplicate access bearer"));
+        s.access_beams.pop();
+        s.access_beams[0].capacity_bps = 1;
+        assert!(s.validate().unwrap_err().contains("frame capacity"));
     }
 
     #[test]
