@@ -228,7 +228,7 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
         # The scenario end is an exclusive cutoff, not a geometric sample.
         # A final partial interval must still be inspected to catch a contact
         # that starts or ends between the last coarse sample and duration.
-        if tolerance_ns < step_ns and previous_ns < duration_ns - 1:
+        if previous_ns < duration_ns - 1:
             final_ns = duration_ns - 1
             final_visible = visible_at(final_ns)
             if final_visible != previous_visible:
