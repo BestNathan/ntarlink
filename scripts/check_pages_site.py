@@ -24,7 +24,7 @@ def main() -> None:
         if marker not in html:
             raise AssertionError(f"Missing showcase feature: {marker}")
 
-    slugs = re.findall(r'"(\\d{2}-[a-z0-9-]+)"\\]', html)
+    slugs = re.findall(r'"(\d{2}-[a-z0-9-]+)"\]', html)
     slugs = list(dict.fromkeys(slugs))
     if len(slugs) != 16:
         raise AssertionError(f"Expected 16 subsystem specs, got {len(slugs)}: {slugs}")
