@@ -1,0 +1,61 @@
+"""Regression for the trailing partial coarse-sampling interval.
+
+Without a final visibility sample, default (non-refined) contact generation
+silently missed a transition in (last step, scenario end).
+"""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ntarlink_orbital.contacts import generate_contact_windows
+
+
+class TrailingIntervalTests(unittest.TestCase):
+    def setUp(self):
+        self.scenario = {
+            "schema_version": 1,
+            "duration_ns": 250,
+            "nodes": [
+                {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+                {"id": "sat", "kind": "satellite"},
+            ],
+            "links": [{"id": "access", "kind": "user_rf", "from": "ue", "to": "sat"}],
+        }
+        self.config = {"step_ns": 100, "satellites": [{"id": "sat"}]}
+
+    def test_default_coarse_sampling_detects_late_rise(self):
+        def position(_satellite_id, t_ns):
+            return (7e6, 0, 0) if t_ns >= 225 else (-7e6, 0, 0)
+
+        windows = generate_contact_windows(self.scenario, self.config, position)
+        self.assertEqual(
+            [(w["start_ns"], w["end_ns"]) for w in windows],
+            [(249, 250)],
+        )
+
+    def test_default_coarse_sampling_detects_late_set(self):
+        def position(_satellite_id, t_ns):
+            return (-7e6, 0, 0) if t_ns >= 225 else (7e6, 0, 0)
+
+        windows = generate_contact_windows(self.scenario, self.config, position)
+        self.assertEqual(
+            [(w["start_ns"], w["end_ns"]) for w in windows],
+            [(0, 249)],
+        )
+
+    def test_refined_sampling_keeps_original_precision(self):
+        self.config["refine_tolerance_ns"] = 1
+
+        def position(_satellite_id, t_ns):
+            return (7e6, 0, 0) if t_ns >= 225 else (-7e6, 0, 0)
+
+        windows = generate_contact_windows(self.scenario, self.config, position)
+        self.assertEqual(
+            [(w["start_ns"], w["end_ns"]) for w in windows],
+            [(225, 250)],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
