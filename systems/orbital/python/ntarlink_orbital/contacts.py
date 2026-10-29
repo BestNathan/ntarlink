@@ -1,8 +1,8 @@
 """Offline SGP4 / WGS84 contact predictor for ntarlink JSON scenarios.
 
 This module produces sampled *geometric* contacts, not acquired RF/optical
-links. Time bounds are half-open and quantized by step_ns. Python never runs
-in the Rust per-packet hot path.
+links. Time bounds are half-open and optionally boundary-refined. Python
+never runs in the Rust per-packet hot path.
 """
 
 from __future__ import annotations
@@ -157,8 +157,9 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
 
     Coarse samples bracket candidate transitions; optional bisection refines
     their boundaries to refine_tolerance_ns. This cannot detect two or more
-    transitions inside a single sample interval. Propagation delay remains
-    fixed at the contact midpoint (not a continuously varying path delay).
+    transitions inside a single sample interval. The midpoint propagation
+    delay is the routing weight; optional time samples allow Rust to interpolate
+    a distinct geometric delay at each packet's transmission completion.
     """
     if scenario.get("schema_version") != 1:
         raise ValueError("scenario schema_version must be 1")
@@ -174,6 +175,13 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
         raise ValueError("refine_tolerance_ns must be within (0, step_ns]")
     if (duration_ns + step_ns - 1) // step_ns > 500_000:
         raise ValueError("orbital sampling budget exceeded (500,000 steps)")
+    delay_step_ns = config.get("propagation_delay_sample_step_ns")
+    if delay_step_ns is not None and (
+        isinstance(delay_step_ns, bool) or not isinstance(delay_step_ns, int)
+        or delay_step_ns <= 0
+    ):
+        raise ValueError("propagation_delay_sample_step_ns must be positive integer nanoseconds")
+    delay_sample_total = 0
     nodes = {node["id"]: node for node in scenario["nodes"]}
     orbital_ids = {sat["id"] for sat in config["satellites"]}
     windows = []
@@ -193,18 +201,41 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
             return link_geometry_at(link, nodes, time_ns, position, config)[0]
 
         def record_window(opened_ns, closed_ns):
+            nonlocal delay_sample_total
             if opened_ns >= closed_ns:
                 return
             midpoint = opened_ns + (closed_ns - opened_ns) // 2
             _, delay_ns = link_geometry_at(link, nodes, midpoint, position, config)
             if delay_ns is None:
                 raise ValueError(f"invalid contact midpoint for {link['id']}")
-            windows.append({
+            window = {
                 "link_id": link["id"],
                 "start_ns": opened_ns,
                 "end_ns": closed_ns,
                 "propagation_delay_ns": delay_ns,
-            })
+            }
+            if delay_step_ns is not None:
+                sample_count = (closed_ns - opened_ns - 1) // delay_step_ns + 1
+                if opened_ns + (sample_count - 1) * delay_step_ns != closed_ns - 1:
+                    sample_count += 1
+                delay_sample_total += sample_count
+                if delay_sample_total > 500_000:
+                    raise ValueError("propagation delay sample budget exceeded (500,000)")
+                sample_times = list(range(opened_ns, closed_ns, delay_step_ns))
+                if sample_times[-1] != closed_ns - 1:
+                    sample_times.append(closed_ns - 1)
+                samples = []
+                for sample_ns in sample_times:
+                    visible, sampled_delay = link_geometry_at(
+                        link, nodes, sample_ns, position, config
+                    )
+                    if not visible or sampled_delay is None:
+                        raise ValueError(
+                            f"propagation delay sample outside contact visibility: {link['id']}"
+                        )
+                    samples.append({"at_ns": sample_ns, "delay_ns": sampled_delay})
+                window["propagation_delay_samples"] = samples
+            windows.append(window)
 
         previous_ns = 0
         previous_visible = visible_at(0)
@@ -353,7 +384,21 @@ def main(argv=None):
         ),
         "sampling_step_ns": config["step_ns"],
         "contact_detection_limit": "Multiple visibility transitions within one sampling interval may be missed",
-        "propagation_model": "vacuum geometric delay sampled per contact midpoint",
+        "propagation_model": (
+            "piecewise linear geometric delay at TX completion, midpoint for route weights"
+            if config.get("propagation_delay_sample_step_ns") is not None
+            else "vacuum geometric delay sampled per contact midpoint"
+        ),
+        "propagation_delay_sampling": {
+            "step_ns": config.get("propagation_delay_sample_step_ns"),
+            "sample_count": sum(
+                len(window.get("propagation_delay_samples", []))
+                for window in result["contacts"]
+            ),
+            "method": "ECEF geometric range / vacuum c, linear interpolation in Rust",
+            "boundary": "first contact instant and last representable instant",
+            "limitations": "not light-time iteration, PHY group delay, or route-weight refresh",
+        },
         "orbit_input_sha256": hashlib.sha256(raw_config).hexdigest(),
         "skyfield_version": version("skyfield"),
         "sgp4_version": version("sgp4"),
