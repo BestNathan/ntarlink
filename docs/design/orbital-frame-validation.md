@@ -47,8 +47,8 @@ refinement test verifies the original bisection result.
 
 Default coarse sampling remains conservative for **detected** transitions:
 a rise opens at the first visible sample, while a set closes at the previous
-known-visible sample unless the last nanosecond before the invisible sample
-is still visible (an exact sample-boundary set). This can omit up to one
+known-visible sample, including when the actual set occurs exactly on a
+coarse sample boundary. This can omit up to one
 coarse sampling interval of valid contact, but does not extend a detected
 setting window into a known-invisible interval. The trailing partial
 interval uses the same rule. A late rise may produce only a short terminal
