@@ -688,6 +688,26 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .collect();
     let mut pointing_rejections = Vec::new();
 
+    // SYS-02 samples are interpreted inside Rust at virtual-time boundaries.
+    // Only effective state edges reach the packet engine; these observations
+    // are never stored as administrative faults in the input scenario.
+    let steering_faults: Vec<Fault> = scenario
+        .optical_steering_samples
+        .iter()
+        .map(|sample| Fault {
+            at_ns: sample.at_ns,
+            link_id: sample.link_id.clone(),
+            action: if sample.from_off_axis_deg <= sample.from_max_off_axis_deg
+                && sample.to_off_axis_deg <= sample.to_max_off_axis_deg
+            {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
+            cause: FaultCause::SampledPointing,
+        })
+        .collect();
+
     // Administrative and sampled-pointing faults are independent state domains.
     // Fold all edges at the same timestamp before evaluating effective availability:
     // a recovery in one domain must never reopen a still-failed other domain.
@@ -699,6 +719,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 .or_default()
                 .push((index, fault));
         }
+    }
+    for (index, fault) in steering_faults.iter().enumerate() {
+        faults_by_link
+            .entry(fault.link_id.as_str())
+            .or_default()
+            .push((scenario.faults.len() + index, fault));
     }
     for faults in faults_by_link.values_mut() {
         faults.sort_by_key(|(index, fault)| (fault.at_ns, *index));
@@ -917,6 +943,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.faults.extend(effective_faults);
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
+    prepared.optical_steering_samples.clear();
     prepared.optical_geometry.clear();
     let mut events: Vec<PatEventTrace> = plan
         .events
@@ -1376,6 +1403,83 @@ mod tests {
                 serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn native_steering_samples_gate_tracking_without_overriding_admin_faults() {
+        use ntarlink_contracts::{Fault, OpticalSteeringSample};
+        let mut scenario = pat_fixture();
+        let sample = OpticalSteeringSample {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            from_off_axis_deg: 10.0,
+            to_off_axis_deg: 10.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        scenario.optical_steering_samples = vec![
+            sample.clone(),
+            OpticalSteeringSample {
+                at_ns: 30_000_000,
+                from_off_axis_deg: 40.0,
+                ..sample.clone()
+            },
+            OpticalSteeringSample {
+                at_ns: 50_000_000,
+                ..sample
+            },
+        ];
+        scenario.faults = vec![
+            Fault {
+                at_ns: 40_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 70_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        scenario.flows[0].packet_count = 18;
+        scenario.flows[0].interval_ns = 10_000_000;
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|e| e.state == "tracking")
+            .map(|e| e.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 90_000_000, 140_000_000]);
+        assert!(report.pat_events.iter().any(|e| {
+            e.at_ns == 30_000_000 && e.state == "lost" && e.reason == Some("sampled_pointing_loss")
+        }));
+        let fault_edges: Vec<_> = report
+            .control_events
+            .iter()
+            .filter(|e| {
+                e.link_id.as_deref() == Some("isl-a-b")
+                    && (e.kind == "link_down" || e.kind == "link_up")
+            })
+            .map(|e| (e.at_ns, e.kind.as_str()))
+            .collect();
+        assert_eq!(
+            fault_edges,
+            vec![(30_000_000, "link_down"), (70_000_000, "link_up")]
+        );
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|p| &p.hops)
+            .filter(|h| h.link_id == "isl-a-b")
+            .all(|h| !(30_000_000..90_000_000).contains(&h.transmit_started_ns)));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
     }
 
     #[test]

@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in Rust-native piecewise-constant SYS-02 steering samples gate SYS-03 PAT tracking, preserve independent administrative failures, reacquisition and packet accounting (supplied angles, not runtime ephemeris/attitude propagation).
+
 - [x] Independent administrative and sampled-pointing PAT fault domains, with combined-state transitions, deterministic same-timestamp handling and packet/control CI acceptance (discrete scheduled edges; not native continuous pointing).
 
 

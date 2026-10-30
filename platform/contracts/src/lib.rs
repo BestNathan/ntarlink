@@ -178,6 +178,20 @@ pub struct OpticalPointing {
     pub to_max_off_axis_deg: f64,
 }
 
+/// A discrete SYS-02 steering observation evaluated by the Rust PAT planner.
+/// Angles are degrees; the value is held until the next sample on that link.
+/// These are supplied observations, not a continuous attitude/ephemeris solution.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalSteeringSample {
+    pub link_id: String,
+    pub at_ns: u64,
+    pub from_off_axis_deg: f64,
+    pub to_off_axis_deg: f64,
+    pub from_max_off_axis_deg: f64,
+    pub to_max_off_axis_deg: f64,
+}
+
 /// One frame-tagged SYS-02 pointing snapshot at the start of a geometric ISL contact.
 /// All vectors are ITRS Earth-fixed Cartesian coordinates; positions are meters.
 /// Boresight directions are unitless and fixed over the entire contact window.
@@ -233,6 +247,9 @@ pub struct Scenario {
     /// Optional all-PAT-link static pointing envelope assumptions (degrees).
     #[serde(default)]
     pub optical_pointing: Vec<OpticalPointing>,
+    /// Optional runtime-evaluated piecewise-constant steering samples for all PAT links.
+    #[serde(default)]
+    pub optical_steering_samples: Vec<OpticalSteeringSample>,
     /// Optional ITRS position/boresight snapshots at each PAT contact start.
     #[serde(default)]
     pub optical_geometry: Vec<OpticalGeometry>,
@@ -615,6 +632,87 @@ impl Scenario {
                 {
                     return Err(format!("inconsistent optical head pointing limit: {head}"));
                 }
+            }
+        }
+        if self.optical_steering_samples.len() > 10_000 {
+            return Err("optical steering sample budget exceeded".into());
+        }
+        if !self.optical_steering_samples.is_empty() {
+            if !self.optical_pointing.is_empty() || !self.optical_geometry.is_empty() {
+                return Err(
+                    "optical steering samples cannot mix with static pointing or geometry".into(),
+                );
+            }
+            let mut last_by_link: std::collections::HashMap<&str, u64> =
+                std::collections::HashMap::new();
+            let mut sample_limits: std::collections::HashMap<&str, f64> =
+                std::collections::HashMap::new();
+            for sample in &self.optical_steering_samples {
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == sample.link_id)
+                    .ok_or_else(|| {
+                        format!("unknown PAT steering sample link: {}", sample.link_id)
+                    })?;
+                if sample.at_ns >= self.duration_ns {
+                    return Err(format!(
+                        "optical steering sample out of horizon: {}",
+                        sample.link_id
+                    ));
+                }
+                if let Some(previous) = last_by_link.insert(&sample.link_id, sample.at_ns) {
+                    if sample.at_ns <= previous {
+                        return Err(format!(
+                            "optical steering samples must be strictly increasing: {}",
+                            sample.link_id
+                        ));
+                    }
+                } else if sample.at_ns != 0 {
+                    return Err(format!(
+                        "optical steering samples must start at zero: {}",
+                        sample.link_id
+                    ));
+                }
+                for (head, angle, limit) in [
+                    (
+                        pat.from_head.as_str(),
+                        sample.from_off_axis_deg,
+                        sample.from_max_off_axis_deg,
+                    ),
+                    (
+                        pat.to_head.as_str(),
+                        sample.to_off_axis_deg,
+                        sample.to_max_off_axis_deg,
+                    ),
+                ] {
+                    if !angle.is_finite()
+                        || !limit.is_finite()
+                        || !(0.0..=180.0).contains(&angle)
+                        || !(0.0..=180.0).contains(&limit)
+                    {
+                        return Err(format!("invalid optical steering sample angle: {head}"));
+                    }
+                    if sample_limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
+                        return Err(format!("inconsistent sampled optical head limit: {head}"));
+                    }
+                }
+            }
+            if last_by_link.len() != pat_links.len() {
+                return Err("optical steering samples must cover every PAT link".into());
+            }
+            if self
+                .faults
+                .iter()
+                .any(|fault| fault.cause == FaultCause::SampledPointing)
+            {
+                return Err(
+                    "sampled pointing faults cannot mix with native optical steering samples"
+                        .into(),
+                );
             }
         }
         if self.optical_geometry.len() > 10_000 {
@@ -1017,6 +1115,52 @@ mod tests {
             .validate()
             .unwrap_err()
             .contains("requires an optical PAT link"));
+    }
+
+    #[test]
+    fn native_optical_steering_samples_validate_timeline_and_exclusivity() {
+        let mut s = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        let sample = OpticalSteeringSample {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            from_off_axis_deg: 10.0,
+            to_off_axis_deg: 10.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        s.optical_steering_samples.push(sample.clone());
+        s.validate().unwrap();
+        s.optical_steering_samples.push(OpticalSteeringSample {
+            at_ns: 30_000_000,
+            from_off_axis_deg: 40.0,
+            ..sample.clone()
+        });
+        s.validate().unwrap();
+        s.optical_steering_samples[1].at_ns = 0;
+        assert!(s.validate().unwrap_err().contains("strictly increasing"));
+        s.optical_steering_samples[1].at_ns = 30_000_000;
+        s.optical_steering_samples[0].at_ns = 1;
+        assert!(s.validate().unwrap_err().contains("start at zero"));
+        s.optical_steering_samples[0].at_ns = 0;
+        s.optical_steering_samples[1].from_max_off_axis_deg = 20.0;
+        assert!(s.validate().unwrap_err().contains("inconsistent sampled"));
+        s.optical_steering_samples[1].from_max_off_axis_deg = 30.0;
+        s.optical_steering_samples[1].to_off_axis_deg = f64::NAN;
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical steering"));
+        s.optical_steering_samples[1].to_off_axis_deg = 10.0;
+        s.faults.push(Fault {
+            at_ns: 50_000_000,
+            link_id: "isl-a-b".into(),
+            action: LinkAction::Down,
+            cause: FaultCause::SampledPointing,
+        });
+        assert!(s.validate().unwrap_err().contains("cannot mix"));
     }
 
     #[test]

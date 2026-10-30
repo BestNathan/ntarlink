@@ -223,6 +223,26 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"], r
           print("Independent PAT fault domains:", r["delivered"], "delivered,", r["dropped"], "dropped")
           PY
+      - name: Verify Rust-native sampled steering preserves independent administrative faults
+        run: |
+          python3 -m json.tool scenarios/optical-native-steering-samples.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-native-steering-samples.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-native-steering-samples.json --json > /tmp/optical-native-steering.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/optical-native-steering.json"))
+          tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 90000000, 140000000], tracking
+          assert any(e["at_ns"] == 30000000 and e["state"] == "lost"
+                     and e["reason"] == "sampled_pointing_loss" for e in r["pat_events"])
+          edges = [(e["at_ns"], e["kind"]) for e in r["control_events"]
+                   if e["link_id"] == "isl-a-b" and e["kind"] in ("link_down", "link_up")]
+          assert edges == [(30000000, "link_down"), (70000000, "link_up")], edges
+          hops = [h for p in r["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          assert hops and all(not 30000000 <= h["transmit_started_ns"] < 90000000 for h in hops)
+          assert r["injected"] == r["delivered"] + r["dropped"]
+          print("Rust-native sampled steering:", r["delivered"], "delivered,", r["dropped"], "dropped")
+          PY
       - name: Generate real SGP4 visibility windows and run the Rust packet engine
         run: |
           python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json

@@ -28,3 +28,27 @@ admitted packet retains the L1 completion-after-departure convention. The
 availability index is built in O(O log O) for O outage records; a candidate
 queries only its two heads, with sorting of overlapping intervals. Overall
 candidate output remains bounded by SYS-03's 100,000 candidate limit.
+
+## Runtime sampled steering (opt-in)
+
+`optical_steering_samples[]` supplies per-link, scenario-relative
+`at_ns` and endpoint off-axis/max-off-axis angles in degrees. Each PAT link
+must have a sample at zero; subsequent samples are strictly increasing and
+held until the next observation. Every PAT link must be covered. Shared
+head limits must agree across all samples. The Rust PAT preparation stage
+evaluates these observations and combines pointing feasibility with the
+independent administrative fault domain. Overlapping outages cannot cause
+premature reacquisition. Inputs are exclusive with static
+`optical_pointing[]`, `optical_geometry[]`, and legacy
+`sampled_pointing` fault edges. The total limit is 10,000 samples.
+
+```sh
+cargo test --workspace
+cargo run -p ntarlink-cli -- simulate scenarios/optical-native-steering-samples.json --json
+```
+
+**Fidelity:** supplied, piecewise-constant angles only; not an onboard
+attitude propagator, continuous geometry solver, or physical tracking
+detector. Processing is O(S log S) in S samples for sorting and bounded
+PAT planning. Sample gaps can conceal excursions; already-admitted
+packets retain completion-after-departure behavior.
