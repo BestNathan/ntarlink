@@ -192,6 +192,16 @@ pub struct OpticalSteeringSample {
     pub to_max_off_axis_deg: f64,
 }
 
+/// Optional per-head upper bound on the sampled ITRS line-of-sight angular rate.
+/// This is a discrete geometric tracking proxy, not a body-frame gimbal model.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalTrackingRate {
+    pub link_id: String,
+    pub from_max_los_rate_deg_per_s: f64,
+    pub to_max_los_rate_deg_per_s: f64,
+}
+
 /// One frame-tagged SYS-02 pointing snapshot at the start of a geometric ISL contact.
 /// All vectors are ITRS Earth-fixed Cartesian coordinates; positions are meters.
 /// Boresight directions are unitless and fixed over the entire contact window.
@@ -254,6 +264,9 @@ pub struct Scenario {
     /// Each observation is held until the next sample on the same link.
     #[serde(default)]
     pub optical_geometry_samples: Vec<OpticalGeometry>,
+    /// Optional per-PAT-link rate limits for consecutive native ITRS LOS samples.
+    #[serde(default)]
+    pub optical_tracking_rates: Vec<OpticalTrackingRate>,
     /// Optional ITRS position/boresight snapshots at each PAT contact start.
     #[serde(default)]
     pub optical_geometry: Vec<OpticalGeometry>,
@@ -899,6 +912,41 @@ impl Scenario {
                 .any(|fault| fault.cause == FaultCause::SampledPointing)
             {
                 return Err("sampled pointing faults cannot mix with optical ITRS samples".into());
+            }
+        }
+        if self.optical_tracking_rates.len() > self.optical_pat.len() {
+            return Err("optical tracking rate configuration limit exceeded".into());
+        }
+        if !self.optical_tracking_rates.is_empty() {
+            if self.optical_geometry_samples.is_empty() {
+                return Err("optical tracking rates require native ITRS samples".into());
+            }
+            let mut configured_links = HashSet::new();
+            let mut head_rates: std::collections::HashMap<&str, f64> =
+                std::collections::HashMap::new();
+            for rate in &self.optical_tracking_rates {
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == rate.link_id)
+                    .ok_or_else(|| format!("unknown PAT optical tracking rate link: {}", rate.link_id))?;
+                if !configured_links.insert(rate.link_id.as_str()) {
+                    return Err(format!("duplicate optical tracking rate link: {}", rate.link_id));
+                }
+                for (head, limit) in [
+                    (pat.from_head.as_str(), rate.from_max_los_rate_deg_per_s),
+                    (pat.to_head.as_str(), rate.to_max_los_rate_deg_per_s),
+                ] {
+                    if !limit.is_finite() || limit < 0.0 {
+                        return Err(format!("invalid optical tracking rate for {head}"));
+                    }
+                    if head_rates
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
+                        return Err(format!("inconsistent optical head tracking rate: {head}"));
+                    }
+                }
             }
         }
         Ok(())

@@ -62,6 +62,49 @@ pub fn geometry_pointing_allowed(geometry: &OpticalGeometry) -> bool {
     })
 }
 
+/// Check the angular displacement of the required ITRS LOS between observations.
+/// The sampled rate is compared with the configured bound over the elapsed
+/// virtual time. This cannot certify unsampled motion or body-frame actuator
+/// tracking; both endpoints share the same ITRS LOS angular displacement.
+pub fn geometry_los_rate_allowed(
+    previous: &OpticalGeometry,
+    current: &OpticalGeometry,
+    max_rate_deg_per_s: f64,
+) -> bool {
+    if current.at_ns <= previous.at_ns
+        || !max_rate_deg_per_s.is_finite()
+        || max_rate_deg_per_s < 0.0
+        || previous.frame != "ITRS"
+        || current.frame != "ITRS"
+    {
+        return false;
+    }
+    let direction = |sample: &OpticalGeometry| {
+        std::array::from_fn::<_, 3, _>(|i| {
+            sample.to_position_m[i] - sample.from_position_m[i]
+        })
+    };
+    let a = direction(previous);
+    let b = direction(current);
+    let norm = |v: [f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let a_norm = norm(a);
+    let b_norm = norm(b);
+    if !a_norm.is_finite() || !b_norm.is_finite() || a_norm <= 0.0 || b_norm <= 0.0 {
+        return false;
+    }
+    let a = a.map(|x| x / a_norm);
+    let b = b.map(|x| x / b_norm);
+    let dot = a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+    let cross = [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ];
+    let angle_deg = norm(cross).atan2(dot).to_degrees();
+    let elapsed_s = (current.at_ns - previous.at_ns) as f64 * 1.0e-9;
+    angle_deg.is_finite() && angle_deg <= max_rate_deg_per_s * elapsed_s + 1.0e-9
+}
+
 /// Indexed half-open outage windows for spacecraft-owned optical heads.
 /// Scenario validation rejects overlaps and unknown head ownership.
 #[derive(Default)]

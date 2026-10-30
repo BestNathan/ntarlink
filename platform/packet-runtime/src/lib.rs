@@ -5,7 +5,7 @@ use ntarlink_contracts::{
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
-use ntarlink_spacecraft::{geometry_pointing_allowed, pointing_allowed, HeadAvailability};
+use ntarlink_spacecraft::{geometry_los_rate_allowed, geometry_pointing_allowed, pointing_allowed, HeadAvailability};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -710,21 +710,35 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
-    steering_faults.extend(
-        scenario
-            .optical_geometry_samples
-            .iter()
-            .map(|sample| Fault {
-                at_ns: sample.at_ns,
-                link_id: sample.link_id.clone(),
-                action: if geometry_pointing_allowed(sample) {
-                    LinkAction::Up
-                } else {
-                    LinkAction::Down
-                },
-                cause: FaultCause::SampledPointing,
-            }),
-    );
+    let tracking_rates: HashMap<_, _> = scenario
+        .optical_tracking_rates
+        .iter()
+        .map(|rate| (rate.link_id.as_str(), rate))
+        .collect();
+    let mut previous_geometry: HashMap<&str, &ntarlink_contracts::OpticalGeometry> =
+        HashMap::new();
+    steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
+        let previous = previous_geometry.insert(sample.link_id.as_str(), sample);
+        let rate_allowed = tracking_rates.get(sample.link_id.as_str()).is_none_or(|rate| {
+            previous.is_none_or(|earlier| {
+                geometry_los_rate_allowed(
+                    earlier,
+                    sample,
+                    rate.from_max_los_rate_deg_per_s.min(rate.to_max_los_rate_deg_per_s),
+                )
+            })
+        });
+        Fault {
+            at_ns: sample.at_ns,
+            link_id: sample.link_id.clone(),
+            action: if geometry_pointing_allowed(sample) && rate_allowed {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
+            cause: FaultCause::SampledPointing,
+        }
+    }));
 
     // Administrative and sampled-pointing faults are independent state domains.
     // Fold all edges at the same timestamp before evaluating effective availability:
@@ -963,6 +977,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.optical_pointing.clear();
     prepared.optical_steering_samples.clear();
     prepared.optical_geometry_samples.clear();
+    prepared.optical_tracking_rates.clear();
     prepared.optical_geometry.clear();
     let mut events: Vec<PatEventTrace> = plan
         .events
