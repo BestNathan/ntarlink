@@ -87,6 +87,38 @@ The simulation report contains `pat_events[]` as a **planned state trace**;
 these are not physical measurements or live fault-reactive PAT events.
 Unconfigured optical links preserve their previous behavior.
 
+## 2.3 Opt-in SYS-02 ITRS optical pointing snapshots
+
+For each configured optical PAT contact, `optical_geometry[]` may supply
+a snapshot at exactly `contacts[].start_ns`. The frame must be `ITRS`
+(Earth-fixed Cartesian), position vectors are meters and boresight vectors
+are dimensionless directions in the **same frame**. This is mutually
+exclusive with the existing static assumed-angle `optical_pointing[]`.
+
+```json
+{
+  "optical_geometry": [{
+    "link_id": "isl-a-b",
+    "at_ns": 0,
+    "frame": "ITRS",
+    "from_position_m": [7000000, 0, 0],
+    "to_position_m": [7001000, 0, 0],
+    "from_boresight_itrs": [1, 0, 0],
+    "to_boresight_itrs": [-1, 0, 0],
+    "from_max_off_axis_deg": 30,
+    "to_max_off_axis_deg": 30
+  }]
+}
+```
+
+The spacecraft gate computes the reciprocal line-of-sight direction
+from positions and tests both angular envelopes, with a 1e-9 degree
+floating-point comparison tolerance. It rejects invalid geometry before
+PAT reservations. The snapshot is held constant over its contact interval;
+`at_ns` is a scenario-relative time, **not** a UTC timestamp. This is
+supplied geometry, not validated ephemeris provenance, attitude dynamics,
+continuous tracking feasibility or an optical PHY.
+
 ## 3. Canonical identifiers and primitive types
 
 | Type | Definition | Invariants |
