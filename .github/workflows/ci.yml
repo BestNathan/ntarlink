@@ -134,6 +134,26 @@ jobs:
           assert report["delivered"] > 0 and report["injected"] == report["delivered"] + report["dropped"]
           print("Synthetic two-orbit SGP4 optical PAT:", len(geometry), "snapshots,", report["delivered"], "delivered")
           PY
+      - name: Verify sampled optical attitude SGP4 to PAT packet forwarding
+        run: |
+          python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json scenarios/optical-sgp4-attitude-sampled.synthetic.json --pointing-probes-per-contact 3 --out /tmp/optical-sampled-compiled.json
+          cargo run -p ntarlink-cli -- validate /tmp/optical-sampled-compiled.json
+          cargo run -p ntarlink-cli -- simulate /tmp/optical-sampled-compiled.json --json > /tmp/optical-sampled-report.json
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          artifact = Path("/tmp/optical-sampled-compiled.json")
+          scenario = json.loads(artifact.read_text())
+          manifest = json.loads(Path(str(artifact) + ".optical-manifest.json").read_text())
+          report = json.loads(Path("/tmp/optical-sampled-report.json").read_text())
+          assert manifest["attitude_model"] == "sampled_body_to_itrs_quaternion"
+          assert manifest["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+          assert manifest["pointing_probe_audit"]["sample_count"] == 10
+          assert len(scenario["optical_geometry"]) == 2
+          assert [e["at_ns"] for e in report["pat_events"] if e["state"] == "tracking"] == [20000000, 140000000]
+          assert report["delivered"] > 0 and report["injected"] == report["delivered"] + report["dropped"]
+          print("Sampled attitude SGP4 PAT:", report["delivered"], "delivered")
+          PY
       - name: Generate real SGP4 visibility windows and run the Rust packet engine
         run: |
           python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json
