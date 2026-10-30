@@ -1,0 +1,82 @@
+{
+  "frame": "ITRS",
+  "attitude_model": "sampled_body_to_itrs_quaternion",
+  "heads": [
+    {
+      "head_id": "sat-a/head-1",
+      "boresight_body": [
+        1,
+        0,
+        0
+      ],
+      "max_off_axis_deg": 30,
+      "attitude_samples": [
+        {
+          "at_ns": 0,
+          "body_to_itrs_quaternion_wxyz": [
+            1,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "at_ns": 60000000,
+          "body_to_itrs_quaternion_wxyz": [
+            0.7071067811865476,
+            0,
+            0,
+            0.7071067811865476
+          ]
+        },
+        {
+          "at_ns": 90000000,
+          "body_to_itrs_quaternion_wxyz": [
+            1,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "at_ns": 200000000,
+          "body_to_itrs_quaternion_wxyz": [
+            1,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "head_id": "sat-b/head-1",
+      "boresight_body": [
+        -1,
+        0,
+        0
+      ],
+      "max_off_axis_deg": 30,
+      "attitude_samples": [
+        {
+          "at_ns": 0,
+          "body_to_itrs_quaternion_wxyz": [
+            1,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "at_ns": 200000000,
+          "body_to_itrs_quaternion_wxyz": [
+            1,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    }
+  ]
+}

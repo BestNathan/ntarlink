@@ -153,6 +153,51 @@ is implied. This option is an explicit conservative admission gate
 for the sampled instants, not a replacement for a time-varying
 contact-state model.
 
+## Opt-in sampled pointing loss and PAT reacquisition
+
+The optional `--runtime-pointing-probes-per-contact 1|3|7` mode compiles
+**operator-supplied time-indexed** attitude and propagated ITRS geometry
+into deterministic link `faults[]` edges for the existing Rust PAT runtime.
+It is mutually exclusive with the fail-closed
+`--pointing-probes-per-contact` admission audit. Both reuse the same
+contact-start optical geometry snapshot and microsecond-aligned probe grid.
+
+For each geometric PAT contact, the compiler evaluates both optical heads
+at contact start, evenly spaced interior instants and the final representable
+microsecond. A passing-to-failing sample emits a link `down` fault at
+that sample; a failing-to-passing sample emits `up`. If the final sample
+fails, a recovery edge at the exclusive contact end resets the link for
+the next independently evaluated contact. This uses the existing SYS-03
+administrative-fault acquisition logic: tracking is lost, heads are released,
+the controller reconverges and a recovered link must slew and acquire again.
+The manifest records every derived fault edge and the probe count.
+
+**Safety constraints:** the contact start must pass, because Rust currently
+uses the start snapshot to gate the entire geometric contact. Existing
+administrative faults on the same PAT link are rejected rather than
+unsafely combined with derived edges. Other link faults are preserved.
+The compiler caps generated edges at 10,000 and retains input/output
+SHA-256 provenance. No new Rust scenario schema is required.
+
+Example with a *synthetic aligned ITRS position provider* (the committed
+tracking fixture is not a real orbital/attitude reference):
+
+```sh
+python -m unittest discover -s systems/orbital/python/tests
+# The GitHub Actions acceptance injects a deterministic synthetic position
+# provider and runs the compiled scenario through Rust validate/simulate.
+```
+
+The resulting Rust PAT trace labels the derived loss as
+`administrative_link_down`, because the current fault protocol has no
+distinct physical pointing-loss cause. The manifest preserves its sampled
+pointing provenance. A down/up edge is a **discrete sampled approximation**,
+not continuous runtime steering evaluation. Brief excursions between probes
+can be missed, and a recovery sample does not establish continuous stability.
+Already-admitted packet transmissions follow the existing
+`complete_after_departure` convention. No physical optical tracking servo,
+angular-rate bound, interference or laser PHY is represented.
+
 ## Safety and provenance
 
 The adapter rejects missing TLE IDs, duplicate contact starts, invalid

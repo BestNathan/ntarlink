@@ -419,6 +419,33 @@ attitude truth. A passing finite-probe audit cannot guarantee between-probe
 pointing; Rust still uses one snapshot per contact and does not close
 tracking mid-contact when the attitude drifts.
 
+## Sampled SYS-02 pointing loss into SYS-03 PAT reacquisition
+
+The opt-in `ntarlink_orbital.optical_geometry
+--runtime-pointing-probes-per-contact` mode converts finite sampled
+ITRS steering-envelope failures and recoveries into existing link
+`faults[]` down/up transitions. It requires operator-supplied
+time-indexed attitude, a passing contact-start snapshot, and no
+preexisting faults on the same PAT link. It preserves other faults,
+caps generated events at 10,000, and records event provenance in the
+SHA-256-linked manifest. The Rust PAT planner already releases both
+optical heads, interrupts tracking and requires fresh acquisition
+after a link recovers; the packet engine uses its existing delayed
+route convergence and packet accounting.
+
+Python unit tests cover deterministic edges, failure at contact start,
+fault conflicts, half-open boundaries, manifest digests and unchanged
+output on invalid compilation. CI uses a synthetic aligned ITRS
+position provider with an explicit 90-degree attitude excursion,
+then runs the generated scenario through Rust validation and packet
+forwarding. Separate existing CI checks still exercise the real SGP4
+provider. This is an **offline finite-probe fault plan**, not a live
+attitude controller or independently validated orbital/attitude
+solution. The PAT trace currently reports the generic administrative
+fault reason; the manifest identifies the sampled pointing source.
+Between-probe excursions and already-admitted packet interruption
+remain unmodeled. See [optical attitude adapter](design/orbital-optical-attitude-adapter.md).
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
