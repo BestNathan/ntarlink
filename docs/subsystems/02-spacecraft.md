@@ -35,6 +35,17 @@ Commands: `SetPayloadMode`, `EnterSafeMode`, `AllocatePayloadResource`, `Release
 
 Implement domain/resource ledger in Rust as pure state transitions and event outputs; Python/Orekit may provide sophisticated attitude/eclipse models as an optional artifact producer. cFS/Yamcs are **reference candidates for flight/mission operations experiments**, not dependencies or proof of flight-qualified ntarlink software. No spacecraft-specific proprietary telemetry assumed.
 
+## Implemented first availability slice
+
+`systems/spacecraft/rust` implements an indexed, deterministic optical-head
+outage ledger. The optional scenario `optical_head_outages[]` declares
+maintenance/failure intervals for heads owned by `optical_pat[]` endpoints.
+Both heads must be available throughout PAT acquisition and tracking.
+A head outage interrupts tracking and releases reservations; when it recovers,
+SYS-03 performs a fresh acquisition. The packet runtime and delayed routing
+control consume the resulting acquired contact windows. This is a modeled
+availability contract, not a physical attitude/pointing or power budget.
+
 ## Faults, validation, and milestones
 
 Faults: power derating, single optical head failure, antenna mispointing, thermal throttling, unavailable compute, safe mode and satellite retirement. Each invalidates advertised link capability and leads to SYS-03/05/06 link changes, SYS-07 route reoptimization and SYS-10 alarms.

@@ -9,6 +9,7 @@ ntarlink-access-scheduler = { path = "../../systems/access/rust" }
 ntarlink-simulation = { path = "../simulation" }
 ntarlink-network-control = { path = "../../systems/network-control" }
 ntarlink-optical-pat = { path = "../../systems/space-network/rust" }
+ntarlink-spacecraft = { path = "../../systems/spacecraft/rust" }
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

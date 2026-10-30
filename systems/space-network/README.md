@@ -56,6 +56,13 @@ may reserve the released heads. Planned loss at a down transition carries
 This is preplanned deterministic fault/recovery behavior, not detection of
 unmodeled tracking loss or a calibrated optical PHY. Run
 `scenarios/optical-pat-link-fault.json` to exercise a mid-contact outage.
+SYS-02 now optionally supplies `optical_head_outages[]` as per-head
+half-open maintenance/failure intervals. Both heads must be available;
+tracking ends at an outage boundary with reason
+`optical_head_unavailable`, and recovery requires new acquisition.
+The cross-subsystem example is `scenarios/optical-head-outage.json`.
+This does not model pointing vectors or optical power.
+
 The existing completion-after-departure packet policy applies at contact
 expiry. `AcquiredWindow` gates modeled packet forwarding only; SYS-02
 availability and physical laser constraints remain future work. Sorting costs O(N log N), with

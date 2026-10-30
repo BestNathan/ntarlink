@@ -40,7 +40,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Optional SYS-01 time-sampled geometric delay compiled into scheduled contacts and interpolated at each Rust packet transmission completion (not light-time iteration or live PHY).
 - [x] Optional SYS-05 time-resolved analytical RF sidecar at validated SYS-01 geometric delay sample instants (not continuously interpolated SINR or PHY/MAC).
 - [ ] Actual access/optical acquisition feasibility, calibrated link budgets with interference, and validated relativistic/light-time delay models.
-- [ ] Spacecraft payload/optical terminal availability and pointing constraints (SYS-02).
+- [x] Opt-in SYS-02 spacecraft optical-head outage windows gate SYS-03 PAT acquisition, release shared heads, and require reacquisition after recovery (deterministic preplanned availability, not pointing physics).
+- [ ] Spacecraft payload mode, optical pointing envelope and attitude constraints (SYS-02).
 - [x] Standalone deterministic SYS-03 optical PAT contact acquisition planner with exclusive-head reservations, finite slew/acquisition dwell and half-open tracking windows (not yet connected to packet forwarding or calibrated optical physics).
 - [x] Opt-in SYS-03 PAT tracking-window gate for scheduled optical contacts in the Rust packet engine, with exclusive-head contention, route reconvergence, packet accounting and deterministic PAT trace (not a live PHY or tracking-fault recovery).
 - [x] Opt-in SYS-03 PAT reacquisition after modeled optical-link administrative down/up faults: split geometric contacts, release optical heads on down, reapply acquisition dwell on up, and preserve delayed route convergence (not autonomous tracking degradation or a laser PHY).

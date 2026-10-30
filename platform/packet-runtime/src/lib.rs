@@ -3,6 +3,7 @@ use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySamp
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
+use ntarlink_spacecraft::HeadAvailability;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -723,6 +724,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         admin_windows.insert(config.link_id.as_str(), windows);
     }
 
+    let availability = HeadAvailability::new(&scenario.optical_head_outages);
+    let mut head_downs = HashSet::new();
     let mut candidates = Vec::new();
     // Candidate end times are unique per directed link because both geometric
     // contacts and administrative intervals are non-overlapping.
@@ -744,19 +747,34 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             if start_ns >= end_ns {
                 continue;
             }
-            if candidates.len() >= ntarlink_optical_pat::MAX_CANDIDATES {
-                return Err("PAT candidate budget exceeded".into());
-            }
-            candidates.push(PatCandidate {
-                link_id: contact.link_id.clone(),
-                from_head: config.from_head.clone(),
-                to_head: config.to_head.clone(),
+            // SYS-02 terminal outages further partition admin-up geometric
+            // contacts. Each recovered segment must reacquire both heads.
+            for (admitted_start, admitted_end) in availability.available_intervals(
+                &config.from_head,
+                &config.to_head,
                 start_ns,
                 end_ns,
-                slew_ns: config.slew_ns,
-                acquisition_ns: config.acquisition_ns,
-            });
-            source_by_end.insert((contact.link_id.clone(), end_ns), source_index);
+            ) {
+                if candidates.len() >= ntarlink_optical_pat::MAX_CANDIDATES {
+                    return Err("PAT candidate budget exceeded".into());
+                }
+                if admitted_end < end_ns
+                    && (availability.outage_starts_at(&config.from_head, admitted_end)
+                        || availability.outage_starts_at(&config.to_head, admitted_end))
+                {
+                    head_downs.insert((contact.link_id.as_str(), admitted_end));
+                }
+                candidates.push(PatCandidate {
+                    link_id: contact.link_id.clone(),
+                    from_head: config.from_head.clone(),
+                    to_head: config.to_head.clone(),
+                    start_ns: admitted_start,
+                    end_ns: admitted_end,
+                    slew_ns: config.slew_ns,
+                    acquisition_ns: config.acquisition_ns,
+                });
+                source_by_end.insert((contact.link_id.clone(), admitted_end), source_index);
+            }
         }
     }
     let plan = plan_contacts(&candidates)?;
@@ -815,6 +833,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Keeping the original PAT configuration would require rejected contacts to
     // remain present and would incorrectly reject fully unacquirable links.
     prepared.optical_pat.clear();
+    prepared.optical_head_outages.clear();
     let events = plan
         .events
         .into_iter()
@@ -823,6 +842,10 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 && down_faults.contains(&(event.link_id.as_str(), event.at_ns))
             {
                 Some("administrative_link_down")
+            } else if event.state == PatState::Lost
+                && head_downs.contains(&(event.link_id.as_str(), event.at_ns))
+            {
+                Some("optical_head_unavailable")
             } else {
                 event.reason
             };
@@ -1113,6 +1136,97 @@ mod tests {
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn optical_head_outage_interrupts_tracking_and_requires_reacquisition() {
+        use ntarlink_contracts::OpticalHeadOutage;
+        let mut scenario = pat_fixture();
+        scenario.optical_head_outages.push(OpticalHeadOutage {
+            head_id: "sat-a/head-1".into(),
+            start_ns: 50_000_000,
+            end_ns: 70_000_000,
+        });
+        scenario.flows[0].packet_count = 18;
+        scenario.flows[0].interval_ns = 10_000_000;
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        let windows: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id == "isl-a-b")
+            .map(|contact| (contact.start_ns, contact.end_ns))
+            .collect();
+        assert_eq!(
+            windows,
+            vec![
+                (20_000_000, 50_000_000),
+                (90_000_000, 120_000_000),
+                (140_000_000, 200_000_000)
+            ]
+        );
+        prepared.validate().unwrap();
+        assert!(events.iter().any(|event| {
+            event.at_ns == 50_000_000
+                && event.state == "lost"
+                && event.reason == Some("optical_head_unavailable")
+        }));
+        let report = run(&scenario).unwrap();
+        assert_eq!(
+            report
+                .pat_events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![20_000_000, 90_000_000, 140_000_000]
+        );
+        assert!(report
+            .control_events
+            .iter()
+            .any(|event| { event.at_ns == 95_000_000 && event.kind == "routes_installed" }));
+        let hops: Vec<_> = report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .collect();
+        assert!(!hops.is_empty());
+        assert!(hops.iter().all(|hop| windows
+            .iter()
+            .any(|(start, end)| (*start..*end).contains(&hop.transmit_started_ns))));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn outage_spanning_first_contact_rejects_initial_acquisition() {
+        use ntarlink_contracts::OpticalHeadOutage;
+        let mut scenario = pat_fixture();
+        scenario.optical_head_outages.push(OpticalHeadOutage {
+            head_id: "sat-b/head-1".into(),
+            start_ns: 0,
+            end_ns: 120_000_000,
+        });
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        let optical: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id == "isl-a-b")
+            .map(|contact| (contact.start_ns, contact.end_ns))
+            .collect();
+        assert_eq!(optical, vec![(140_000_000, 200_000_000)]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![140_000_000]
+        );
+        assert!(run(&scenario).is_ok());
     }
 
     #[test]
