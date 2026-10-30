@@ -101,6 +101,19 @@ def _slerp(a: tuple[float, ...], b: tuple[float, ...],
                  "interpolated quaternion")
 
 
+def _shortest_arc_rate_deg_per_s(a: tuple[float, ...],
+                                 b: tuple[float, ...], delta_ns: int) -> float:
+    """Angular speed of the modeled shortest-arc SLERP segment relative to ITRS.
+
+    Quaternion hemispheres encode the same rotation. Chord/asin avoids the
+    precision loss of acos(dot) for very small angular displacements.
+    """
+    sign = -1.0 if sum(x * y for x, y in zip(a, b)) < 0.0 else 1.0
+    chord = math.hypot(*(x - sign * y for x, y in zip(a, b)))
+    angle_deg = math.degrees(4.0 * math.asin(min(1.0, chord / 2.0)))
+    return angle_deg * (1_000_000_000.0 / delta_ns)
+
+
 def _boresight_at(head: dict, at_ns: int) -> list[float]:
     if head["samples"] is None:
         return head["boresight"]
@@ -131,6 +144,9 @@ def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
         fixed = model == "fixed_body_to_itrs_quaternion"
         expected = {"head_id", "boresight_body", "max_off_axis_deg"}
         expected.add("body_to_itrs_quaternion_wxyz" if fixed else "attitude_samples")
+        if (not fixed and isinstance(head, dict)
+                and "max_body_attitude_rate_deg_per_s" in head):
+            expected.add("max_body_attitude_rate_deg_per_s")
         if not isinstance(head, dict) or set(head) != expected:
             raise ValueError("invalid optical head attitude contract")
         identifier = head["head_id"]
@@ -142,6 +158,15 @@ def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
         if (isinstance(limit, bool) or not isinstance(limit, (int, float))
                 or not math.isfinite(limit) or not 0 <= limit <= 180):
             raise ValueError("max_off_axis_deg must be finite within [0, 180]")
+        rate_limit = None
+        if "max_body_attitude_rate_deg_per_s" in head:
+            rate_limit = head["max_body_attitude_rate_deg_per_s"]
+            if (type(rate_limit) not in (int, float)
+                    or not math.isfinite(rate_limit) or rate_limit < 0):
+                raise ValueError(
+                    "max_body_attitude_rate_deg_per_s must be finite and nonnegative")
+            rate_limit = float(rate_limit)
+        peak_rate = 0.0
         samples = None
         times = None
         boresight = None
@@ -175,14 +200,28 @@ def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
                                      "quaternion", 4)
                 if abs(math.hypot(*quaternion) - 1.0) > 1e-6:
                     raise ValueError("body-to-ITRS quaternion must be unit length")
+                normalized = _unit(quaternion, "quaternion")
+                if samples:
+                    rate = _shortest_arc_rate_deg_per_s(
+                        samples[-1], normalized, at_ns - times[-1])
+                    peak_rate = max(peak_rate, rate)
+                    if (rate_limit is not None and rate > rate_limit
+                            and not math.isclose(rate, rate_limit,
+                                                 rel_tol=1e-12, abs_tol=1e-9)):
+                        raise ValueError(
+                            f"sampled body attitude rate exceeds "
+                            f"max_body_attitude_rate_deg_per_s for {identifier} "
+                            f"at {at_ns} ns")
                 times.append(at_ns)
-                samples.append(_unit(quaternion, "quaternion"))
+                samples.append(normalized)
             last_tick = ((duration_ns - 1) // TIME_RESOLUTION_NS) * TIME_RESOLUTION_NS
             if times[0] != 0 or times[-1] < last_tick:
                 raise ValueError("attitude samples must cover the entire virtual-time interval")
         heads[identifier] = {
             "axis": axis, "boresight": boresight, "limit": float(limit),
             "times": times, "samples": samples,
+            "max_attitude_rate_deg_per_s": rate_limit,
+            "peak_attitude_rate_deg_per_s": peak_rate,
         }
     return heads
 
@@ -410,6 +449,7 @@ def main(argv=None):
             attitude,
         )
     output = (json.dumps(compiled, indent=2, allow_nan=False) + "\n").encode()
+    head_rates = _heads(attitude, scenario["duration_ns"])
     manifest = {
         "schema_version": 1,
         "generator": "ntarlink_orbital.optical_geometry",
@@ -423,6 +463,14 @@ def main(argv=None):
         "steering_sample_count": len(compiled.get("optical_steering_samples", [])),
         "native_steering_plan": native_plan,
         "attitude_model": attitude["attitude_model"],
+        "attitude_rate_audit": [
+            {
+                "head_id": head_id,
+                "max_body_attitude_rate_deg_per_s": head["max_attitude_rate_deg_per_s"],
+                "peak_interpolated_rate_deg_per_s": head["peak_attitude_rate_deg_per_s"],
+            }
+            for head_id, head in sorted(head_rates.items())
+        ],
         "pointing_probe_audit": audit,
         "pointing_tracking_plan": tracking_plan,
         "earth_orientation": getattr(provider, "earth_orientation", {"mode": "external_provider"}),

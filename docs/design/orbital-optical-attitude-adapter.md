@@ -117,8 +117,33 @@ continuous steering feasibility, and the Rust runtime does not consume
 the time-indexed samples or generate mid-contact tracking-loss events.
 For a reproducible integration smoke, use
 `scenarios/optical-sgp4-attitude-sampled.synthetic.json` with the
-existing synthetic two-orbit scenario. No physical steering-rate or
-angular-acceleration constraint is enforced.
+existing synthetic two-orbit scenario. No optical-head actuator slew-rate
+or angular-acceleration constraint is enforced. An optional modeled spacecraft body-attitude rate limit is described
+below; it is not a head steering-rate model.
+
+## Optional sampled body-attitude angular-rate guard
+
+A sampled head may optionally specify
+`"max_body_attitude_rate_deg_per_s": 900.0` (finite, nonnegative degrees
+per second). For each pair of adjacent normalized body-to-ITRS quaternion
+keyframes, the adapter computes the shortest relative rotation (treating
+`q` and `-q` as identical) divided by the elapsed scenario-relative
+time. It rejects the entire compilation if the implied constant-angular-rate
+SLERP segment exceeds the configured cap. An exact boundary is allowed.
+A zero cap permits only unchanged modeled orientation.
+
+The check is deterministic and linear in the number of supplied keyframes;
+it uses a chord/asin formulation for stable small rotations and rejects
+invalid limits. The output manifest includes an `attitude_rate_audit` for
+every head: configured cap (null if absent) and maximum implied keyframe
+rate. An omitted cap preserves the previous behavior. The cap is valid only
+for `sampled_body_to_itrs_quaternion`, not the fixed model.
+
+This is a constraint on the **operator-supplied body-to-ITRS interpolant**,
+not a spacecraft torque/dynamics simulation, head gimbal slew-rate model,
+optical tracking error bound or proof of physical feasibility between
+observations. It does not change Rust PAT acquisition timing or packet
+completion semantics.
 
 ## Optional finite steering-probe gate
 

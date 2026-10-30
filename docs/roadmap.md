@@ -15,6 +15,9 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in sampled body-to-ITRS attitude angular-rate cap, with shortest-arc
+  SLERP segment validation, per-head provenance audit and fail-closed tests
+  (modeled keyframe rate, not physical actuator dynamics or head slew limits).
 - [x] Opt-in Rust-native piecewise-constant SYS-02 steering samples gate SYS-03 PAT tracking, preserve independent administrative failures, reacquisition and packet accounting (supplied angles, not runtime ephemeris/attitude propagation).
 
 - [x] Opt-in SGP4/ITRS plus sampled body-to-ITRS attitude compiler emits bounded Rust-native steering observations with SHA-256 provenance and PAT/packet CI acceptance (finite sample-and-hold, not continuous steering).
