@@ -214,7 +214,7 @@ class OpticalGeometryAdapterTests(unittest.TestCase):
             root = Path(directory)
             paths = [root / name for name in ("scenario.json", "orbit.json", "attitude.json")]
             for path, document in zip(paths, (self.scenario, self.orbit, self.attitude)):
-                path.write_text(json.dumps(document) + "\\n")
+                path.write_text(json.dumps(document) + "\n")
             output = root / "compiled.json"
             args = [*(str(path) for path in paths), "--out", str(output),
                     "--pointing-probes-per-contact", "1"]
