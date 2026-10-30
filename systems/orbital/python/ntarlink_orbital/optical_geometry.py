@@ -371,8 +371,13 @@ def main(argv=None):
     parser.add_argument("orbit_config", type=Path)
     parser.add_argument("attitude_config", type=Path)
     parser.add_argument("--out", required=True, type=Path)
-    parser.add_argument("--pointing-probes-per-contact", type=int, choices=(1, 3, 7),
-                        help="Fail closed on finite interior/end steering probes")
+    probe_options = parser.add_mutually_exclusive_group()
+    probe_options.add_argument("--pointing-probes-per-contact", type=int,
+                               choices=(1, 3, 7),
+                               help="Fail closed on finite interior/end steering probes")
+    probe_options.add_argument("--runtime-pointing-probes-per-contact", type=int,
+                               choices=(1, 3, 7),
+                               help="Compile sampled steering loss/recovery into PAT link faults")
     args = parser.parse_args(argv)
     inputs = [args.scenario, args.orbit_config, args.attitude_config]
     manifest_path = Path(str(args.out) + ".optical-manifest.json")
@@ -386,6 +391,13 @@ def main(argv=None):
     audit = (audit_optical_pointing(scenario, compiled, provider,
                                     args.pointing_probes_per_contact, attitude)
              if args.pointing_probes_per_contact is not None else None)
+    tracking_plan = None
+    if args.runtime_pointing_probes_per_contact is not None:
+        from .optical_tracking import compile_pointing_faults
+        compiled, tracking_plan = compile_pointing_faults(
+            scenario, compiled, provider, args.runtime_pointing_probes_per_contact,
+            attitude,
+        )
     output = (json.dumps(compiled, indent=2, allow_nan=False) + "\n").encode()
     manifest = {
         "schema_version": 1,
@@ -399,8 +411,9 @@ def main(argv=None):
         "snapshot_count": len(compiled["optical_geometry"]),
         "attitude_model": attitude["attitude_model"],
         "pointing_probe_audit": audit,
+        "pointing_tracking_plan": tracking_plan,
         "earth_orientation": getattr(provider, "earth_orientation", {"mode": "external_provider"}),
-        "limitations": "operator-supplied fixed or sampled body-to-ITRS attitude; finite probes do not bound inter-sample pointing or model runtime tracking loss or optical PHY",
+        "limitations": "operator-supplied body-to-ITRS attitude; finite sampled fault edges are administrative PAT transitions, not continuous tracking, physical steering or optical PHY",
     }
     _atomic_write(args.out, output)
     _atomic_write(manifest_path, (json.dumps(manifest, indent=2, allow_nan=False) + "\n").encode())
