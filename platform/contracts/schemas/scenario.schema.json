@@ -70,6 +70,14 @@
       ],
       "description": "Static: unspecified orbital links remain available; scheduled: orbital links need a contact window to be usable."
     },
+    "optical_pat": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_pat_link"
+      },
+      "description": "Opt-in exclusive-head PAT acquisition for scheduled geometric optical ISL contacts."
+    },
     "access_beams": {
       "type": "array",
       "maxItems": 10000,
@@ -284,6 +292,18 @@
           "minimum": 1,
           "description": "One-way geometric propagation delay in nanoseconds."
         }
+      }
+    },
+    "optical_pat_link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["link_id", "from_head", "to_head", "slew_ns", "acquisition_ns"],
+      "properties": {
+        "link_id": {"type": "string", "minLength": 1},
+        "from_head": {"type": "string", "minLength": 1},
+        "to_head": {"type": "string", "minLength": 1},
+        "slew_ns": {"type": "integer", "minimum": 0},
+        "acquisition_ns": {"type": "integer", "minimum": 1}
       }
     },
     "access_beam": {

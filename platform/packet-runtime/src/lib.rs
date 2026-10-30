@@ -1,6 +1,7 @@
 use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
 use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySample, Scenario};
 use ntarlink_network_control::next_hops;
+use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -87,6 +88,15 @@ pub struct BeamGrantTrace {
     pub transmit_completed_ns: u64,
 }
 
+/// Planned SYS-03 PAT state transition; not a measured optical PHY event.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PatEventTrace {
+    pub link_id: String,
+    pub at_ns: u64,
+    pub state: &'static str,
+    pub reason: Option<&'static str>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct SimulationReport {
     pub scenario: String,
@@ -101,6 +111,8 @@ pub struct SimulationReport {
     pub control_events: Vec<ControlEvent>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub beam_grants: Vec<BeamGrantTrace>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pat_events: Vec<PatEventTrace>,
 }
 
 enum Event {
@@ -646,9 +658,107 @@ impl<'a> Runtime<'a> {
     }
 }
 
-/// Execute an L1 fixed-contact, modeled-packet simulation.
-/// This does not model RF waveform, optical pointing or a proprietary modem.
+/// Apply deterministic PAT acquisition before the packet event engine runs.
+/// Only opted-in optical links are gated; other contacts are unchanged.
+fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
+    let mut prepared = scenario.clone();
+    if scenario.optical_pat.is_empty() {
+        return Ok((prepared, Vec::new()));
+    }
+    let configs: HashMap<_, _> = scenario
+        .optical_pat
+        .iter()
+        .map(|config| (config.link_id.as_str(), config))
+        .collect();
+    let candidates: Vec<_> = scenario
+        .contacts
+        .iter()
+        .filter_map(|contact| {
+            configs
+                .get(contact.link_id.as_str())
+                .map(|config| PatCandidate {
+                    link_id: contact.link_id.clone(),
+                    from_head: config.from_head.clone(),
+                    to_head: config.to_head.clone(),
+                    start_ns: contact.start_ns,
+                    end_ns: contact.end_ns,
+                    slew_ns: config.slew_ns,
+                    acquisition_ns: config.acquisition_ns,
+                })
+        })
+        .collect();
+    let plan = plan_contacts(&candidates)?;
+    let tracking: HashMap<_, _> = plan
+        .windows
+        .iter()
+        .map(|window| ((window.link_id.as_str(), window.end_ns), window.start_ns))
+        .collect();
+    prepared.contacts = scenario
+        .contacts
+        .iter()
+        .filter_map(|contact| {
+            if !configs.contains_key(contact.link_id.as_str()) {
+                return Some(contact.clone());
+            }
+            let start_ns = *tracking.get(&(contact.link_id.as_str(), contact.end_ns))?;
+            let mut acquired = contact.clone();
+            acquired.start_ns = start_ns;
+            if !contact.propagation_delay_samples.is_empty() {
+                let mut samples = vec![PropagationDelaySample {
+                    at_ns: start_ns,
+                    delay_ns: interpolated_delay(&contact.propagation_delay_samples, start_ns),
+                }];
+                samples.extend(
+                    contact
+                        .propagation_delay_samples
+                        .iter()
+                        .filter(|sample| sample.at_ns > start_ns)
+                        .cloned(),
+                );
+                acquired.propagation_delay_samples = samples;
+            }
+            Some(acquired)
+        })
+        .collect();
+    // These contacts are already PAT-gated; validate them as packet contacts.
+    // Keeping the original PAT configuration would require rejected contacts to
+    // remain present and would incorrectly reject fully unacquirable links.
+    prepared.optical_pat.clear();
+    let events = plan
+        .events
+        .into_iter()
+        .map(|event| PatEventTrace {
+            link_id: event.link_id,
+            at_ns: event.at_ns,
+            state: match event.state {
+                PatState::Candidate => "candidate",
+                PatState::Slewing => "slewing",
+                PatState::Acquiring => "acquiring",
+                PatState::Tracking => "tracking",
+                PatState::Lost => "lost",
+                PatState::Rejected => "rejected",
+            },
+            reason: event.reason,
+        })
+        .collect();
+    Ok((prepared, events))
+}
+
+/// Run a deterministic packet simulation with optional modeled optical PAT gates.
+/// PAT events are planned, not physical pointing or measured link state.
 pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
+    scenario.validate()?;
+    let (prepared, pat_events) = prepare_pat(scenario)?;
+    let mut report = run_inner(&prepared)?;
+    if !pat_events.is_empty() {
+        report.fidelity = "l1_scheduled_contact_pat_gate_packet_model".into();
+    }
+    report.pat_events = pat_events;
+    Ok(report)
+}
+
+/// Execute the existing L1 packet event engine against admitted contact windows.
+fn run_inner(scenario: &Scenario) -> Result<SimulationReport, String> {
     scenario.validate()?;
     let mut state = Runtime::new(scenario);
     let mut scheduler = Scheduler::new();
@@ -743,6 +853,7 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
         packets,
         control_events: state.control_events,
         beam_grants: state.beam_grants,
+        pat_events: Vec::new(),
     })
 }
 
@@ -780,6 +891,155 @@ mod tests {
                 .sum();
             assert_eq!(packet.completed_ns.unwrap() - packet.injected_ns, total);
         }
+    }
+
+    fn pat_fixture() -> Scenario {
+        Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn pat_tracking_gates_packets_and_reacquires_after_contact_boundary() {
+        let scenario = pat_fixture();
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, 7);
+        assert!(report.delivered > 0 && report.dropped > 0);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            report.fidelity,
+            "l1_scheduled_contact_pat_gate_packet_model"
+        );
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 140_000_000]);
+        assert!(report.control_events.iter().any(|event| {
+            event.kind == "contact_open"
+                && event.link_id.as_deref() == Some("isl-a-b")
+                && event.at_ns == 140_000_000
+        }));
+        let optical_hops: Vec<_> = report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .collect();
+        assert!(!optical_hops.is_empty());
+        assert!(optical_hops.iter().all(|hop| {
+            (20_000_000..120_000_000).contains(&hop.transmit_started_ns)
+                || (140_000_000..200_000_000).contains(&hop.transmit_started_ns)
+        }));
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn short_geometric_contact_never_opens_optical_packet_link() {
+        let mut scenario = pat_fixture();
+        scenario
+            .contacts
+            .retain(|c| c.link_id != "isl-a-b" || c.start_ns == 0);
+        let optical = scenario
+            .contacts
+            .iter_mut()
+            .find(|c| c.link_id == "isl-a-b")
+            .unwrap();
+        optical.end_ns = 10_000_000;
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.delivered, 0);
+        assert!(report.pat_events.iter().any(|e| e.state == "rejected"));
+        assert!(!report
+            .control_events
+            .iter()
+            .any(|e| { e.kind == "contact_open" && e.link_id.as_deref() == Some("isl-a-b") }));
+    }
+
+    #[test]
+    fn shared_optical_head_conflict_rejects_unacquirable_link() {
+        use ntarlink_contracts::{Node, NodeKind, OpticalPatLink};
+        let mut scenario = pat_fixture();
+        scenario.nodes.push(Node {
+            id: "sat-c".into(),
+            kind: NodeKind::Satellite,
+            latitude_deg: None,
+            longitude_deg: None,
+        });
+        let mut second_link = scenario
+            .links
+            .iter()
+            .find(|l| l.id == "isl-a-b")
+            .unwrap()
+            .clone();
+        second_link.id = "isl-a-c".into();
+        second_link.to = "sat-c".into();
+        scenario.links.push(second_link);
+        scenario.contacts.push(ntarlink_contracts::ContactWindow {
+            link_id: "isl-a-c".into(),
+            start_ns: 0,
+            end_ns: 130_000_000,
+            propagation_delay_ns: Some(3_500_000),
+            propagation_delay_samples: vec![],
+        });
+        scenario.optical_pat.push(OpticalPatLink {
+            link_id: "isl-a-c".into(),
+            from_head: "sat-a/head-1".into(),
+            to_head: "sat-c/head-1".into(),
+            slew_ns: 10_000_000,
+            acquisition_ns: 10_000_000,
+        });
+        let report = run(&scenario).unwrap();
+        assert!(report
+            .pat_events
+            .iter()
+            .any(|e| { e.link_id == "isl-a-c" && e.state == "rejected" }));
+        assert!(!report
+            .control_events
+            .iter()
+            .any(|e| { e.link_id.as_deref() == Some("isl-a-c") && e.kind == "contact_open" }));
+    }
+
+    #[test]
+    fn pat_gate_resamples_geometric_delay_at_tracking_boundary() {
+        let mut scenario = pat_fixture();
+        let optical = scenario
+            .contacts
+            .iter_mut()
+            .find(|c| c.link_id == "isl-a-b" && c.start_ns == 0)
+            .unwrap();
+        optical.propagation_delay_samples = vec![
+            PropagationDelaySample {
+                at_ns: 0,
+                delay_ns: 2_000_000,
+            },
+            PropagationDelaySample {
+                at_ns: 119_999_999,
+                delay_ns: 4_000_000,
+            },
+        ];
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        let gated = prepared
+            .contacts
+            .iter()
+            .find(|c| c.link_id == "isl-a-b")
+            .unwrap();
+        assert_eq!(gated.start_ns, 20_000_000);
+        assert_eq!(
+            gated.propagation_delay_samples.first().unwrap().at_ns,
+            20_000_000
+        );
+        assert_eq!(
+            gated.propagation_delay_samples.last().unwrap().at_ns,
+            119_999_999
+        );
+        prepared.validate().unwrap();
+        assert!(run(&scenario).unwrap().delivered > 0);
     }
 
     #[test]

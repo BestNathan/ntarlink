@@ -270,11 +270,26 @@ contact expires before acquisition. Stable event ordering and input
 validation are covered by unit tests, including resource conflicts,
 reacquisition at contact boundaries and timestamp overflow.
 
-This is an **offline planning primitive only**: it does not change the Rust
-packet runtime, establish an actual optical bearer, simulate pointing
-angles or optical link budgets, or model degradation and recovery.
-SYS-02 attitude/terminal availability, live PAT state and cross-subsystem
-packet-routing integration remain open. See
+## Opt-in SYS-03 PAT packet-forwarding gate
+
+A scenario can declare `contact_mode: "scheduled"` and `optical_pat[]` to
+bind an optical ISL to two exclusive optical-head resources and explicit
+slew/acquisition dwell. The packet runtime invokes the SYS-03 planner over
+SYS-01 geometric contacts and substitutes **only acquired tracking windows**
+for configured optical links. Unacquired links never enter the forwarding
+availability graph. Each acquired opening/closing triggers the existing
+control-delay route recomputation, and the JSON report exposes planned
+`pat_events` separately from actual packet/control events. The sample
+`scenarios/optical-pat-acquisition.json` tests outage, reacquisition and
+packet accounting in CI. Sampled geometric delays are reanchored at the
+tracking start without changing the original interpolation model.
+
+This is an **opt-in deterministic offline gate**, not a live optical bearer,
+pointing-angle/laser budget, physical acquisition measurement, or tracking
+failure/recovery. Planned PAT state does not react to runtime administrative
+faults; the existing link-fault gate still prevents forwarding. Packets
+admitted before contact expiry finish under the existing P0 completion policy.
+Unconfigured scenarios retain legacy behavior. See
 [SYS-03 crate documentation](../systems/space-network/README.md).
 
 ## Remaining subsystem work

@@ -42,6 +42,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [ ] Actual access/optical acquisition feasibility, calibrated link budgets with interference, and validated relativistic/light-time delay models.
 - [ ] Spacecraft payload/optical terminal availability and pointing constraints (SYS-02).
 - [x] Standalone deterministic SYS-03 optical PAT contact acquisition planner with exclusive-head reservations, finite slew/acquisition dwell and half-open tracking windows (not yet connected to packet forwarding or calibrated optical physics).
+- [x] Opt-in SYS-03 PAT tracking-window gate for scheduled optical contacts in the Rust packet engine, with exclusive-head contention, route reconvergence, packet accounting and deterministic PAT trace (not a live PHY or tracking-fault recovery).
 - [ ] Optical PAT acquisition/tracking and link-budget models (SYS-03).
 - [x] Standalone deterministic SYS-05 weighted deficit round-robin beam-frame scheduler with finite wire-byte capacity and two-terminal tests (not yet wired to packet transport).
 - [x] Opt-in shared SYS-05 uplink beam-frame grants now drive packet serialization and finite shared queues; contact loss cancels ungranted bearer packets (L1, no PHY or admission).

@@ -58,6 +58,35 @@ The current Rust `platform/contracts` crate and `platform/contracts/schemas/scen
 
 In `static` mode, orbital links without schedules retain their scenario `up` state; in `scheduled` mode, user RF, feeder and optical ISL links are **unavailable unless a window is active**. Terrestrial links remain static unless faults explicitly change them. `up` represents administrative state and cannot override missing geometric visibility. Windows are nonoverlapping and half-open. Their midpoint propagation delay is fixed per interval in the current L1 runtime. These optional fields extend scenario v1; the broader system envelope remains a forward-looking interface proposal.
 
+## 2.2 Opt-in SYS-03 PAT acquisition gate
+
+Scheduled-contact scenarios may declare `optical_pat[]` for directed
+`optical_isl` links with geometric `contacts[]`. Each entry binds one
+link to two satellite-owned, exclusive head identifiers and assumed
+integer-nanosecond slew/acquisition dwell. Missing contacts, duplicate
+PAT links, inconsistent head ownership and invalid dwell are rejected.
+
+```json
+{
+  "contact_mode": "scheduled",
+  "optical_pat": [{
+    "link_id": "isl-a-b",
+    "from_head": "sat-a/head-1",
+    "to_head": "sat-b/head-1",
+    "slew_ns": 10000000,
+    "acquisition_ns": 10000000
+  }]
+}
+```
+
+The SYS-03 planner narrows only configured geometric windows to acquired
+half-open tracking intervals before the Rust packet engine schedules
+forwarding. A rejected acquisition has no active contact. The existing
+control-delay and packet completion-after-departure conventions apply.
+The simulation report contains `pat_events[]` as a **planned state trace**;
+these are not physical measurements or live fault-reactive PAT events.
+Unconfigured optical links preserve their previous behavior.
+
 ## 3. Canonical identifiers and primitive types
 
 | Type | Definition | Invariants |
