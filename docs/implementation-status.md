@@ -380,9 +380,22 @@ tests cover frame, quaternion, head ownership, timestamps, malformed
 geometry and reproducibility. A synthetic perturbed-ISS two-orbit fixture
 exercises the actual Python-to-Rust PAT packet path in CI.
 
+An optional 1/3/7-interior-probe admission audit now samples additional
+ITRS positions through each half-open PAT contact, including its final
+representable microsecond. It rejects any sampled steering-envelope
+violation before writing artifacts, and records per-contact sample counts,
+maximum angles and worst margin in the SHA-256-linked manifest. The legacy
+mode remains start-only. Python tests exercise interior and trailing-probe
+drift, short windows, determinism and fail-before-write behavior; CI
+exercises the real synthetic two-orbit provider with the audit enabled.
+This is an **offline finite-probe fail-closed gate**, not continuous tracking:
+between-probe drift may still be missed, and the runtime continues to use
+one start snapshot per contact. At seven interior probes, 10,000 contacts
+can add up to 160,000 provider evaluations; no throughput claim is made.
+
 This **does not** infer or propagate spacecraft attitude, verify the
 synthetic orbit against independent reference data, recalculate geometric
-contact visibility, or model pointing drift during the contact. See
+contact visibility, or model continuous pointing drift during the contact. See
 [adapter design](design/orbital-optical-attitude-adapter.md).
 
 ## Remaining subsystem work
