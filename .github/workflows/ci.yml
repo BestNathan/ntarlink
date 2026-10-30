@@ -154,6 +154,52 @@ jobs:
           assert report["delivered"] > 0 and report["injected"] == report["delivered"] + report["dropped"]
           print("Sampled attitude SGP4 PAT:", report["delivered"], "delivered")
           PY
+      - name: Verify sampled pointing loss through PAT and packet forwarding
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          from unittest.mock import patch
+          from ntarlink_orbital.optical_geometry import main
+
+          def synthetic_itrs(satellite, at_ns):
+              return (7_000_000.0 + (1_000.0 if satellite == "sat-b" else 0.0), 0.0, 0.0)
+
+          artifact = Path("/tmp/optical-tracking-compiled.json")
+          with patch("ntarlink_orbital.optical_geometry.build_sgp4_provider",
+                     return_value=synthetic_itrs):
+              main([
+                  "scenarios/optical-sgp4-attitude.json",
+                  "scenarios/optical-sgp4-orbits.synthetic.json",
+                  "scenarios/optical-sgp4-attitude-tracking.synthetic.json",
+                  "--runtime-pointing-probes-per-contact", "3",
+                  "--out", str(artifact),
+              ])
+          compiled = json.loads(artifact.read_text())
+          manifest = json.loads(Path(str(artifact) + ".optical-manifest.json").read_text())
+          assert manifest["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+          assert manifest["pointing_tracking_plan"]["sample_count"] == 10
+          assert [(f["at_ns"], f["action"]) for f in compiled["faults"]] == [
+              (30000000, "down"), (90000000, "up")
+          ], compiled["faults"]
+          PY
+          cargo run -p ntarlink-cli -- validate /tmp/optical-tracking-compiled.json
+          cargo run -p ntarlink-cli -- simulate /tmp/optical-tracking-compiled.json --json > /tmp/optical-tracking-report.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/optical-tracking-report.json"))
+          tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 110000000, 140000000], tracking
+          assert any(e["state"] == "lost" and e["at_ns"] == 30000000
+                     for e in r["pat_events"]), r["pat_events"]
+          hops = [h for p in r["packets"] for h in p["hops"]
+                  if h["link_id"] == "isl-a-b"]
+          assert all(not 30000000 <= h["transmit_started_ns"] < 110000000
+                     for h in hops), hops
+          assert r["delivered"] > 0 and r["dropped"] > 0
+          assert r["injected"] == r["delivered"] + r["dropped"], r
+          print("Sampled pointing tracking:", tracking, "delivered", r["delivered"])
+          PY
       - name: Generate real SGP4 visibility windows and run the Rust packet engine
         run: |
           python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json
