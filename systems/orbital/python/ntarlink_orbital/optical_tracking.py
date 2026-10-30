@@ -98,6 +98,7 @@ def compile_pointing_faults(scenario: dict, compiled: dict, position,
                 event = {
                     "at_ns": at_ns, "link_id": link_id,
                     "action": "up" if feasible else "down",
+                    "cause": "sampled_pointing",
                 }
                 events.append(event)
                 contact_edges.append(event)
@@ -105,7 +106,10 @@ def compile_pointing_faults(scenario: dict, compiled: dict, position,
         # Restore administrative availability at the geometric boundary so
         # the next independently evaluated contact can acquire normally.
         if not available and end < duration:
-            event = {"at_ns": end, "link_id": link_id, "action": "up"}
+            event = {
+                "at_ns": end, "link_id": link_id,
+                "action": "up", "cause": "sampled_pointing",
+            }
             events.append(event)
             contact_edges.append(event)
         total_probes += len(ticks)
