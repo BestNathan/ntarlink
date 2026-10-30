@@ -1,6 +1,23 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
-use ntarlink_contracts::OpticalHeadOutage;
+use ntarlink_contracts::{OpticalHeadOutage, OpticalPointing};
 use std::collections::HashMap;
+
+/// Conservative static steering-envelope gate for an operator-supplied
+/// off-boresight assumption. This is not an attitude or ephemeris calculation.
+pub fn pointing_allowed(pointing: &OpticalPointing) -> bool {
+    [
+        (pointing.from_off_axis_deg, pointing.from_max_off_axis_deg),
+        (pointing.to_off_axis_deg, pointing.to_max_off_axis_deg),
+    ]
+    .iter()
+    .all(|(angle, limit)| {
+        angle.is_finite()
+            && limit.is_finite()
+            && (0.0..=180.0).contains(angle)
+            && (0.0..=180.0).contains(limit)
+            && angle <= limit
+    })
+}
 
 /// Indexed half-open outage windows for spacecraft-owned optical heads.
 /// Scenario validation rejects overlaps and unknown head ownership.
@@ -82,6 +99,25 @@ mod tests {
             start_ns: start,
             end_ns: end,
         }
+    }
+
+    #[test]
+    fn static_pointing_gate_is_inclusive_and_checks_both_heads() {
+        let mut pointing = OpticalPointing {
+            link_id: "isl-a-b".into(),
+            from_off_axis_deg: 30.0,
+            to_off_axis_deg: 20.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 20.0,
+        };
+        assert!(pointing_allowed(&pointing));
+        pointing.to_off_axis_deg = 20.01;
+        assert!(!pointing_allowed(&pointing));
+        pointing.to_off_axis_deg = 20.0;
+        pointing.from_off_axis_deg = 30.01;
+        assert!(!pointing_allowed(&pointing));
+        pointing.from_off_axis_deg = f64::NAN;
+        assert!(!pointing_allowed(&pointing));
     }
 
     #[test]

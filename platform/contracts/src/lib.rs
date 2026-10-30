@@ -148,6 +148,18 @@ pub struct OpticalHeadOutage {
     pub end_ns: u64,
 }
 
+/// SYS-02 operator-supplied static off-boresight angles and per-head steering limits.
+/// Degrees are fixed over every contact; no attitude or target vector is inferred.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalPointing {
+    pub link_id: String,
+    pub from_off_axis_deg: f64,
+    pub to_off_axis_deg: f64,
+    pub from_max_off_axis_deg: f64,
+    pub to_max_off_axis_deg: f64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContactMode {
@@ -182,6 +194,9 @@ pub struct Scenario {
     /// Optional SYS-02 head maintenance/failure windows; only PAT heads are supported.
     #[serde(default)]
     pub optical_head_outages: Vec<OpticalHeadOutage>,
+    /// Optional all-PAT-link static pointing envelope assumptions (degrees).
+    #[serde(default)]
+    pub optical_pointing: Vec<OpticalPointing>,
 }
 
 impl Scenario {
@@ -502,6 +517,56 @@ impl Scenario {
                 return Err(format!("overlapping optical head outages: {head}"));
             }
         }
+        if self.optical_pointing.len() > 10_000 {
+            return Err("optical pointing limit exceeded".into());
+        }
+        if !self.optical_pointing.is_empty()
+            && self.optical_pointing.len() != self.optical_pat.len()
+        {
+            return Err("optical pointing must cover every PAT link".into());
+        }
+        let mut pointing_links = HashSet::new();
+        let mut head_limits: std::collections::HashMap<&str, f64> =
+            std::collections::HashMap::new();
+        for pointing in &self.optical_pointing {
+            if !pointing_links.insert(&pointing.link_id) {
+                return Err(format!(
+                    "duplicate optical pointing link: {}",
+                    pointing.link_id
+                ));
+            }
+            let pat = self
+                .optical_pat
+                .iter()
+                .find(|pat| pat.link_id == pointing.link_id)
+                .ok_or_else(|| format!("unknown PAT pointing link: {}", pointing.link_id))?;
+            for (head, angle, limit) in [
+                (
+                    &pat.from_head,
+                    pointing.from_off_axis_deg,
+                    pointing.from_max_off_axis_deg,
+                ),
+                (
+                    &pat.to_head,
+                    pointing.to_off_axis_deg,
+                    pointing.to_max_off_axis_deg,
+                ),
+            ] {
+                if !angle.is_finite()
+                    || !limit.is_finite()
+                    || !(0.0..=180.0).contains(&angle)
+                    || !(0.0..=180.0).contains(&limit)
+                {
+                    return Err(format!("invalid optical pointing angle for {head}"));
+                }
+                if head_limits
+                    .insert(head, limit)
+                    .is_some_and(|previous| previous != limit)
+                {
+                    return Err(format!("inconsistent optical head pointing limit: {head}"));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -573,6 +638,38 @@ mod tests {
             .contains("invalid optical head outage"));
         s.optical_head_outages[0].end_ns = s.optical_head_outages[0].start_ns;
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn optical_pointing_requires_complete_finite_pat_envelopes() {
+        let mut s = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        s.optical_pointing.push(OpticalPointing {
+            link_id: "isl-a-b".into(),
+            from_off_axis_deg: 30.0,
+            to_off_axis_deg: 20.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 20.0,
+        });
+        s.validate().unwrap();
+        s.optical_pointing[0].to_off_axis_deg = f64::NAN;
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical pointing"));
+        s.optical_pointing[0].to_off_axis_deg = 20.0;
+        s.optical_pointing[0].from_max_off_axis_deg = -1.0;
+        assert!(s.validate().is_err());
+        s.optical_pointing[0].from_max_off_axis_deg = 30.0;
+        s.optical_pointing[0].link_id = "missing".into();
+        assert!(s.validate().unwrap_err().contains("unknown PAT"));
+        s.optical_pointing[0].link_id = "isl-a-b".into();
+        s.optical_pointing.push(s.optical_pointing[0].clone());
+        assert!(s.validate().is_err());
+        s.optical_pointing.clear();
+        s.validate().unwrap();
     }
 
     #[test]

@@ -3,7 +3,7 @@ use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySamp
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
-use ntarlink_spacecraft::HeadAvailability;
+use ntarlink_spacecraft::{pointing_allowed, HeadAvailability};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -674,6 +674,13 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .map(|config| (config.link_id.as_str(), config))
         .collect();
 
+    let pointing_by_link: HashMap<_, _> = scenario
+        .optical_pointing
+        .iter()
+        .map(|pointing| (pointing.link_id.as_str(), pointing))
+        .collect();
+    let mut pointing_rejections = Vec::new();
+
     // Faults at equal timestamps follow their original scenario order,
     // matching the packet scheduler's sequence order at priority zero.
     let mut faults_by_link: HashMap<&str, Vec<_>> = HashMap::new();
@@ -746,6 +753,19 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             let end_ns = contact.end_ns.min(up_end);
             if start_ns >= end_ns {
                 continue;
+            }
+            // SYS-02 rejects a candidate if either assumed off-boresight
+            // angle exceeds its configured head steering envelope.
+            if let Some(pointing) = pointing_by_link.get(contact.link_id.as_str()) {
+                if !pointing_allowed(pointing) {
+                    pointing_rejections.push(PatEventTrace {
+                        link_id: contact.link_id.clone(),
+                        at_ns: start_ns,
+                        state: "rejected",
+                        reason: Some("pointing_outside_envelope"),
+                    });
+                    continue;
+                }
             }
             // SYS-02 terminal outages further partition admin-up geometric
             // contacts. Each recovered segment must reacquire both heads.
@@ -834,7 +854,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // remain present and would incorrectly reject fully unacquirable links.
     prepared.optical_pat.clear();
     prepared.optical_head_outages.clear();
-    let events = plan
+    prepared.optical_pointing.clear();
+    let mut events: Vec<PatEventTrace> = plan
         .events
         .into_iter()
         .map(|event| {
@@ -864,6 +885,18 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             }
         })
         .collect();
+    events.extend(pointing_rejections);
+    events.sort_by(|a, b| {
+        let order = |state: &str| match state {
+            "lost" => 0,
+            "candidate" => 1,
+            "slewing" => 2,
+            "acquiring" => 3,
+            "tracking" => 4,
+            _ => 5,
+        };
+        (a.at_ns, order(a.state), &a.link_id).cmp(&(b.at_ns, order(b.state), &b.link_id))
+    });
     Ok((prepared, events))
 }
 
@@ -1136,6 +1169,63 @@ mod tests {
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn optical_pointing_envelope_rejects_unsteerable_link_without_forwarding() {
+        use ntarlink_contracts::OpticalPointing;
+        let mut scenario = pat_fixture();
+        scenario.optical_pointing.push(OpticalPointing {
+            link_id: "isl-a-b".into(),
+            from_off_axis_deg: 35.0,
+            to_off_axis_deg: 10.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 20.0,
+        });
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        assert!(!prepared.contacts.iter().any(|c| c.link_id == "isl-a-b"));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.state == "rejected" && e.reason == Some("pointing_outside_envelope"))
+                .count(),
+            2
+        );
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.delivered, 0);
+        assert_eq!(report.injected, report.dropped);
+        assert!(!report
+            .packets
+            .iter()
+            .flat_map(|p| &p.hops)
+            .any(|h| h.link_id == "isl-a-b"));
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn optical_pointing_envelope_accepts_exact_steering_boundary() {
+        use ntarlink_contracts::OpticalPointing;
+        let mut scenario = pat_fixture();
+        scenario.optical_pointing.push(OpticalPointing {
+            link_id: "isl-a-b".into(),
+            from_off_axis_deg: 30.0,
+            to_off_axis_deg: 20.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 20.0,
+        });
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        let starts: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|c| c.link_id == "isl-a-b")
+            .map(|c| c.start_ns)
+            .collect();
+        assert_eq!(starts, vec![20_000_000, 140_000_000]);
+        assert!(!events.iter().any(|e| e.state == "rejected"));
+        assert!(run(&scenario).unwrap().delivered > 0);
     }
 
     #[test]

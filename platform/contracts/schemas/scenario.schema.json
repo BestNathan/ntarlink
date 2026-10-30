@@ -70,6 +70,12 @@
       ],
       "description": "Static: unspecified orbital links remain available; scheduled: orbital links need a contact window to be usable."
     },
+    "optical_pointing": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/optical_pointing"},
+      "description": "Optional all-PAT-link static off-boresight angle assumptions and head steering limits in degrees; not an attitude solution."
+    },
     "optical_head_outages": {
       "type": "array",
       "maxItems": 10000,
@@ -298,6 +304,18 @@
           "minimum": 1,
           "description": "One-way geometric propagation delay in nanoseconds."
         }
+      }
+    },
+    "optical_pointing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["link_id", "from_off_axis_deg", "to_off_axis_deg", "from_max_off_axis_deg", "to_max_off_axis_deg"],
+      "properties": {
+        "link_id": {"type": "string", "minLength": 1},
+        "from_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
+        "to_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
+        "from_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
+        "to_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180}
       }
     },
     "optical_head_outage": {

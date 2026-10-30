@@ -57,6 +57,20 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"], r
           print("PAT fault recovery:", r["delivered"], "delivered,", r["dropped"], "dropped")
           PY
+      - name: Verify SYS-02 pointing envelope rejects geometrically visible ISL
+        run: |
+          python3 -m json.tool scenarios/optical-pointing-envelope.json > /dev/null
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-pointing-envelope.json --json > /tmp/ntarlink-pointing.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/ntarlink-pointing.json"))
+          rejected = [e for e in r["pat_events"] if e["state"] == "rejected" and e["reason"] == "pointing_outside_envelope"]
+          assert len(rejected) == 2, rejected
+          assert not any(e["state"] == "tracking" for e in r["pat_events"])
+          assert r["delivered"] == 0 and r["dropped"] == r["injected"] == 7, r
+          assert not any(h["link_id"] == "isl-a-b" for p in r["packets"] for h in p["hops"])
+          print("SYS-02 static pointing:", len(rejected), "rejected contacts")
+          PY
       - name: Verify SYS-02 optical head outage gates PAT and packet forwarding
         run: |
           python3 -m json.tool scenarios/optical-head-outage.json > /dev/null
