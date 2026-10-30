@@ -267,7 +267,7 @@ def compile_optical_geometry(scenario: dict, orbit: dict, attitude: dict, positi
 
 
 def audit_optical_pointing(scenario: dict, compiled: dict, position,
-                           probes_per_contact: int, attitude: dict | None = None) -> dict:
+                           probes_per_contact: int, attitude: dict) -> dict:
     """Reject contacts with sampled steering violations before artifact emission.
 
     Samples include the contact start, evenly spaced interior probes and the
@@ -280,8 +280,7 @@ def audit_optical_pointing(scenario: dict, compiled: dict, position,
     snapshots = {(g["link_id"], g["at_ns"]): g
                  for g in compiled["optical_geometry"]}
     links = {link["id"]: link for link in scenario["links"]}
-    heads = (_heads(attitude, scenario["duration_ns"])
-             if attitude is not None else None)
+    heads = _heads(attitude, scenario["duration_ns"])
     pat_by_link = {p["link_id"]: p for p in scenario["optical_pat"]}
     reports = []
     total_samples = 0
@@ -318,9 +317,8 @@ def audit_optical_pointing(scenario: dict, compiled: dict, position,
                 raise ValueError(f"degenerate optical separation at {key} time {at_ns}")
             for side_index, side in enumerate(("from", "to")):
                 ray = direction if side_index == 0 else tuple(-x for x in direction)
-                boresight = (g[f"{side}_boresight_itrs"] if heads is None
-                             else _boresight_at(
-                                 heads[pat_by_link[key[0]][f"{side}_head"]], at_ns))
+                boresight = _boresight_at(
+                    heads[pat_by_link[key[0]][f"{side}_head"]], at_ns)
                 unit_ray = _unit(ray, "optical line of sight")
                 unit_axis = _unit(tuple(boresight), "optical boresight")
                 cosine = sum(a * b for a, b in zip(unit_ray, unit_axis))
