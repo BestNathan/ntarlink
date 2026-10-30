@@ -169,16 +169,16 @@ class OpticalGeometryAdapterTests(unittest.TestCase):
     def test_pointing_probe_audit_passes_aligned_contacts_and_is_deterministic(self):
         compiled = compile_optical_geometry(self.scenario, self.orbit,
                                             self.attitude, self.aligned_position)
-        first = audit_optical_pointing(self.scenario, compiled, self.aligned_position, 1)
+        first = audit_optical_pointing(self.scenario, compiled, self.aligned_position, 1, self.attitude)
         self.assertEqual(first, audit_optical_pointing(
-            self.scenario, compiled, self.aligned_position, 1))
+            self.scenario, compiled, self.aligned_position, 1, self.attitude))
         self.assertEqual(first["contact_count"], 2)
         self.assertEqual(first["sample_count"], 6)
         self.assertEqual([c["sample_count"] for c in first["contacts"]], [3, 3])
         self.assertAlmostEqual(first["minimum_steering_margin_deg"], 30.0)
         self.assertEqual(first["contacts"][0]["end_ns"], 120_000_000)
         with self.assertRaisesRegex(ValueError, "probes_per_contact"):
-            audit_optical_pointing(self.scenario, compiled, self.aligned_position, 0)
+            audit_optical_pointing(self.scenario, compiled, self.aligned_position, 0, self.attitude)
 
     def test_probe_audit_catches_interior_and_last_microsecond_drift(self):
         for violation_ns in (60_000_000, 119_999_000):
@@ -192,7 +192,7 @@ class OpticalGeometryAdapterTests(unittest.TestCase):
                 # Start-only snapshots cannot observe the subsequent violation.
                 self.assertEqual(len(compiled["optical_geometry"]), 2)
                 with self.assertRaisesRegex(ValueError, "outside envelope"):
-                    audit_optical_pointing(self.scenario, compiled, drifting_position, 1)
+                    audit_optical_pointing(self.scenario, compiled, drifting_position, 1, self.attitude)
 
     def test_short_contact_probe_times_are_unique_and_half_open(self):
         self.scenario["contacts"] = [{
@@ -205,7 +205,7 @@ class OpticalGeometryAdapterTests(unittest.TestCase):
             return self.aligned_position(satellite, at_ns)
         compiled = compile_optical_geometry(self.scenario, self.orbit,
                                             self.attitude, position)
-        report = audit_optical_pointing(self.scenario, compiled, position, 7)
+        report = audit_optical_pointing(self.scenario, compiled, position, 7, self.attitude)
         self.assertEqual(report["sample_count"], 1)
         self.assertEqual(set(seen), {0})
 

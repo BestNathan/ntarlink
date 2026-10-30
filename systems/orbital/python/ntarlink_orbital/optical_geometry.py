@@ -1,14 +1,15 @@
-"""Offline SYS-01 SGP4 to SYS-02 fixed-attitude optical pointing adapter.
+"""Offline SYS-01 SGP4 to SYS-02 optical pointing snapshot adapter.
 
 Satellite positions are sampled from Skyfield in ITRS at geometric contact
-starts. Optional finite interior/end probes fail closed when the fixed-head
-steering envelope is violated at a sampled instant. Neither mode certifies
-continuous tracking or models attitude dynamics.
+starts. Optical-head attitudes may be fixed or interpolated from bounded,
+time-indexed body-to-ITRS quaternion samples. Optional finite steering probes
+fail closed on sampled violations; no continuous tracking is certified.
 """
 
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_right
 import hashlib
 import json
 import math
@@ -21,6 +22,7 @@ from .contacts import build_sgp4_provider, parse_utc
 MAX_INPUT_BYTES = 16_000_000
 MAX_CONTACTS = 10_000
 TIME_RESOLUTION_NS = 1_000
+MAX_ATTITUDE_SAMPLES = 100_000
 
 
 def _unique_object(pairs):
@@ -80,34 +82,107 @@ def _rotate_body_to_itrs(boresight: tuple[float, ...],
     ), "rotated boresight"))
 
 
-def _heads(config: dict) -> dict[str, dict]:
-    if config.get("frame") != "ITRS" or config.get("attitude_model") != "fixed_body_to_itrs_quaternion":
-        raise ValueError("attitude frame/model must be fixed_body_to_itrs_quaternion in ITRS")
+def _slerp(a: tuple[float, ...], b: tuple[float, ...],
+           fraction: float) -> tuple[float, ...]:
+    """Shortest-arc unit-quaternion interpolation (q and -q are equivalent)."""
+    dot = sum(x * y for x, y in zip(a, b))
+    if dot < 0.0:
+        b = tuple(-x for x in b)
+        dot = -dot
+    dot = min(1.0, max(-1.0, dot))
+    if dot > 0.9995:
+        return _unit(tuple((1.0 - fraction) * x + fraction * y
+                           for x, y in zip(a, b)), "interpolated quaternion")
+    theta = math.acos(dot)
+    denominator = math.sin(theta)
+    wa = math.sin((1.0 - fraction) * theta) / denominator
+    wb = math.sin(fraction * theta) / denominator
+    return _unit(tuple(wa * x + wb * y for x, y in zip(a, b)),
+                 "interpolated quaternion")
+
+
+def _boresight_at(head: dict, at_ns: int) -> list[float]:
+    if head["samples"] is None:
+        return head["boresight"]
+    times = head["times"]
+    if at_ns < times[0] or at_ns > times[-1]:
+        raise ValueError("attitude samples do not cover requested time")
+    index = bisect_right(times, at_ns) - 1
+    if index == len(times) - 1 or times[index] == at_ns:
+        quaternion = head["samples"][index]
+    else:
+        fraction = (at_ns - times[index]) / (times[index + 1] - times[index])
+        quaternion = _slerp(head["samples"][index], head["samples"][index + 1],
+                            fraction)
+    return _rotate_body_to_itrs(head["axis"], quaternion)
+
+
+def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
+    model = config.get("attitude_model")
+    if config.get("frame") != "ITRS" or model not in (
+            "fixed_body_to_itrs_quaternion", "sampled_body_to_itrs_quaternion"):
+        raise ValueError("attitude frame/model must use ITRS body-to-ITRS quaternions")
     entries = config.get("heads")
     if not isinstance(entries, list) or not entries or len(entries) > MAX_CONTACTS:
         raise ValueError("heads must be a nonempty bounded list")
     heads = {}
+    total_samples = 0
     for head in entries:
-        if not isinstance(head, dict) or set(head) != {
-            "head_id", "boresight_body", "body_to_itrs_quaternion_wxyz",
-            "max_off_axis_deg",
-        }:
+        fixed = model == "fixed_body_to_itrs_quaternion"
+        expected = {"head_id", "boresight_body", "max_off_axis_deg"}
+        expected.add("body_to_itrs_quaternion_wxyz" if fixed else "attitude_samples")
+        if not isinstance(head, dict) or set(head) != expected:
             raise ValueError("invalid optical head attitude contract")
         identifier = head["head_id"]
         if not isinstance(identifier, str) or not identifier or identifier in heads:
             raise ValueError("duplicate or invalid optical head ID")
-        axis = _unit(_vector(head["boresight_body"], "boresight_body", 3), "boresight_body")
-        quaternion = _vector(head["body_to_itrs_quaternion_wxyz"], "quaternion", 4)
-        if abs(math.hypot(*quaternion) - 1.0) > 1e-6:
-            raise ValueError("body-to-ITRS quaternion must be unit length")
-        quaternion = _unit(quaternion, "quaternion")
+        axis = _unit(_vector(head["boresight_body"], "boresight_body", 3),
+                     "boresight_body")
         limit = head["max_off_axis_deg"]
         if (isinstance(limit, bool) or not isinstance(limit, (int, float))
                 or not math.isfinite(limit) or not 0 <= limit <= 180):
             raise ValueError("max_off_axis_deg must be finite within [0, 180]")
+        samples = None
+        times = None
+        boresight = None
+        if fixed:
+            quaternion = _vector(head["body_to_itrs_quaternion_wxyz"],
+                                 "quaternion", 4)
+            if abs(math.hypot(*quaternion) - 1.0) > 1e-6:
+                raise ValueError("body-to-ITRS quaternion must be unit length")
+            boresight = _rotate_body_to_itrs(
+                axis, _unit(quaternion, "quaternion"))
+        else:
+            records = head["attitude_samples"]
+            if (not isinstance(records, list) or len(records) < 2
+                    or len(records) > MAX_ATTITUDE_SAMPLES):
+                raise ValueError("attitude_samples must contain 2 to 100000 samples")
+            total_samples += len(records)
+            if total_samples > MAX_ATTITUDE_SAMPLES:
+                raise ValueError("total attitude_samples exceed 100000")
+            times = []
+            samples = []
+            for record in records:
+                if (not isinstance(record, dict) or set(record) != {
+                        "at_ns", "body_to_itrs_quaternion_wxyz"}):
+                    raise ValueError("invalid attitude sample contract")
+                at_ns = record["at_ns"]
+                if (type(at_ns) is not int or at_ns < 0 or at_ns > duration_ns
+                        or at_ns % TIME_RESOLUTION_NS
+                        or (times and at_ns <= times[-1])):
+                    raise ValueError("attitude sample times must be ordered, unique and microsecond-aligned")
+                quaternion = _vector(record["body_to_itrs_quaternion_wxyz"],
+                                     "quaternion", 4)
+                if abs(math.hypot(*quaternion) - 1.0) > 1e-6:
+                    raise ValueError("body-to-ITRS quaternion must be unit length")
+                times.append(at_ns)
+                samples.append(_unit(quaternion, "quaternion"))
+            last_tick = ((duration_ns - 1) // TIME_RESOLUTION_NS) * TIME_RESOLUTION_NS
+            if times[0] != 0 or times[-1] < last_tick:
+                raise ValueError("attitude samples must cover the entire virtual-time interval")
         heads[identifier] = {
-            "boresight": _rotate_body_to_itrs(axis, quaternion),
-            "limit": float(limit),
+            "axis": axis, "boresight": boresight, "limit": float(limit),
+            "times": times, "samples": samples,
         }
     return heads
 
@@ -122,7 +197,7 @@ def compile_optical_geometry(scenario: dict, orbit: dict, attitude: dict, positi
     if type(duration) is not int or duration <= 0:
         raise ValueError("duration_ns must be a positive integer")
     parse_utc(orbit["epoch_utc"])
-    heads = _heads(attitude)
+    heads = _heads(attitude, duration)
     nodes = {n["id"]: n for n in scenario["nodes"]}
     links = {link["id"]: link for link in scenario["links"]}
     pats = scenario.get("optical_pat")
@@ -182,8 +257,8 @@ def compile_optical_geometry(scenario: dict, orbit: dict, attitude: dict, positi
         geometry.append({
             "link_id": contact["link_id"], "at_ns": at_ns, "frame": "ITRS",
             "from_position_m": vectors[0], "to_position_m": vectors[1],
-            "from_boresight_itrs": a["boresight"],
-            "to_boresight_itrs": b["boresight"],
+            "from_boresight_itrs": _boresight_at(a, at_ns),
+            "to_boresight_itrs": _boresight_at(b, at_ns),
             "from_max_off_axis_deg": a["limit"],
             "to_max_off_axis_deg": b["limit"],
         })
@@ -192,7 +267,7 @@ def compile_optical_geometry(scenario: dict, orbit: dict, attitude: dict, positi
 
 
 def audit_optical_pointing(scenario: dict, compiled: dict, position,
-                           probes_per_contact: int) -> dict:
+                           probes_per_contact: int, attitude: dict) -> dict:
     """Reject contacts with sampled steering violations before artifact emission.
 
     Samples include the contact start, evenly spaced interior probes and the
@@ -205,6 +280,8 @@ def audit_optical_pointing(scenario: dict, compiled: dict, position,
     snapshots = {(g["link_id"], g["at_ns"]): g
                  for g in compiled["optical_geometry"]}
     links = {link["id"]: link for link in scenario["links"]}
+    heads = _heads(attitude, scenario["duration_ns"])
+    pat_by_link = {p["link_id"]: p for p in scenario["optical_pat"]}
     reports = []
     total_samples = 0
     minimum_margin = math.inf
@@ -240,7 +317,8 @@ def audit_optical_pointing(scenario: dict, compiled: dict, position,
                 raise ValueError(f"degenerate optical separation at {key} time {at_ns}")
             for side_index, side in enumerate(("from", "to")):
                 ray = direction if side_index == 0 else tuple(-x for x in direction)
-                boresight = g[f"{side}_boresight_itrs"]
+                boresight = _boresight_at(
+                    heads[pat_by_link[key[0]][f"{side}_head"]], at_ns)
                 unit_ray = _unit(ray, "optical line of sight")
                 unit_axis = _unit(tuple(boresight), "optical boresight")
                 cosine = sum(a * b for a, b in zip(unit_ray, unit_axis))
@@ -306,7 +384,7 @@ def main(argv=None):
                                   args.orbit_config.resolve().parent)
     compiled = compile_optical_geometry(scenario, orbit, attitude, provider)
     audit = (audit_optical_pointing(scenario, compiled, provider,
-                                    args.pointing_probes_per_contact)
+                                    args.pointing_probes_per_contact, attitude)
              if args.pointing_probes_per_contact is not None else None)
     output = (json.dumps(compiled, indent=2, allow_nan=False) + "\n").encode()
     manifest = {
@@ -319,9 +397,10 @@ def main(argv=None):
         "attitude_input_sha256": hashlib.sha256(attitude_bytes).hexdigest(),
         "frame": "ITRS", "time_scale": "UTC", "epoch_utc": orbit["epoch_utc"],
         "snapshot_count": len(compiled["optical_geometry"]),
+        "attitude_model": attitude["attitude_model"],
         "pointing_probe_audit": audit,
         "earth_orientation": getattr(provider, "earth_orientation", {"mode": "external_provider"}),
-        "limitations": "fixed body-to-ITRS attitude; optional finite probes do not bound inter-sample pointing or model optical PHY",
+        "limitations": "operator-supplied fixed or sampled body-to-ITRS attitude; finite probes do not bound inter-sample pointing or model runtime tracking loss or optical PHY",
     }
     _atomic_write(args.out, output)
     _atomic_write(manifest_path, (json.dumps(manifest, indent=2, allow_nan=False) + "\n").encode())
