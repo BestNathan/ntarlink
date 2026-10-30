@@ -32,9 +32,25 @@ resource per optical head, with nonpreemptive earliest-start/link-ID priority.
 This is not physical pointing-angle validation, optical power or detector
 budget, spacecraft attitude/thermal constraints, probabilistic acquisition,
 tracking degradation, recovery from mid-contact faults, or measured Starlink
-laser behavior. The planner is not yet connected to Rust packet forwarding,
-routing or SYS-02 state; `AcquiredWindow` is a prospective integration
-contract, not an active data-plane link. Sorting costs O(N log N), with
+laser behavior. The planner now has an **opt-in** bridge to the Rust packet runtime:
+`optical_pat[]` in a scheduled-contact scenario declares directed optical
+links, endpoint-owned head identifiers, and dwell assumptions. The runtime
+uses acquired tracking intervals as effective optical contacts; no packets
+may enter a configured optical link before acquisition. Contact transitions
+trigger the existing delayed route recomputation and are visible alongside
+planned `pat_events` in the JSON report. Other links remain unchanged.
+
+Run the cross-subsystem fixture:
+
+```sh
+cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-acquisition.json --json
+```
+
+The bridge is deterministic **offline planning**, not a live optical PHY,
+actual optical bearer, attitude/pointing model, or fault-driven reacquisition.
+The existing completion-after-departure packet policy applies at contact
+expiry. `AcquiredWindow` gates modeled packet forwarding only; SYS-02
+availability and physical laser constraints remain future work. Sorting costs O(N log N), with
 O(N) output and head-reservation state bounded by input size.
 
 See [SYS-03 design](../../docs/subsystems/03-space-network.md) and
