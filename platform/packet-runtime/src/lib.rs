@@ -720,6 +720,10 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             Some(acquired)
         })
         .collect();
+    // These contacts are already PAT-gated; validate them as packet contacts.
+    // Keeping the original PAT configuration would require rejected contacts to
+    // remain present and would incorrectly reject fully unacquirable links.
+    prepared.optical_pat.clear();
     let events = plan
         .events
         .into_iter()
