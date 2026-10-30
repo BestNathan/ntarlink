@@ -70,6 +70,12 @@
       ],
       "description": "Static: unspecified orbital links remain available; scheduled: orbital links need a contact window to be usable."
     },
+    "optical_head_outages": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/optical_head_outage"},
+      "description": "SYS-02 half-open head unavailability windows, only for configured optical_pat heads."
+    },
     "optical_pat": {
       "type": "array",
       "maxItems": 10000,
@@ -292,6 +298,16 @@
           "minimum": 1,
           "description": "One-way geometric propagation delay in nanoseconds."
         }
+      }
+    },
+    "optical_head_outage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head_id", "start_ns", "end_ns"],
+      "properties": {
+        "head_id": {"type": "string", "minLength": 1},
+        "start_ns": {"type": "integer", "minimum": 0},
+        "end_ns": {"type": "integer", "minimum": 1}
       }
     },
     "optical_pat_link": {
