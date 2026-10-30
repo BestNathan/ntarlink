@@ -141,7 +141,7 @@ historical ISS SGP4/ITRS smoke. No multi-orbit licensed catalog is bundled,
 and no large-scale measurements are claimed. See
 [catalog intake design](design/orbital-tle-catalog-intake.md).
 
-
+## SGP4 phase-boundary resident-memory observations
 
 The production SGP4/ITRS benchmark now records three Linux current-RSS
 checkpoints (before provider build, after provider build, and after position
