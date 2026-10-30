@@ -674,15 +674,17 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .contacts
         .iter()
         .filter_map(|contact| {
-            configs.get(contact.link_id.as_str()).map(|config| PatCandidate {
-                link_id: contact.link_id.clone(),
-                from_head: config.from_head.clone(),
-                to_head: config.to_head.clone(),
-                start_ns: contact.start_ns,
-                end_ns: contact.end_ns,
-                slew_ns: config.slew_ns,
-                acquisition_ns: config.acquisition_ns,
-            })
+            configs
+                .get(contact.link_id.as_str())
+                .map(|config| PatCandidate {
+                    link_id: contact.link_id.clone(),
+                    from_head: config.from_head.clone(),
+                    to_head: config.to_head.clone(),
+                    start_ns: contact.start_ns,
+                    end_ns: contact.end_ns,
+                    slew_ns: config.slew_ns,
+                    acquisition_ns: config.acquisition_ns,
+                })
         })
         .collect();
     let plan = plan_contacts(&candidates)?;
@@ -888,8 +890,10 @@ mod tests {
     }
 
     fn pat_fixture() -> Scenario {
-        Scenario::from_json(include_str!("../../../scenarios/optical-pat-acquisition.json"))
-            .unwrap()
+        Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap()
     }
 
     #[test]
@@ -899,7 +903,10 @@ mod tests {
         assert_eq!(report.injected, 7);
         assert!(report.delivered > 0 && report.dropped > 0);
         assert_eq!(report.injected, report.delivered + report.dropped);
-        assert_eq!(report.fidelity, "l1_scheduled_contact_pat_gate_packet_model");
+        assert_eq!(
+            report.fidelity,
+            "l1_scheduled_contact_pat_gate_packet_model"
+        );
         let tracking: Vec<_> = report
             .pat_events
             .iter()
@@ -932,7 +939,9 @@ mod tests {
     #[test]
     fn short_geometric_contact_never_opens_optical_packet_link() {
         let mut scenario = pat_fixture();
-        scenario.contacts.retain(|c| c.link_id != "isl-a-b" || c.start_ns == 0);
+        scenario
+            .contacts
+            .retain(|c| c.link_id != "isl-a-b" || c.start_ns == 0);
         let optical = scenario
             .contacts
             .iter_mut()
@@ -942,9 +951,10 @@ mod tests {
         let report = run(&scenario).unwrap();
         assert_eq!(report.delivered, 0);
         assert!(report.pat_events.iter().any(|e| e.state == "rejected"));
-        assert!(!report.control_events.iter().any(|e| {
-            e.kind == "contact_open" && e.link_id.as_deref() == Some("isl-a-b")
-        }));
+        assert!(!report
+            .control_events
+            .iter()
+            .any(|e| { e.kind == "contact_open" && e.link_id.as_deref() == Some("isl-a-b") }));
     }
 
     #[test]
@@ -957,7 +967,12 @@ mod tests {
             latitude_deg: None,
             longitude_deg: None,
         });
-        let mut second_link = scenario.links.iter().find(|l| l.id == "isl-a-b").unwrap().clone();
+        let mut second_link = scenario
+            .links
+            .iter()
+            .find(|l| l.id == "isl-a-b")
+            .unwrap()
+            .clone();
         second_link.id = "isl-a-c".into();
         second_link.to = "sat-c".into();
         scenario.links.push(second_link);
@@ -976,12 +991,14 @@ mod tests {
             acquisition_ns: 10_000_000,
         });
         let report = run(&scenario).unwrap();
-        assert!(report.pat_events.iter().any(|e| {
-            e.link_id == "isl-a-c" && e.state == "rejected"
-        }));
-        assert!(!report.control_events.iter().any(|e| {
-            e.link_id.as_deref() == Some("isl-a-c") && e.kind == "contact_open"
-        }));
+        assert!(report
+            .pat_events
+            .iter()
+            .any(|e| { e.link_id == "isl-a-c" && e.state == "rejected" }));
+        assert!(!report
+            .control_events
+            .iter()
+            .any(|e| { e.link_id.as_deref() == Some("isl-a-c") && e.kind == "contact_open" }));
     }
 
     #[test]
@@ -993,14 +1010,30 @@ mod tests {
             .find(|c| c.link_id == "isl-a-b" && c.start_ns == 0)
             .unwrap();
         optical.propagation_delay_samples = vec![
-            PropagationDelaySample { at_ns: 0, delay_ns: 2_000_000 },
-            PropagationDelaySample { at_ns: 119_999_999, delay_ns: 4_000_000 },
+            PropagationDelaySample {
+                at_ns: 0,
+                delay_ns: 2_000_000,
+            },
+            PropagationDelaySample {
+                at_ns: 119_999_999,
+                delay_ns: 4_000_000,
+            },
         ];
         let (prepared, _) = prepare_pat(&scenario).unwrap();
-        let gated = prepared.contacts.iter().find(|c| c.link_id == "isl-a-b").unwrap();
+        let gated = prepared
+            .contacts
+            .iter()
+            .find(|c| c.link_id == "isl-a-b")
+            .unwrap();
         assert_eq!(gated.start_ns, 20_000_000);
-        assert_eq!(gated.propagation_delay_samples.first().unwrap().at_ns, 20_000_000);
-        assert_eq!(gated.propagation_delay_samples.last().unwrap().at_ns, 119_999_999);
+        assert_eq!(
+            gated.propagation_delay_samples.first().unwrap().at_ns,
+            20_000_000
+        );
+        assert_eq!(
+            gated.propagation_delay_samples.last().unwrap().at_ns,
+            119_999_999
+        );
         prepared.validate().unwrap();
         assert!(run(&scenario).unwrap().delivered > 0);
     }
