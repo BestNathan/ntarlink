@@ -109,6 +109,28 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install -e systems/orbital/python -e systems/access/python
+      - name: Verify SGP4-derived SYS-02 optical pointing through PAT packet forwarding
+        run: |
+          python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json scenarios/optical-sgp4-attitude.synthetic.json --out /tmp/optical-sgp4-compiled.json
+          cargo run -p ntarlink-cli -- validate /tmp/optical-sgp4-compiled.json
+          cargo run -p ntarlink-cli -- simulate /tmp/optical-sgp4-compiled.json --json > /tmp/optical-sgp4-report.json
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          compiled = Path("/tmp/optical-sgp4-compiled.json")
+          scenario = json.loads(compiled.read_text())
+          manifest = json.loads(Path(str(compiled) + ".optical-manifest.json").read_text())
+          geometry = scenario["optical_geometry"]
+          assert len(geometry) == manifest["snapshot_count"] == 2
+          assert manifest["artifact_sha256"] == hashlib.sha256(compiled.read_bytes()).hexdigest()
+          assert [g["at_ns"] for g in geometry] == [0, 120000000]
+          assert all(g["frame"] == "ITRS" and g["from_position_m"] != g["to_position_m"] for g in geometry)
+          report = json.loads(Path("/tmp/optical-sgp4-report.json").read_text())
+          tracking = [e["at_ns"] for e in report["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 140000000], tracking
+          assert report["delivered"] > 0 and report["injected"] == report["delivered"] + report["dropped"]
+          print("Synthetic two-orbit SGP4 optical PAT:", len(geometry), "snapshots,", report["delivered"], "delivered")
+          PY
       - name: Generate real SGP4 visibility windows and run the Rust packet engine
         run: |
           python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json
