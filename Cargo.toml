@@ -6,6 +6,7 @@ members = [
     "systems/network-control",
     "systems/access/rust",
     "systems/space-network/rust",
+    "systems/spacecraft/rust",
     "applications/cli",
 ]
 resolver = "2"
