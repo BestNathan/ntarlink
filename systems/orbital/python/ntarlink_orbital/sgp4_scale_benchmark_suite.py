@@ -20,6 +20,7 @@ from .ephemeris_benchmark_suite import (
     MAX_REPETITIONS, MAX_WORKER_SECONDS, _positive_int, _process_peak_rss_bytes,
 )
 from .sgp4_scale_benchmark import CATALOG_MODES, MAX_SATELLITES
+from .tle_catalog_verify import load_verified_catalog
 
 WORKLOADS = {
     "replicated": "repeated_historical_tle_sgp4_itrs_positions",
@@ -55,7 +56,8 @@ def _validate_workload(source: Path, satellites: int, samples: int,
 
 
 def _run_worker(source: Path, satellites: int, samples: int,
-                catalog_mode: str = "replicated") -> dict:
+                catalog_mode: str = "replicated",
+                catalog_manifest: Path | None = None) -> dict:
     with tempfile.TemporaryDirectory(prefix="ntarlink-sgp4-suite-") as directory:
         report = Path(directory) / "run.json"
         command = [
@@ -64,6 +66,8 @@ def _run_worker(source: Path, satellites: int, samples: int,
             "--samples-per-satellite", str(samples), "--catalog-mode", catalog_mode,
             "--report", str(report),
         ]
+        if catalog_manifest is not None:
+            command.extend(["--catalog-manifest", str(catalog_manifest)])
         subprocess.run(command, check=True, capture_output=True, text=True,
                        timeout=MAX_WORKER_SECONDS)
         return json.loads(report.read_text(encoding="utf-8"))
@@ -74,15 +78,24 @@ def _positive_finite(value: object) -> bool:
 
 
 def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
-              repetitions: int = 3, catalog_mode: str = "replicated") -> dict:
+              repetitions: int = 3, catalog_mode: str = "replicated",
+              catalog_manifest: Path | None = None) -> dict:
     """Validate a workload, repeat it in isolated processes, and aggregate medians.
 
     Timing excludes interpreter startup and imports; process RSS includes both.
     Linux VmRSS checkpoints are current values, not per-stage peaks or deltas.
     """
     source = Path(orbit_config).resolve()
+    manifest_path = Path(catalog_manifest).resolve() if catalog_manifest is not None else None
+    manifest_digest = None
+    if manifest_path is not None:
+        if catalog_mode != "unique":
+            raise ValueError("catalog manifest requires unique catalog mode")
+        _, manifest_digest = load_verified_catalog(source, manifest_path)
     _validate_workload(source, satellites, samples_per_satellite, repetitions, catalog_mode)
-    runs = [_run_worker(source, satellites, samples_per_satellite, catalog_mode)
+    runs = [(_run_worker(source, satellites, samples_per_satellite, catalog_mode)
+             if manifest_path is None else
+             _run_worker(source, satellites, samples_per_satellite, catalog_mode, manifest_path))
             for _ in range(repetitions)]
     first = runs[0]
     sample_count = satellites * samples_per_satellite
@@ -96,7 +109,9 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
                 or run.get("source_config_sha256") != first.get("source_config_sha256")
                 or run.get("position_digest_sha256") != first.get("position_digest_sha256")
                 or run.get("source_tle_count") != first.get("source_tle_count")
-                or run.get("unique_source_tle_count") != first.get("unique_source_tle_count")):
+                or run.get("unique_source_tle_count") != first.get("unique_source_tle_count")
+                or (manifest_path is not None and
+                    run.get("catalog_manifest_sha256") != manifest_digest)):
             raise RuntimeError("SGP4 repetitions disagree on deterministic workload or digest")
         if any(not _positive_finite(run.get(key)) for key in (
             "provider_build_wall_seconds", "propagation_wall_seconds",
@@ -148,6 +163,7 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
         "source_tle_count": first["source_tle_count"],
         "unique_source_tle_count": first["unique_source_tle_count"],
         "source_config_sha256": first["source_config_sha256"],
+        "catalog_manifest_sha256": manifest_digest,
         "position_digest_sha256": first["position_digest_sha256"],
         "repetitions": repetitions,
         "median_provider_build_wall_seconds": statistics.median(
@@ -186,6 +202,8 @@ def main(argv=None) -> None:
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--catalog-mode", choices=CATALOG_MODES, default="replicated")
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--catalog-manifest", type=Path,
+                        help="Verify a pinned offline intake manifest (unique mode only)")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
@@ -194,14 +212,21 @@ def main(argv=None) -> None:
         source = args.orbit_config.resolve()
         _validate_workload(source, args.satellites, args.samples_per_satellite, 1,
                            args.catalog_mode)
-        output = benchmark(json.loads(source.read_text(encoding="utf-8")),
-                           args.satellites, args.samples_per_satellite, source.parent,
-                           args.catalog_mode)
+        if args.catalog_manifest is not None:
+            if args.catalog_mode != "unique":
+                raise ValueError("catalog manifest requires unique catalog mode")
+            config, manifest_digest = load_verified_catalog(source, args.catalog_manifest)
+        else:
+            config = json.loads(source.read_text(encoding="utf-8"))
+            manifest_digest = None
+        output = benchmark(config, args.satellites, args.samples_per_satellite,
+                           source.parent, args.catalog_mode)
+        output["catalog_manifest_sha256"] = manifest_digest
         output["process_peak_rss_bytes"] = _process_peak_rss_bytes()
     else:
         output = run_suite(args.orbit_config, args.satellites,
                            args.samples_per_satellite, args.repetitions,
-                           args.catalog_mode)
+                           args.catalog_mode, args.catalog_manifest)
     rendered = json.dumps(output, sort_keys=True, indent=2, allow_nan=False) + "\n"
     if args.report is not None:
         args.report.write_text(rendered, encoding="utf-8")
