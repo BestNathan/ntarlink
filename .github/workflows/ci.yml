@@ -39,6 +39,24 @@ jobs:
           python3 -m json.tool scenarios/optical-pat-acquisition.json > /dev/null
           cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-acquisition.json --json > /tmp/ntarlink-pat-report.json
           python3 -c 'import json; r=json.load(open("/tmp/ntarlink-pat-report.json")); t=[e["at_ns"] for e in r["pat_events"] if e["state"]=="tracking"]; assert t==[20000000,140000000], t; assert r["delivered"]>0 and r["dropped"]>0 and r["injected"]==r["delivered"]+r["dropped"], r; h=[h for p in r["packets"] for h in p["hops"] if h["link_id"]=="isl-a-b"]; assert h and all(20000000<=v["transmit_started_ns"]<120000000 or 140000000<=v["transmit_started_ns"]<200000000 for v in h), h; print("PAT packet gate:",r["delivered"],"delivered,",r["dropped"],"dropped")'
+      - name: Verify optical PAT fault releases and reacquires tracking
+        run: |
+          python3 -m json.tool scenarios/optical-pat-link-fault.json > /dev/null
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-link-fault.json --json > /tmp/ntarlink-pat-fault-report.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/ntarlink-pat-fault-report.json"))
+          tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 90000000, 140000000], tracking
+          assert any(e["at_ns"] == 50000000 and e["state"] == "lost" and e["reason"] == "administrative_link_down" for e in r["pat_events"])
+          assert any(e["kind"] == "contact_open" and e["link_id"] == "isl-a-b" and e["at_ns"] == 90000000 for e in r["control_events"])
+          windows = [(20000000, 50000000), (90000000, 120000000), (140000000, 200000000)]
+          hops = [h for p in r["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          assert hops and all(any(start <= h["transmit_started_ns"] < end for start, end in windows) for h in hops), hops
+          assert any(90000000 <= h["transmit_started_ns"] < 120000000 for h in hops), hops
+          assert r["injected"] == r["delivered"] + r["dropped"], r
+          print("PAT fault recovery:", r["delivered"], "delivered,", r["dropped"], "dropped")
+          PY
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
