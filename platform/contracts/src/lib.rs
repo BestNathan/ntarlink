@@ -814,36 +814,65 @@ impl Scenario {
             let mut limits: std::collections::HashMap<&str, f64> =
                 std::collections::HashMap::new();
             for sample in &self.optical_geometry_samples {
-                let pat = self.optical_pat.iter().find(|pat| pat.link_id == sample.link_id)
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == sample.link_id)
                     .ok_or_else(|| format!("unknown PAT ITRS sample link: {}", sample.link_id))?;
                 if sample.at_ns >= self.duration_ns {
-                    return Err(format!("optical ITRS sample out of horizon: {}", sample.link_id));
+                    return Err(format!(
+                        "optical ITRS sample out of horizon: {}",
+                        sample.link_id
+                    ));
                 }
                 if let Some(previous) = last_by_link.insert(&sample.link_id, sample.at_ns) {
                     if sample.at_ns <= previous {
-                        return Err(format!("optical ITRS samples must be strictly increasing: {}", sample.link_id));
+                        return Err(format!(
+                            "optical ITRS samples must be strictly increasing: {}",
+                            sample.link_id
+                        ));
                     }
                 } else if sample.at_ns != 0 {
-                    return Err(format!("optical ITRS samples must start at zero: {}", sample.link_id));
+                    return Err(format!(
+                        "optical ITRS samples must start at zero: {}",
+                        sample.link_id
+                    ));
                 }
                 if sample.frame != "ITRS" {
-                    return Err(format!("optical ITRS sample requires ITRS frame: {}", sample.link_id));
+                    return Err(format!(
+                        "optical ITRS sample requires ITRS frame: {}",
+                        sample.link_id
+                    ));
                 }
                 for vector in [
-                    sample.from_position_m, sample.to_position_m,
-                    sample.from_boresight_itrs, sample.to_boresight_itrs,
+                    sample.from_position_m,
+                    sample.to_position_m,
+                    sample.from_boresight_itrs,
+                    sample.to_boresight_itrs,
                 ] {
-                    if vector.iter().any(|value| !value.is_finite() || value.abs() > 1.0e12) {
-                        return Err(format!("invalid optical ITRS sample vector: {}", sample.link_id));
+                    if vector
+                        .iter()
+                        .any(|value| !value.is_finite() || value.abs() > 1.0e12)
+                    {
+                        return Err(format!(
+                            "invalid optical ITRS sample vector: {}",
+                            sample.link_id
+                        ));
                     }
                 }
                 for boresight in [sample.from_boresight_itrs, sample.to_boresight_itrs] {
                     if boresight.iter().all(|value| *value == 0.0) {
-                        return Err(format!("zero optical ITRS sample boresight: {}", sample.link_id));
+                        return Err(format!(
+                            "zero optical ITRS sample boresight: {}",
+                            sample.link_id
+                        ));
                     }
                 }
                 if sample.from_position_m == sample.to_position_m {
-                    return Err(format!("coincident optical ITRS sample positions: {}", sample.link_id));
+                    return Err(format!(
+                        "coincident optical ITRS sample positions: {}",
+                        sample.link_id
+                    ));
                 }
                 for (head, limit) in [
                     (pat.from_head.as_str(), sample.from_max_off_axis_deg),
@@ -852,7 +881,10 @@ impl Scenario {
                     if !limit.is_finite() || !(0.0..=180.0).contains(&limit) {
                         return Err(format!("invalid optical ITRS sample steering limit: {head}"));
                     }
-                    if limits.insert(head, limit).is_some_and(|previous| previous != limit) {
+                    if limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
                         return Err(format!("inconsistent optical ITRS sample head limit: {head}"));
                     }
                 }
@@ -860,7 +892,11 @@ impl Scenario {
             if last_by_link.len() != pat_links.len() {
                 return Err("optical ITRS samples must cover every PAT link".into());
             }
-            if self.faults.iter().any(|fault| fault.cause == FaultCause::SampledPointing) {
+            if self
+                .faults
+                .iter()
+                .any(|fault| fault.cause == FaultCause::SampledPointing)
+            {
                 return Err("sampled pointing faults cannot mix with optical ITRS samples".into());
             }
         }
