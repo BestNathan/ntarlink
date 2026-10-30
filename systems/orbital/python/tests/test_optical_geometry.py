@@ -100,7 +100,7 @@ class OpticalGeometryAdapterTests(unittest.TestCase):
                 boresight_body=[0, 0, 0])),
             ("max_off_axis_deg", lambda: self.attitude["heads"][0].update(
                 max_off_axis_deg=float("nan"))),
-            ("owned optical head", lambda: self.attitude["heads"][0].update(
+            ("incorrectly owned optical head", lambda: self.attitude["heads"][0].update(
                 head_id="sat-b/wrong")),
         ]
         for message, modify in cases:
