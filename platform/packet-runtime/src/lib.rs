@@ -1,5 +1,7 @@
 use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
-use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySample, Scenario};
+use ntarlink_contracts::{
+    ContactMode, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario,
+};
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
@@ -689,7 +691,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Faults at equal timestamps follow their original scenario order,
     // matching the packet scheduler's sequence order at priority zero.
     let mut faults_by_link: HashMap<&str, Vec<_>> = HashMap::new();
-    let mut down_faults = HashSet::new();
+    let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
     for (index, fault) in scenario.faults.iter().enumerate() {
         if configs.contains_key(fault.link_id.as_str()) {
             faults_by_link
@@ -697,7 +699,9 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 .or_default()
                 .push((index, fault));
             if matches!(fault.action, LinkAction::Down) {
-                down_faults.insert((fault.link_id.as_str(), fault.at_ns));
+                down_faults
+                    .entry((fault.link_id.as_str(), fault.at_ns))
+                    .or_insert(fault.cause);
             }
         }
     }
@@ -873,6 +877,14 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Keeping the original PAT configuration would require rejected contacts to
     // remain present and would incorrectly reject fully unacquirable links.
     prepared.optical_pat.clear();
+    // The prepared packet scenario no longer owns PAT metadata. Its link
+    // availability is already gated; keep only the legacy fault semantics
+    // internally while preserving typed provenance in the PAT event trace.
+    for fault in &mut prepared.faults {
+        if fault.cause == FaultCause::SampledPointing {
+            fault.cause = FaultCause::Administrative;
+        }
+    }
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
     prepared.optical_geometry.clear();
@@ -881,9 +893,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .into_iter()
         .map(|event| {
             let reason = if event.state == PatState::Lost
-                && down_faults.contains(&(event.link_id.as_str(), event.at_ns))
+                && down_faults.contains_key(&(event.link_id.as_str(), event.at_ns))
             {
-                Some("administrative_link_down")
+                Some(match down_faults[&(event.link_id.as_str(), event.at_ns)] {
+                    FaultCause::Administrative => "administrative_link_down",
+                    FaultCause::SampledPointing => "sampled_pointing_loss",
+                })
             } else if event.state == PatState::Lost
                 && head_downs.contains(&(event.link_id.as_str(), event.at_ns))
             {
@@ -1126,11 +1141,13 @@ mod tests {
                 at_ns: 50_000_000,
                 link_id: "isl-a-b".into(),
                 action: LinkAction::Down,
+                cause: FaultCause::Administrative,
             },
             Fault {
                 at_ns: 70_000_000,
                 link_id: "isl-a-b".into(),
                 action: LinkAction::Up,
+                cause: FaultCause::Administrative,
             },
         ];
         scenario.flows[0].packet_count = 18;
@@ -1185,6 +1202,50 @@ mod tests {
         assert!(optical_hops
             .iter()
             .any(|hop| (90_000_000..120_000_000).contains(&hop.transmit_started_ns)));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn sampled_pointing_loss_has_distinct_pat_reason_and_reacquires() {
+        use ntarlink_contracts::Fault;
+        let mut scenario = pat_fixture();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::SampledPointing,
+            },
+            Fault {
+                at_ns: 90_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::SampledPointing,
+            },
+        ];
+        let report = run(&scenario).unwrap();
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000
+                && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        assert_eq!(
+            report
+                .pat_events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![20_000_000, 110_000_000, 140_000_000]
+        );
+        assert!(report
+            .control_events
+            .iter()
+            .any(|event| { event.kind == "link_down" && event.at_ns == 30_000_000 }));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
@@ -1406,6 +1467,7 @@ mod tests {
             at_ns: 50_000_000,
             link_id: "isl-a-b".into(),
             action: LinkAction::Up,
+            cause: FaultCause::Administrative,
         });
         let (prepared, events) = prepare_pat(&scenario).unwrap();
         assert!(events
@@ -1450,6 +1512,7 @@ mod tests {
             at_ns: 50_000_000,
             link_id: "isl-a-b".into(),
             action: LinkAction::Up,
+            cause: FaultCause::Administrative,
         });
         let (prepared, events) = prepare_pat(&scenario).unwrap();
         assert_eq!(
@@ -1508,11 +1571,13 @@ mod tests {
                 at_ns: 50_000_000,
                 link_id: "isl-a-b".into(),
                 action: LinkAction::Down,
+                cause: FaultCause::Administrative,
             },
             Fault {
                 at_ns: 90_000_000,
                 link_id: "isl-a-b".into(),
                 action: LinkAction::Up,
+                cause: FaultCause::Administrative,
             },
         ];
         let (prepared, events) = prepare_pat(&scenario).unwrap();
@@ -1537,11 +1602,13 @@ mod tests {
                 at_ns: 50_000_000,
                 link_id: "isl-a-b".into(),
                 action: LinkAction::Down,
+                cause: FaultCause::Administrative,
             },
             Fault {
                 at_ns: 70_000_000,
                 link_id: "isl-a-b".into(),
                 action: LinkAction::Up,
+                cause: FaultCause::Administrative,
             },
         ];
         let contact = scenario
@@ -1839,6 +1906,7 @@ mod tests {
             at_ns: 20_000_000,
             link_id: "user-ue-a".into(),
             action: ntarlink_contracts::LinkAction::Down,
+            cause: FaultCause::Administrative,
         });
         let result = run(&scenario).unwrap();
         assert!(result.dropped > 0);

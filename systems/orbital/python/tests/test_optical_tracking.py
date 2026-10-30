@@ -33,11 +33,13 @@ class SampledTrackingTests(unittest.TestCase):
         compiled = compile_optical_geometry(source, orbit(), config, position)
         result, plan = compile_pointing_faults(source, compiled, position, 3, config)
         self.assertEqual(result["faults"], [
-            {"at_ns": 30_000_000, "link_id": "isl", "action": "down"},
-            {"at_ns": 90_000_000, "link_id": "isl", "action": "up"},
+            {"at_ns": 30_000_000, "link_id": "isl", "action": "down", "cause": "sampled_pointing"},
+            {"at_ns": 90_000_000, "link_id": "isl", "action": "up", "cause": "sampled_pointing"},
         ])
         self.assertEqual(plan["sample_count"], 10)
         self.assertEqual(plan["derived_fault_count"], 2)
+        self.assertTrue(all(edge["cause"] == "sampled_pointing"
+                            for edge in plan["contacts"][0]["edges"]))
         self.assertEqual(result["optical_geometry"], compiled["optical_geometry"])
         self.assertEqual((result, plan), compile_pointing_faults(
             source, compiled, position, 3, config))
@@ -54,10 +56,10 @@ class SampledTrackingTests(unittest.TestCase):
         compiled = compile_optical_geometry(source, orbit(), config, position)
         result, plan = compile_pointing_faults(source, compiled, position, 3, config)
         self.assertEqual(result["faults"][0], {
-            "at_ns": 30_000_000, "link_id": "isl", "action": "down",
+            "at_ns": 30_000_000, "link_id": "isl", "action": "down", "cause": "sampled_pointing",
         })
         self.assertEqual(result["faults"][-1], {
-            "at_ns": 120_000_000, "link_id": "isl", "action": "up",
+            "at_ns": 120_000_000, "link_id": "isl", "action": "up", "cause": "sampled_pointing",
         })
         self.assertEqual(plan["sample_count"], 5)
 

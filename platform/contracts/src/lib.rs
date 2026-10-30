@@ -71,12 +71,30 @@ pub enum LinkAction {
     Down,
 }
 
+/// Provenance for a scheduled link transition, not a physical measurement.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultCause {
+    #[default]
+    Administrative,
+    SampledPointing,
+}
+
+impl FaultCause {
+    fn is_administrative(&self) -> bool {
+        *self == Self::Administrative
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fault {
     pub at_ns: u64,
     pub link_id: String,
     pub action: LinkAction,
+    /// Legacy faults default to administrative; omit this field on serialization.
+    #[serde(default, skip_serializing_if = "FaultCause::is_administrative")]
+    pub cause: FaultCause,
 }
 
 /// A sampled one-way geometric propagation delay in scenario-relative nanoseconds.
@@ -393,6 +411,17 @@ impl Scenario {
         for fault in &self.faults {
             if fault.at_ns >= self.duration_ns || !link_ids.contains(&fault.link_id) {
                 return Err(format!("invalid fault target or time: {}", fault.link_id));
+            }
+            if fault.cause == FaultCause::SampledPointing
+                && !self
+                    .optical_pat
+                    .iter()
+                    .any(|pat| pat.link_id == fault.link_id)
+            {
+                return Err(format!(
+                    "sampled pointing fault requires an optical PAT link: {}",
+                    fault.link_id
+                ));
             }
         }
         if self.contacts.len() > 500_000 {
@@ -959,6 +988,35 @@ mod tests {
         s.access_beams.pop();
         s.access_beams[0].capacity_bps = 1;
         assert!(s.validate().unwrap_err().contains("frame capacity"));
+    }
+
+    #[test]
+    fn sampled_pointing_fault_cause_is_typed_and_backward_compatible() {
+        let legacy = r#"{"at_ns":10,"link_id":"isl-a-b","action":"down"}"#;
+        let fault: Fault = serde_json::from_str(legacy).unwrap();
+        assert_eq!(fault.cause, FaultCause::Administrative);
+        assert_eq!(serde_json::to_string(&fault).unwrap(), legacy);
+        let sampled =
+            r#"{"at_ns":10,"link_id":"isl-a-b","action":"down","cause":"sampled_pointing"}"#;
+        let fault: Fault = serde_json::from_str(sampled).unwrap();
+        assert_eq!(fault.cause, FaultCause::SampledPointing);
+        assert_eq!(serde_json::to_string(&fault).unwrap(), sampled);
+        assert!(serde_json::from_str::<Fault>(
+            r#"{"at_ns":10,"link_id":"isl-a-b","action":"down","cause":"unknown"}"#
+        )
+        .is_err());
+
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        scenario.faults.push(fault);
+        scenario.validate().unwrap();
+        scenario.faults[0].link_id = "user-ue-a".into();
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("requires an optical PAT link"));
     }
 
     #[test]

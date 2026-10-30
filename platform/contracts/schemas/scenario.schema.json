@@ -254,6 +254,13 @@
             "down",
             "up"
           ]
+        },
+        "cause": {
+          "description": "Optional scheduled transition provenance. Defaults to administrative; sampled_pointing requires an optical PAT link.",
+          "enum": [
+            "administrative",
+            "sampled_pointing"
+          ]
         }
       }
     },

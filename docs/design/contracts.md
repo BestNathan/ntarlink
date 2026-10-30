@@ -56,6 +56,15 @@ The current Rust `platform/contracts` crate and `platform/contracts/schemas/scen
 }
 ```
 
+Scheduled `faults[]` may optionally declare `cause: "sampled_pointing"`
+for a PAT-enabled optical ISL, in addition to the legacy default
+`administrative` cause. The optional cause is provenance for the
+precomputed down/up transition, not a measured physical failure or
+continuous tracking signal. PAT `lost` trace reasons distinguish
+`sampled_pointing_loss` from `administrative_link_down`; the packet
+runtime retains the same route-convergence and forwarding semantics.
+Unknown causes and sampled-pointing causes on non-PAT links fail validation.
+
 In `static` mode, orbital links without schedules retain their scenario `up` state; in `scheduled` mode, user RF, feeder and optical ISL links are **unavailable unless a window is active**. Terrestrial links remain static unless faults explicitly change them. `up` represents administrative state and cannot override missing geometric visibility. Windows are nonoverlapping and half-open. Their midpoint propagation delay is fixed per interval in the current L1 runtime. These optional fields extend scenario v1; the broader system envelope remains a forward-looking interface proposal.
 
 ## 2.2 Opt-in SYS-03 PAT acquisition gate
