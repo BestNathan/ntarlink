@@ -116,9 +116,9 @@ class SampledAttitudeTests(unittest.TestCase):
                          [1.0, 0.0, 0.0])
         with self.assertRaisesRegex(ValueError, "outside envelope"):
             audit_optical_pointing(scenario(), compiled, position, 1, config)
-        # A start-only audit does not establish dynamic steering validity.
-        self.assertEqual(audit_optical_pointing(
-            scenario(), compiled, position, 1)["contact_count"], 2)
+        # Contact-start snapshots alone cannot observe this interior excursion.
+        self.assertEqual(compiled["optical_geometry"][0]["from_boresight_itrs"],
+                         [1.0, 0.0, 0.0])
 
     def test_valid_sampled_probe_is_deterministic(self):
         config = attitude()
