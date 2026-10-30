@@ -21,9 +21,10 @@ SOURCE = {
 def worker_result(digest="a" * 64):
     return {
         "workload": "repeated_historical_tle_sgp4_itrs_positions",
+        "catalog_mode": "replicated",
         "frame": "ITRS",
         "sample_count": 6, "satellite_count": 2, "samples_per_satellite": 3,
-        "source_tle_count": 1,
+        "source_tle_count": 1, "unique_source_tle_count": 1,
         "source_config_sha256": "b" * 64,
         "position_digest_sha256": digest,
         "provider_build_wall_seconds": 0.1,
@@ -98,6 +99,32 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
         self.assertEqual(report["sample_count"], 6)
         self.assertEqual(report["repetitions"], 1)
 
+    def test_unique_mode_rejects_duplicates_before_worker(self):
+        with patch("ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker") as worker:
+            with self.assertRaisesRegex(ValueError, "distinct TLE"):
+                run_suite(self.source, 2, 3, 1, catalog_mode="unique")
+            worker.assert_not_called()
+
+    def test_unique_mode_checks_worker_contract(self):
+        self.source.write_text(json.dumps({**SOURCE, "satellites": [
+            SOURCE["satellites"][0],
+            {"id": "other", "tle_line1": "other-first", "tle_line2": "other-second"},
+        ]}), encoding="utf-8")
+        unique = {**worker_result(),
+                  "workload": "supplied_unique_tle_sgp4_itrs_positions",
+                  "catalog_mode": "unique", "source_tle_count": 2,
+                  "unique_source_tle_count": 2}
+        with patch("ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker",
+                   return_value=unique) as worker:
+            report = run_suite(self.source, 2, 3, 2, catalog_mode="unique")
+        self.assertEqual(report["catalog_mode"], "unique")
+        self.assertEqual(report["unique_source_tle_count"], 2)
+        self.assertEqual(worker.call_args.args[-1], "unique")
+        with patch("ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker",
+                   return_value={**unique, "unique_source_tle_count": 1}):
+            with self.assertRaisesRegex(RuntimeError, "cardinality"):
+                run_suite(self.source, 2, 3, 1, catalog_mode="unique")
+
     def test_real_historical_iss_small_workload(self):
         """Exercise the actual provider and subprocess boundary in installed CI."""
         try:
@@ -112,6 +139,10 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
         self.assertGreater(report["median_propagation_samples_per_second"], 0)
         if sys.platform == "linux":
             self.assertGreater(report["max_process_peak_rss_bytes"], 0)
+        unique = run_suite(source, 1, 2, 2, catalog_mode="unique")
+        self.assertEqual(unique["catalog_mode"], "unique")
+        self.assertEqual(unique["unique_source_tle_count"], 1)
+        self.assertEqual(unique["sample_count"], 2)
 
 
 if __name__ == "__main__":
