@@ -4,7 +4,7 @@ use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
 use serde::Serialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
 
@@ -660,6 +660,8 @@ impl<'a> Runtime<'a> {
 
 /// Apply deterministic PAT acquisition before the packet event engine runs.
 /// Only opted-in optical links are gated; other contacts are unchanged.
+/// Administrative down/up transitions interrupt tracking, release optical
+/// heads and require a fresh acquisition before forwarding can resume.
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
     let mut prepared = scenario.clone();
     if scenario.optical_pat.is_empty() {
@@ -670,54 +672,140 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .iter()
         .map(|config| (config.link_id.as_str(), config))
         .collect();
-    let candidates: Vec<_> = scenario
-        .contacts
-        .iter()
-        .filter_map(|contact| {
-            configs
-                .get(contact.link_id.as_str())
-                .map(|config| PatCandidate {
-                    link_id: contact.link_id.clone(),
-                    from_head: config.from_head.clone(),
-                    to_head: config.to_head.clone(),
-                    start_ns: contact.start_ns,
-                    end_ns: contact.end_ns,
-                    slew_ns: config.slew_ns,
-                    acquisition_ns: config.acquisition_ns,
-                })
-        })
-        .collect();
+
+    // Faults at equal timestamps follow their original scenario order,
+    // matching the packet scheduler's sequence order at priority zero.
+    let mut faults_by_link: HashMap<&str, Vec<_>> = HashMap::new();
+    let mut down_faults = HashSet::new();
+    for (index, fault) in scenario.faults.iter().enumerate() {
+        if configs.contains_key(fault.link_id.as_str()) {
+            faults_by_link
+                .entry(fault.link_id.as_str())
+                .or_default()
+                .push((index, fault));
+            if matches!(fault.action, LinkAction::Down) {
+                down_faults.insert((fault.link_id.as_str(), fault.at_ns));
+            }
+        }
+    }
+    for faults in faults_by_link.values_mut() {
+        faults.sort_by_key(|(index, fault)| (fault.at_ns, *index));
+    }
+
+    // Build half-open admin-up intervals once per PAT link. Splitting a
+    // geometric contact at a fault boundary releases both reserved heads;
+    // the next up interval is a new acquisition candidate.
+    let mut admin_windows: HashMap<&str, Vec<(u64, u64)>> = HashMap::new();
+    for config in &scenario.optical_pat {
+        let link = scenario
+            .links
+            .iter()
+            .find(|link| link.id == config.link_id)
+            .expect("validated optical PAT link");
+        let mut windows = Vec::new();
+        let mut cursor = 0;
+        let mut up = link.up;
+        if let Some(faults) = faults_by_link.get(config.link_id.as_str()) {
+            for (_, fault) in faults {
+                if up && cursor < fault.at_ns {
+                    windows.push((cursor, fault.at_ns));
+                }
+                up = matches!(fault.action, LinkAction::Up);
+                cursor = fault.at_ns;
+            }
+        }
+        if up && cursor < scenario.duration_ns {
+            windows.push((cursor, scenario.duration_ns));
+        }
+        admin_windows.insert(config.link_id.as_str(), windows);
+    }
+
+    let mut candidates = Vec::new();
+    // Candidate end times are unique per directed link because both geometric
+    // contacts and administrative intervals are non-overlapping.
+    let mut source_by_end = HashMap::new();
+    for (source_index, contact) in scenario.contacts.iter().enumerate() {
+        let Some(config) = configs.get(contact.link_id.as_str()) else {
+            continue;
+        };
+        let windows = admin_windows
+            .get(contact.link_id.as_str())
+            .expect("validated optical PAT configuration");
+        let first = windows.partition_point(|(_, end)| *end <= contact.start_ns);
+        for &(up_start, up_end) in &windows[first..] {
+            if up_start >= contact.end_ns {
+                break;
+            }
+            let start_ns = contact.start_ns.max(up_start);
+            let end_ns = contact.end_ns.min(up_end);
+            if start_ns >= end_ns {
+                continue;
+            }
+            if candidates.len() >= ntarlink_optical_pat::MAX_CANDIDATES {
+                return Err("PAT candidate budget exceeded".into());
+            }
+            candidates.push(PatCandidate {
+                link_id: contact.link_id.clone(),
+                from_head: config.from_head.clone(),
+                to_head: config.to_head.clone(),
+                start_ns,
+                end_ns,
+                slew_ns: config.slew_ns,
+                acquisition_ns: config.acquisition_ns,
+            });
+            source_by_end.insert((contact.link_id.clone(), end_ns), source_index);
+        }
+    }
     let plan = plan_contacts(&candidates)?;
-    let tracking: HashMap<_, _> = plan
-        .windows
-        .iter()
-        .map(|window| ((window.link_id.as_str(), window.end_ns), window.start_ns))
-        .collect();
+    let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
+    for window in &plan.windows {
+        let source = source_by_end
+            .get(&(window.link_id.clone(), window.end_ns))
+            .ok_or("PAT acquired window has no geometric source")?;
+        windows_by_source.entry(*source).or_default().push(window);
+    }
     prepared.contacts = scenario
         .contacts
         .iter()
-        .filter_map(|contact| {
+        .enumerate()
+        .flat_map(|(index, contact)| {
             if !configs.contains_key(contact.link_id.as_str()) {
-                return Some(contact.clone());
+                return vec![contact.clone()];
             }
-            let start_ns = *tracking.get(&(contact.link_id.as_str(), contact.end_ns))?;
-            let mut acquired = contact.clone();
-            acquired.start_ns = start_ns;
-            if !contact.propagation_delay_samples.is_empty() {
-                let mut samples = vec![PropagationDelaySample {
-                    at_ns: start_ns,
-                    delay_ns: interpolated_delay(&contact.propagation_delay_samples, start_ns),
-                }];
-                samples.extend(
-                    contact
-                        .propagation_delay_samples
-                        .iter()
-                        .filter(|sample| sample.at_ns > start_ns)
-                        .cloned(),
-                );
-                acquired.propagation_delay_samples = samples;
-            }
-            Some(acquired)
+            windows_by_source
+                .get(&index)
+                .into_iter()
+                .flatten()
+                .map(|window| {
+                    let mut acquired = contact.clone();
+                    acquired.start_ns = window.start_ns;
+                    acquired.end_ns = window.end_ns;
+                    if !contact.propagation_delay_samples.is_empty() {
+                        let original = &contact.propagation_delay_samples;
+                        let mut samples = vec![PropagationDelaySample {
+                            at_ns: window.start_ns,
+                            delay_ns: interpolated_delay(original, window.start_ns),
+                        }];
+                        samples.extend(
+                            original
+                                .iter()
+                                .filter(|sample| {
+                                    sample.at_ns > window.start_ns
+                                        && sample.at_ns < window.end_ns - 1
+                                })
+                                .cloned(),
+                        );
+                        if window.end_ns - 1 > window.start_ns {
+                            samples.push(PropagationDelaySample {
+                                at_ns: window.end_ns - 1,
+                                delay_ns: interpolated_delay(original, window.end_ns - 1),
+                            });
+                        }
+                        acquired.propagation_delay_samples = samples;
+                    }
+                    acquired
+                })
+                .collect::<Vec<_>>()
         })
         .collect();
     // These contacts are already PAT-gated; validate them as packet contacts.
@@ -727,18 +815,27 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     let events = plan
         .events
         .into_iter()
-        .map(|event| PatEventTrace {
-            link_id: event.link_id,
-            at_ns: event.at_ns,
-            state: match event.state {
-                PatState::Candidate => "candidate",
-                PatState::Slewing => "slewing",
-                PatState::Acquiring => "acquiring",
-                PatState::Tracking => "tracking",
-                PatState::Lost => "lost",
-                PatState::Rejected => "rejected",
-            },
-            reason: event.reason,
+        .map(|event| {
+            let reason = if event.state == PatState::Lost
+                && down_faults.contains(&(event.link_id.as_str(), event.at_ns))
+            {
+                Some("administrative_link_down")
+            } else {
+                event.reason
+            };
+            PatEventTrace {
+                link_id: event.link_id,
+                at_ns: event.at_ns,
+                state: match event.state {
+                    PatState::Candidate => "candidate",
+                    PatState::Slewing => "slewing",
+                    PatState::Acquiring => "acquiring",
+                    PatState::Tracking => "tracking",
+                    PatState::Lost => "lost",
+                    PatState::Rejected => "rejected",
+                },
+                reason,
+            }
         })
         .collect();
     Ok((prepared, events))
@@ -938,6 +1035,159 @@ mod tests {
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn optical_admin_fault_releases_tracking_and_reacquires_after_recovery() {
+        use ntarlink_contracts::Fault;
+        let mut scenario = pat_fixture();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 50_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+            },
+            Fault {
+                at_ns: 70_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+            },
+        ];
+        scenario.flows[0].packet_count = 18;
+        scenario.flows[0].interval_ns = 10_000_000;
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        let optical: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id == "isl-a-b")
+            .map(|contact| (contact.start_ns, contact.end_ns))
+            .collect();
+        assert_eq!(
+            optical,
+            vec![
+                (20_000_000, 50_000_000),
+                (90_000_000, 120_000_000),
+                (140_000_000, 200_000_000)
+            ]
+        );
+        prepared.validate().unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 90_000_000, 140_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 50_000_000
+                && event.state == "lost"
+                && event.reason == Some("administrative_link_down")
+        }));
+        assert!(report.control_events.iter().any(|event| {
+            event.at_ns == 90_000_000
+                && event.kind == "contact_open"
+                && event.link_id.as_deref() == Some("isl-a-b")
+        }));
+        assert!(report.control_events.iter().any(|event| {
+            event.at_ns == 95_000_000 && event.kind == "routes_installed"
+        }));
+        let optical_hops: Vec<_> = report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .collect();
+        assert!(optical_hops
+            .iter()
+            .all(|hop| optical.iter().any(|(start, end)| {
+                (*start..*end).contains(&hop.transmit_started_ns)
+            })));
+        assert!(optical_hops
+            .iter()
+            .any(|hop| (90_000_000..120_000_000).contains(&hop.transmit_started_ns)));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn initially_down_optical_link_must_acquire_after_admin_up() {
+        use ntarlink_contracts::Fault;
+        let mut scenario = pat_fixture();
+        scenario
+            .links
+            .iter_mut()
+            .find(|link| link.id == "isl-a-b")
+            .unwrap()
+            .up = false;
+        scenario.faults.push(Fault {
+            at_ns: 50_000_000,
+            link_id: "isl-a-b".into(),
+            action: LinkAction::Up,
+        });
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        assert!(events.iter().any(|event| {
+            event.state == "tracking" && event.at_ns == 70_000_000
+        }));
+        assert_eq!(
+            prepared
+                .contacts
+                .iter()
+                .find(|contact| contact.link_id == "isl-a-b")
+                .unwrap()
+                .start_ns,
+            70_000_000
+        );
+        assert!(run(&scenario).is_ok());
+    }
+
+    #[test]
+    fn pat_fault_splits_sampled_delay_at_both_new_contact_boundaries() {
+        use ntarlink_contracts::Fault;
+        let mut scenario = pat_fixture();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 50_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+            },
+            Fault {
+                at_ns: 70_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+            },
+        ];
+        let contact = scenario
+            .contacts
+            .iter_mut()
+            .find(|contact| contact.link_id == "isl-a-b" && contact.start_ns == 0)
+            .unwrap();
+        contact.propagation_delay_samples = vec![
+            PropagationDelaySample {
+                at_ns: 0,
+                delay_ns: 2_000_000,
+            },
+            PropagationDelaySample {
+                at_ns: 119_999_999,
+                delay_ns: 4_000_000,
+            },
+        ];
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        prepared.validate().unwrap();
+        for contact in prepared
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id == "isl-a-b" && contact.start_ns < 120_000_000)
+        {
+            let samples = &contact.propagation_delay_samples;
+            assert_eq!(samples.first().unwrap().at_ns, contact.start_ns);
+            assert_eq!(samples.last().unwrap().at_ns, contact.end_ns - 1);
+            assert!(samples.iter().all(|sample| sample.delay_ns > 0));
+        }
+        assert!(run(&scenario).is_ok());
     }
 
     #[test]
