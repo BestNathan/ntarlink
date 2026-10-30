@@ -19,12 +19,18 @@ from .ephemeris import MAX_SAMPLES
 from .ephemeris_benchmark_suite import (
     MAX_REPETITIONS, MAX_WORKER_SECONDS, _positive_int, _process_peak_rss_bytes,
 )
-from .sgp4_scale_benchmark import MAX_SATELLITES
+from .sgp4_scale_benchmark import CATALOG_MODES, MAX_SATELLITES
 
-WORKLOAD = "repeated_historical_tle_sgp4_itrs_positions"
+WORKLOADS = {
+    "replicated": "repeated_historical_tle_sgp4_itrs_positions",
+    "unique": "supplied_unique_tle_sgp4_itrs_positions",
+}
 
 
-def _validate_workload(source: Path, satellites: int, samples: int, repetitions: int) -> None:
+def _validate_workload(source: Path, satellites: int, samples: int,
+                       repetitions: int, catalog_mode: str = "replicated") -> None:
+    if catalog_mode not in CATALOG_MODES:
+        raise ValueError(f"catalog_mode must be one of {CATALOG_MODES}")
     _positive_int(satellites, "satellites")
     _positive_int(samples, "samples_per_satellite")
     _positive_int(repetitions, "repetitions")
@@ -42,15 +48,21 @@ def _validate_workload(source: Path, satellites: int, samples: int, repetitions:
         ) for row in catalog["satellites"]
     ):
         raise ValueError("orbit config must contain nonempty source TLE lines")
+    if catalog_mode == "unique":
+        pairs = [(row["tle_line1"], row["tle_line2"]) for row in catalog["satellites"]]
+        if len(pairs) != satellites or len(set(pairs)) != satellites:
+            raise ValueError("unique catalog mode requires exactly one distinct TLE per satellite")
 
 
-def _run_worker(source: Path, satellites: int, samples: int) -> dict:
+def _run_worker(source: Path, satellites: int, samples: int,
+                catalog_mode: str = "replicated") -> dict:
     with tempfile.TemporaryDirectory(prefix="ntarlink-sgp4-suite-") as directory:
         report = Path(directory) / "run.json"
         command = [
             sys.executable, "-m", "ntarlink_orbital.sgp4_scale_benchmark_suite",
             str(source), "--worker", "--satellites", str(satellites),
-            "--samples-per-satellite", str(samples), "--report", str(report),
+            "--samples-per-satellite", str(samples), "--catalog-mode", catalog_mode,
+            "--report", str(report),
         ]
         subprocess.run(command, check=True, capture_output=True, text=True,
                        timeout=MAX_WORKER_SECONDS)
@@ -62,27 +74,29 @@ def _positive_finite(value: object) -> bool:
 
 
 def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
-              repetitions: int = 3) -> dict:
+              repetitions: int = 3, catalog_mode: str = "replicated") -> dict:
     """Validate a workload, repeat it in isolated processes, and aggregate medians.
 
     Timing excludes interpreter startup and imports; process RSS includes both.
     The RSS high-water mark is not a per-stage or incremental memory measurement.
     """
     source = Path(orbit_config).resolve()
-    _validate_workload(source, satellites, samples_per_satellite, repetitions)
-    runs = [_run_worker(source, satellites, samples_per_satellite)
+    _validate_workload(source, satellites, samples_per_satellite, repetitions, catalog_mode)
+    runs = [_run_worker(source, satellites, samples_per_satellite, catalog_mode)
             for _ in range(repetitions)]
     first = runs[0]
     sample_count = satellites * samples_per_satellite
     for run in runs:
-        if (run.get("workload") != WORKLOAD
+        if (run.get("workload") != WORKLOADS[catalog_mode]
+                or run.get("catalog_mode") != catalog_mode
                 or run.get("frame") != "ITRS"
                 or run.get("sample_count") != sample_count
                 or run.get("satellite_count") != satellites
                 or run.get("samples_per_satellite") != samples_per_satellite
                 or run.get("source_config_sha256") != first.get("source_config_sha256")
                 or run.get("position_digest_sha256") != first.get("position_digest_sha256")
-                or run.get("source_tle_count") != first.get("source_tle_count")):
+                or run.get("source_tle_count") != first.get("source_tle_count")
+                or run.get("unique_source_tle_count") != first.get("unique_source_tle_count")):
             raise RuntimeError("SGP4 repetitions disagree on deterministic workload or digest")
         if any(not _positive_finite(run.get(key)) for key in (
             "provider_build_wall_seconds", "propagation_wall_seconds",
@@ -94,6 +108,13 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
             c not in "0123456789abcdef" for c in digest
         ):
             raise RuntimeError("SGP4 repetition has invalid position digest")
+    if (type(first.get("source_tle_count")) is not int
+            or first["source_tle_count"] <= 0
+            or type(first.get("unique_source_tle_count")) is not int
+            or not 1 <= first["unique_source_tle_count"] <= first["source_tle_count"]
+            or (catalog_mode == "unique" and
+                first["unique_source_tle_count"] != satellites)):
+        raise RuntimeError("SGP4 worker reported invalid source TLE cardinality")
     rss = [run.get("process_peak_rss_bytes") for run in runs]
     if any(value is not None and (type(value) is not int or value <= 0)
            for value in rss) or any((value is None) != (rss[0] is None) for value in rss):
@@ -101,13 +122,17 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
 
     return {
         "schema_version": 1,
-        "workload": "isolated_repeated_historical_tle_sgp4_itrs_positions",
-        "fidelity": "replicated historical TLEs; not a physical constellation or orbit truth",
+        "workload": "isolated_" + WORKLOADS[catalog_mode],
+        "fidelity": ("distinct supplied TLEs; not independently validated orbit truth"
+                     if catalog_mode == "unique"
+                     else "replicated historical TLEs; not a physical constellation or orbit truth"),
+        "catalog_mode": catalog_mode,
         "frame": "ITRS", "position_unit": "m", "time_scale": "UTC",
         "satellite_count": satellites,
         "samples_per_satellite": samples_per_satellite,
         "sample_count": sample_count,
         "source_tle_count": first["source_tle_count"],
+        "unique_source_tle_count": first["unique_source_tle_count"],
         "source_config_sha256": first["source_config_sha256"],
         "position_digest_sha256": first["position_digest_sha256"],
         "repetitions": repetitions,
@@ -132,6 +157,7 @@ def main(argv=None) -> None:
     parser.add_argument("--satellites", type=int, required=True)
     parser.add_argument("--samples-per-satellite", type=int, required=True)
     parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--catalog-mode", choices=CATALOG_MODES, default="replicated")
     parser.add_argument("--report", type=Path)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -139,13 +165,16 @@ def main(argv=None) -> None:
         from .sgp4_scale_benchmark import benchmark
 
         source = args.orbit_config.resolve()
-        _validate_workload(source, args.satellites, args.samples_per_satellite, 1)
+        _validate_workload(source, args.satellites, args.samples_per_satellite, 1,
+                           args.catalog_mode)
         output = benchmark(json.loads(source.read_text(encoding="utf-8")),
-                           args.satellites, args.samples_per_satellite, source.parent)
+                           args.satellites, args.samples_per_satellite, source.parent,
+                           args.catalog_mode)
         output["process_peak_rss_bytes"] = _process_peak_rss_bytes()
     else:
         output = run_suite(args.orbit_config, args.satellites,
-                           args.samples_per_satellite, args.repetitions)
+                           args.samples_per_satellite, args.repetitions,
+                           args.catalog_mode)
     rendered = json.dumps(output, sort_keys=True, indent=2, allow_nan=False) + "\n"
     if args.report is not None:
         args.report.write_text(rendered, encoding="utf-8")
