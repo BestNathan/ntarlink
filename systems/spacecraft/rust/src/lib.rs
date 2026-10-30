@@ -80,9 +80,7 @@ pub fn geometry_los_rate_allowed(
         return false;
     }
     let direction = |sample: &OpticalGeometry| {
-        std::array::from_fn::<_, 3, _>(|i| {
-            sample.to_position_m[i] - sample.from_position_m[i]
-        })
+        std::array::from_fn::<_, 3, _>(|i| sample.to_position_m[i] - sample.from_position_m[i])
     };
     let a = direction(previous);
     let b = direction(current);

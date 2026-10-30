@@ -929,9 +929,14 @@ impl Scenario {
                     .optical_pat
                     .iter()
                     .find(|pat| pat.link_id == rate.link_id)
-                    .ok_or_else(|| format!("unknown PAT optical tracking rate link: {}", rate.link_id))?;
+                    .ok_or_else(|| {
+                        format!("unknown PAT optical tracking rate link: {}", rate.link_id)
+                    })?;
                 if !configured_links.insert(rate.link_id.as_str()) {
-                    return Err(format!("duplicate optical tracking rate link: {}", rate.link_id));
+                    return Err(format!(
+                        "duplicate optical tracking rate link: {}",
+                        rate.link_id
+                    ));
                 }
                 for (head, limit) in [
                     (pat.from_head.as_str(), rate.from_max_los_rate_deg_per_s),
@@ -1182,18 +1187,26 @@ mod tests {
         let encoded = serde_json::to_string(&scenario).unwrap();
         assert!(encoded.contains("optical_tracking_rates"));
         scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = f64::NAN;
-        assert!(scenario.validate().unwrap_err().contains("invalid optical tracking rate"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical tracking rate"));
         scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = -1.0;
         assert!(scenario.validate().is_err());
         scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = 1000.0;
-        scenario.optical_tracking_rates.push(scenario.optical_tracking_rates[0].clone());
+        scenario
+            .optical_tracking_rates
+            .push(scenario.optical_tracking_rates[0].clone());
         assert!(scenario.validate().is_err());
         scenario.optical_tracking_rates.pop();
         scenario.optical_tracking_rates[0].link_id = "missing".into();
         assert!(scenario.validate().unwrap_err().contains("unknown PAT"));
         scenario.optical_tracking_rates[0].link_id = "isl-a-b".into();
         scenario.optical_geometry_samples.clear();
-        assert!(scenario.validate().unwrap_err().contains("require native ITRS"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("require native ITRS"));
     }
 
     #[test]

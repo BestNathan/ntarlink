@@ -5,7 +5,9 @@ use ntarlink_contracts::{
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
-use ntarlink_spacecraft::{geometry_los_rate_allowed, geometry_pointing_allowed, pointing_allowed, HeadAvailability};
+use ntarlink_spacecraft::{
+    geometry_los_rate_allowed, geometry_pointing_allowed, pointing_allowed, HeadAvailability,
+};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -715,19 +717,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .iter()
         .map(|rate| (rate.link_id.as_str(), rate))
         .collect();
-    let mut previous_geometry: HashMap<&str, &ntarlink_contracts::OpticalGeometry> =
-        HashMap::new();
+    let mut previous_geometry: HashMap<&str, &ntarlink_contracts::OpticalGeometry> = HashMap::new();
     steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
         let previous = previous_geometry.insert(sample.link_id.as_str(), sample);
-        let rate_allowed = tracking_rates.get(sample.link_id.as_str()).is_none_or(|rate| {
-            previous.is_none_or(|earlier| {
-                geometry_los_rate_allowed(
-                    earlier,
-                    sample,
-                    rate.from_max_los_rate_deg_per_s.min(rate.to_max_los_rate_deg_per_s),
-                )
-            })
-        });
+        let rate_allowed = tracking_rates
+            .get(sample.link_id.as_str())
+            .is_none_or(|rate| {
+                previous.is_none_or(|earlier| {
+                    geometry_los_rate_allowed(
+                        earlier,
+                        sample,
+                        rate.from_max_los_rate_deg_per_s
+                            .min(rate.to_max_los_rate_deg_per_s),
+                    )
+                })
+            });
         Fault {
             at_ns: sample.at_ns,
             link_id: sample.link_id.clone(),
@@ -1671,9 +1675,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![20_000_000, 90_000_000, 140_000_000]
         );
-        assert!(!baseline.pat_events.iter().any(|event| {
-            event.at_ns == 30_000_000 && event.state == "lost"
-        }));
+        assert!(!baseline
+            .pat_events
+            .iter()
+            .any(|event| { event.at_ns == 30_000_000 && event.state == "lost" }));
     }
 
     #[test]
