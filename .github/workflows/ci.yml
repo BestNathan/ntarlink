@@ -257,6 +257,28 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"]
           print("SGP4/attitude to native PAT:", tracking, r["delivered"], "delivered")
           PY
+      - name: Verify Rust-native ITRS pointing loss and PAT reacquisition
+        run: |
+          python3 -m json.tool scenarios/optical-native-itrs-samples.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-native-itrs-samples.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-native-itrs-samples.json --json > /tmp/optical-native-itrs-report.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path("/tmp/optical-native-itrs-report.json").read_text())
+          tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 90000000, 140000000], tracking
+          assert any(e["at_ns"] == 30000000 and e["state"] == "lost"
+                     and e["reason"] == "sampled_pointing_loss" for e in r["pat_events"])
+          edges = [(e["at_ns"], e["kind"]) for e in r["control_events"]
+                   if e["link_id"] == "isl-a-b" and e["kind"] in ("link_down", "link_up")]
+          assert edges == [(30000000, "link_down"), (70000000, "link_up")], edges
+          hops = [h for p in r["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          assert hops and all(not 30000000 <= h["transmit_started_ns"] < 90000000 for h in hops)
+          assert r["delivered"] > 0 and r["dropped"] > 0
+          assert r["injected"] == r["delivered"] + r["dropped"]
+          print("Native ITRS sampled pointing:", tracking, r["delivered"], "delivered")
+          PY
       - name: Verify real SGP4 ITRS samples drive Rust-native PAT tracking
         run: |
           python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json scenarios/optical-sgp4-attitude-sampled.synthetic.json --native-steering-probes-per-contact 3 --out /tmp/optical-native-real-sgp4.json
