@@ -87,3 +87,24 @@ Faults: power derating, single optical head failure, antenna mispointing, therma
 **Acceptance:** a disabled optical head prevents ISL acquisition even with clear LOS; power limits reduce beam capacity; safe mode drains/invalidates traffic according to payload model; satellite retirement removes node and resources; same fault schedule yields identical trace. Capacity ledger remains nonnegative; no double assignment to exclusive hardware.
 
 **Build order:** inventory/capability model → payload mode+resource admission → health/fault events → attitude and power/thermal approximations → cross-system capacity/fault tests.
+
+## Implemented time-indexed ITRS pointing observations
+
+The opt-in `optical_geometry_samples[]` contract provides ITRS satellite
+positions in meters and boresight direction vectors at strictly increasing
+scenario-relative virtual nanosecond timestamps, beginning at t=0 for every
+configured PAT link. SYS-02 calculates both reciprocal line-of-sight
+off-axis angles in Rust, compares them against consistent per-head limits,
+and holds each observation until the next one. SYS-03 uses the resulting
+sampled-pointing availability independently of administrative failures.
+Tracking loss releases exclusive heads; effective recovery requires a fresh
+PAT acquisition and delayed route convergence. The deterministic
+`scenarios/optical-native-itrs-samples.json` acceptance scenario exercises
+both fault domains and packet forwarding.
+
+The 10,000-observation limit, ITRS frame check, finite/nondegenerate
+geometry, strict timestamps and exclusive pointing-mode validation fail
+closed. These are supplied discrete snapshots; the Rust runtime does not
+propagate SGP4 or solve spacecraft attitude, and does not guarantee pointing
+between observations. The existing per-contact `optical_geometry[]` mode
+remains supported.
