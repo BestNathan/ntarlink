@@ -1089,20 +1089,19 @@ mod tests {
                 && event.kind == "contact_open"
                 && event.link_id.as_deref() == Some("isl-a-b")
         }));
-        assert!(report.control_events.iter().any(|event| {
-            event.at_ns == 95_000_000 && event.kind == "routes_installed"
-        }));
+        assert!(report
+            .control_events
+            .iter()
+            .any(|event| { event.at_ns == 95_000_000 && event.kind == "routes_installed" }));
         let optical_hops: Vec<_> = report
             .packets
             .iter()
             .flat_map(|packet| &packet.hops)
             .filter(|hop| hop.link_id == "isl-a-b")
             .collect();
-        assert!(optical_hops
+        assert!(optical_hops.iter().all(|hop| optical
             .iter()
-            .all(|hop| optical.iter().any(|(start, end)| {
-                (*start..*end).contains(&hop.transmit_started_ns)
-            })));
+            .any(|(start, end)| { (*start..*end).contains(&hop.transmit_started_ns) })));
         assert!(optical_hops
             .iter()
             .any(|hop| (90_000_000..120_000_000).contains(&hop.transmit_started_ns)));
@@ -1129,9 +1128,9 @@ mod tests {
             action: LinkAction::Up,
         });
         let (prepared, events) = prepare_pat(&scenario).unwrap();
-        assert!(events.iter().any(|event| {
-            event.state == "tracking" && event.at_ns == 70_000_000
-        }));
+        assert!(events
+            .iter()
+            .any(|event| { event.state == "tracking" && event.at_ns == 70_000_000 }));
         assert_eq!(
             prepared
                 .contacts
