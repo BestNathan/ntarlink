@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 
@@ -72,7 +73,7 @@ def load_verified_catalog(config_path: Path, manifest_path: Path) -> tuple[dict,
         raise ValueError("TLE manifest satellite count mismatch")
     epoch = _utc(config.get("epoch_utc"), "epoch_utc")
     age = config.get("max_tle_age_days")
-    if type(age) not in (int, float) or not 0 < age <= 365:
+    if type(age) not in (int, float) or not math.isfinite(age) or age <= 0:
         raise ValueError("invalid catalog maximum TLE age")
     seen = set()
     for satellite in satellites:
