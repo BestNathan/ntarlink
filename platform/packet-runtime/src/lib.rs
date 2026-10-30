@@ -964,7 +964,7 @@ mod tests {
         scenario.contacts.push(ntarlink_contracts::ContactWindow {
             link_id: "isl-a-c".into(),
             start_ns: 0,
-            end_ns: 180_000_000,
+            end_ns: 130_000_000,
             propagation_delay_ns: Some(3_500_000),
             propagation_delay_samples: vec![],
         });
