@@ -116,6 +116,18 @@ The RSS high-water mark is not a per-stage measurement; replicated TLEs
 do not represent a physical constellation. See
 [SGP4 benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
 
+## Distinct supplied-TLE SGP4 benchmark mode
+
+The production single-process and isolated SGP4 benchmark commands now
+optionally accept `--catalog-mode unique`. This requires exactly one distinct
+supplied TLE pair per requested satellite and refuses silent replication or
+duplicate source pairs. Reports identify the catalog mode and distinct source
+count. Contract tests check invalid catalogs, source mapping, and isolated
+digest/cardinality consistency; CI exercises the real Skyfield provider
+with a single historical ISS TLE in this mode. No independent multi-orbit
+catalog has yet been sourced or validated, and the 100k/500k runs remain
+unmeasured. See [SGP4 benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
+
 ## Opt-in production SYS-01 Earth-orientation input
 
 The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A

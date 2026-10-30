@@ -62,6 +62,29 @@ class Sgp4ScaleBenchmarkTests(unittest.TestCase):
                     benchmark(SOURCE, 1, 1)
 
     @patch("ntarlink_orbital.sgp4_scale_benchmark.build_sgp4_provider")
+    def test_unique_catalog_uses_distinct_supplied_tles(self, provider):
+        provider.return_value = lambda satellite, at_ns: (1.0, 2.0, 3.0)
+        sources = {**SOURCE, "satellites": [
+            SOURCE["satellites"][0],
+            {"id": "second", "tle_line1": "different-first", "tle_line2": "different-second"},
+        ]}
+        report = benchmark(sources, 2, 3, catalog_mode="unique")
+        self.assertEqual(report["catalog_mode"], "unique")
+        self.assertEqual(report["unique_source_tle_count"], 2)
+        self.assertEqual(report["source_tle_count"], 2)
+        self.assertEqual(report["workload"], "supplied_unique_tle_sgp4_itrs_positions")
+        config = provider.call_args.args[0]
+        self.assertEqual([x["tle_line1"] for x in config["satellites"]],
+                         ["first", "different-first"])
+        for invalid, count in ((SOURCE, 2), (sources, 1), (
+            {**SOURCE, "satellites": [SOURCE["satellites"][0]] * 2}, 2)):
+            with self.subTest(invalid=invalid, count=count):
+                with self.assertRaisesRegex(ValueError, "distinct TLE"):
+                    benchmark(invalid, count, 1, catalog_mode="unique")
+        with self.assertRaisesRegex(ValueError, "catalog_mode"):
+            benchmark(SOURCE, 1, 1, catalog_mode="invalid")
+
+    @patch("ntarlink_orbital.sgp4_scale_benchmark.build_sgp4_provider")
     def test_cli_writes_report(self, provider):
         provider.return_value = lambda satellite, at_ns: (1.0, 2.0, 3.0)
         with tempfile.TemporaryDirectory() as directory:

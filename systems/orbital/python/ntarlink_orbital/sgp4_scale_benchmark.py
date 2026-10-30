@@ -19,6 +19,7 @@ from .ephemeris import MAX_SAMPLES, TIME_RESOLUTION_NS, _validate_request
 
 STEP_NS = 1_000_000_000
 MAX_SATELLITES = 1_000
+CATALOG_MODES = ("replicated", "unique")
 
 
 def _positive_int(value: int, name: str) -> int:
@@ -28,12 +29,14 @@ def _positive_int(value: int, name: str) -> int:
 
 
 def benchmark(orbit_config: dict, satellite_count: int, samples_per_satellite: int,
-              config_dir: Path | None = None) -> dict:
+              config_dir: Path | None = None, catalog_mode: str = "replicated") -> dict:
     """Measure production SGP4/TEME-to-ITRS calls with a bounded repeated-TLE catalog.
 
     Source TLEs are replicated under unique IDs to isolate compute scaling.
     Replicas are *not* independent satellites or physically valid geometry.
     """
+    if catalog_mode not in CATALOG_MODES:
+        raise ValueError(f"catalog_mode must be one of {CATALOG_MODES}")
     _positive_int(satellite_count, "satellite_count")
     _positive_int(samples_per_satellite, "samples_per_satellite")
     if satellite_count > MAX_SATELLITES or satellite_count * samples_per_satellite > MAX_SAMPLES:
@@ -49,6 +52,13 @@ def benchmark(orbit_config: dict, satellite_count: int, samples_per_satellite: i
             for key in ("tle_line1", "tle_line2")
         ):
             raise ValueError("each source must contain two nonempty TLE lines")
+
+    tle_pairs = [(source["tle_line1"], source["tle_line2"]) for source in sources]
+    unique_source_count = len(set(tle_pairs))
+    if catalog_mode == "unique" and (
+        len(sources) != satellite_count or unique_source_count != satellite_count
+    ):
+        raise ValueError("unique catalog mode requires exactly one distinct TLE per satellite")
 
     ids = [f"benchmark-sat-{index:05d}" for index in range(satellite_count)]
     config = {**orbit_config, "satellites": [
@@ -81,12 +91,17 @@ def benchmark(orbit_config: dict, satellite_count: int, samples_per_satellite: i
     sample_count = satellite_count * samples_per_satellite
     return {
         "schema_version": 1,
-        "workload": "repeated_historical_tle_sgp4_itrs_positions",
-        "fidelity": "replicated source TLEs; not a physical constellation or orbit truth",
+        "workload": ("supplied_unique_tle_sgp4_itrs_positions" if catalog_mode == "unique"
+                     else "repeated_historical_tle_sgp4_itrs_positions"),
+        "fidelity": ("distinct supplied TLE records; not independently validated orbit truth"
+                     if catalog_mode == "unique"
+                     else "replicated source TLEs; not a physical constellation or orbit truth"),
+        "catalog_mode": catalog_mode,
         "frame": "ITRS", "time_scale": "UTC", "position_unit": "m",
         "time_resolution_ns": TIME_RESOLUTION_NS,
         "sample_step_ns": STEP_NS,
         "source_tle_count": len(sources),
+        "unique_source_tle_count": unique_source_count,
         "satellite_count": satellite_count,
         "samples_per_satellite": samples_per_satellite,
         "sample_count": sample_count,
@@ -107,11 +122,12 @@ def main(argv=None) -> None:
     parser.add_argument("orbit_config", type=Path)
     parser.add_argument("--satellites", type=int, required=True)
     parser.add_argument("--samples-per-satellite", type=int, required=True)
+    parser.add_argument("--catalog-mode", choices=CATALOG_MODES, default="replicated")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
     source = json.loads(args.orbit_config.read_text(encoding="utf-8"))
     report = benchmark(source, args.satellites, args.samples_per_satellite,
-                       args.orbit_config.resolve().parent)
+                       args.orbit_config.resolve().parent, args.catalog_mode)
     rendered = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.report is not None:
         args.report.write_text(rendered, encoding="utf-8")
