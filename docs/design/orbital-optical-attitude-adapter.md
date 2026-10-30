@@ -188,10 +188,13 @@ python -m unittest discover -s systems/orbital/python/tests
 # provider and runs the compiled scenario through Rust validate/simulate.
 ```
 
-The resulting Rust PAT trace labels the derived loss as
-`administrative_link_down`, because the current fault protocol has no
-distinct physical pointing-loss cause. The manifest preserves its sampled
-pointing provenance. A down/up edge is a **discrete sampled approximation**,
+Generated `faults[]` edges now include `"cause": "sampled_pointing"`,
+while legacy events without `cause` default to `administrative`.
+The Rust PAT trace labels a derived loss `sampled_pointing_loss`
+instead of `administrative_link_down`. This is **typed provenance for
+a precomputed finite-probe transition**, not a physical sensor reading
+or a native continuous attitude model. The manifest also preserves
+the sampled pointing source. A down/up edge is a **discrete sampled approximation**,
 not continuous runtime steering evaluation. Brief excursions between probes
 can be missed, and a recovery sample does not establish continuous stability.
 Already-admitted packet transmissions follow the existing
