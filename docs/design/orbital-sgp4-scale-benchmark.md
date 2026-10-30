@@ -55,3 +55,33 @@ constellation diversity or interaction. Timings on shared GitHub-hosted
 runners are not capacity guarantees. Future work should collect repeated
 measurements on pinned hardware, distinguish build/propagation RSS, and
 benchmark independently sourced, validated multi-orbit catalogs.
+
+## Isolated repeated measurement protocol
+
+The optional `ntarlink_orbital.sgp4_scale_benchmark_suite` wraps the same
+production SGP4/ITRS workload in a fresh Python interpreter per repetition.
+It verifies that every run has the same source-configuration and position
+SHA-256 digests, sample counts, satellite count and frame before reporting
+median provider-build time, median propagation time, median propagation
+throughput and the maximum process RSS high-water mark.
+
+```sh
+python -m ntarlink_orbital.sgp4_scale_benchmark_suite scenarios/orbit-sources.sample.json --satellites 2 --samples-per-satellite 2 --repetitions 2 --report /tmp/sgp4-suite-smoke.json
+python -m ntarlink_orbital.sgp4_scale_benchmark_suite scenarios/orbit-sources.sample.json --satellites 100 --samples-per-satellite 1000 --repetitions 3 --report /tmp/sgp4-suite-100k.json
+python -m ntarlink_orbital.sgp4_scale_benchmark_suite scenarios/orbit-sources.sample.json --satellites 500 --samples-per-satellite 1000 --repetitions 3 --report /tmp/sgp4-suite-500k.json
+```
+
+Work is limited to 1,000 replicated satellites, 500,000 positions per run
+and 1-10 repetitions. Each worker has a 1,200-second subprocess timeout.
+The report uses Linux `ru_maxrss` in KiB or macOS `ru_maxrss` in bytes,
+normalizing both to bytes. On unsupported platforms RSS is null. This is
+the **whole process** high-water mark including imports, provider creation
+and propagation; it is not separate per-stage RSS or an incremental memory
+delta. Timed provider-build and propagation sections exclude interpreter
+startup, while RSS includes it. The suite stores no position ephemeris file
+and does not measure peak disk or CPU usage.
+
+The CI smoke repeats only a four-position historical ISS workload; 100k/500k
+examples are explicitly manual and have not been executed as part of CI.
+Replicated TLEs are not an independently sourced constellation catalog,
+and no timing or memory result constitutes a hardware-independent SLA.
