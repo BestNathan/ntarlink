@@ -78,8 +78,7 @@ pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
     }
     let mut sorted = candidates.to_vec();
     sorted.sort_by(|a, b| {
-        (a.start_ns, a.link_id.as_str(), a.end_ns)
-            .cmp(&(b.start_ns, b.link_id.as_str(), b.end_ns))
+        (a.start_ns, a.link_id.as_str(), a.end_ns).cmp(&(b.start_ns, b.link_id.as_str(), b.end_ns))
     });
 
     let mut last_link_end: HashMap<&str, u64> = HashMap::new();
@@ -172,8 +171,11 @@ pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
     }
     windows.sort_by(|a, b| (a.start_ns, &a.link_id).cmp(&(b.start_ns, &b.link_id)));
     events.sort_by(|a, b| {
-        (a.at_ns, state_order(a.state), &a.link_id)
-            .cmp(&(b.at_ns, state_order(b.state), &b.link_id))
+        (a.at_ns, state_order(a.state), &a.link_id).cmp(&(
+            b.at_ns,
+            state_order(b.state),
+            &b.link_id,
+        ))
     });
     Ok(PatPlan { windows, events })
 }
@@ -237,12 +239,16 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(
-            plan.windows.iter().map(|w| (w.link_id.as_str(), w.start_ns, w.end_ns)).collect::<Vec<_>>(),
+            plan.windows
+                .iter()
+                .map(|w| (w.link_id.as_str(), w.start_ns, w.end_ns))
+                .collect::<Vec<_>>(),
             vec![("first", 5, 20), ("second", 25, 40)]
         );
-        assert!(plan.events.iter().any(|e| {
-            e.link_id == "second" && e.state == PatState::Slewing && e.at_ns == 20
-        }));
+        assert!(plan
+            .events
+            .iter()
+            .any(|e| { e.link_id == "second" && e.state == PatState::Slewing && e.at_ns == 20 }));
     }
 
     #[test]
@@ -253,9 +259,10 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(plan.windows.len(), 1);
-        assert!(plan.events.iter().any(|e| {
-            e.link_id == "second" && e.state == PatState::Rejected
-        }));
+        assert!(plan
+            .events
+            .iter()
+            .any(|e| { e.link_id == "second" && e.state == PatState::Rejected }));
     }
 
     #[test]
@@ -276,7 +283,10 @@ mod tests {
             contact("link", "a", "b", 20, 40),
         ])
         .unwrap();
-        assert_eq!(plan.windows.iter().map(|w| w.start_ns).collect::<Vec<_>>(), vec![5, 25]);
+        assert_eq!(
+            plan.windows.iter().map(|w| w.start_ns).collect::<Vec<_>>(),
+            vec![5, 25]
+        );
         let boundary: Vec<_> = plan.events.iter().filter(|e| e.at_ns == 20).collect();
         assert_eq!(boundary[0].state, PatState::Lost);
         assert_eq!(boundary[1].state, PatState::Candidate);
@@ -286,20 +296,39 @@ mod tests {
     fn malformed_contacts_and_overflow_are_rejected() {
         let base = contact("x", "a", "b", 0, 20);
         for invalid in [
-            PatCandidate { from_head: "b".into(), ..base.clone() },
-            PatCandidate { acquisition_ns: 0, ..base.clone() },
-            PatCandidate { start_ns: 20, ..base.clone() },
-            PatCandidate { slew_ns: u64::MAX, ..base.clone() },
-            PatCandidate { link_id: " ".into(), ..base.clone() },
+            PatCandidate {
+                from_head: "b".into(),
+                ..base.clone()
+            },
+            PatCandidate {
+                acquisition_ns: 0,
+                ..base.clone()
+            },
+            PatCandidate {
+                start_ns: 20,
+                ..base.clone()
+            },
+            PatCandidate {
+                slew_ns: u64::MAX,
+                ..base.clone()
+            },
+            PatCandidate {
+                link_id: " ".into(),
+                ..base.clone()
+            },
         ] {
             assert!(plan_contacts(&[invalid]).is_err());
         }
         assert!(plan_contacts(&[
             contact("same", "a", "b", 0, 20),
             contact("same", "a", "b", 10, 30)
-        ]).is_err());
-        assert!(plan_contacts(&[
-            PatCandidate { start_ns: u64::MAX - 3, end_ns: u64::MAX, ..base }
-        ]).is_err());
+        ])
+        .is_err());
+        assert!(plan_contacts(&[PatCandidate {
+            start_ns: u64::MAX - 3,
+            end_ns: u64::MAX,
+            ..base
+        }])
+        .is_err());
     }
 }
