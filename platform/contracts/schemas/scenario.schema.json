@@ -73,19 +73,25 @@
     "optical_geometry": {
       "type": "array",
       "maxItems": 10000,
-      "items": {"$ref": "#/$defs/optical_geometry"},
+      "items": {
+        "$ref": "#/$defs/optical_geometry"
+      },
       "description": "Optional ITRS Cartesian position (meters) and boresight (unitless) snapshot at every PAT contact start. Fixed over the contact; mutually exclusive with optical_pointing."
     },
     "optical_pointing": {
       "type": "array",
       "maxItems": 10000,
-      "items": {"$ref": "#/$defs/optical_pointing"},
+      "items": {
+        "$ref": "#/$defs/optical_pointing"
+      },
       "description": "Optional all-PAT-link static off-boresight angle assumptions and head steering limits in degrees; not an attitude solution."
     },
     "optical_head_outages": {
       "type": "array",
       "maxItems": 10000,
-      "items": {"$ref": "#/$defs/optical_head_outage"},
+      "items": {
+        "$ref": "#/$defs/optical_head_outage"
+      },
       "description": "SYS-02 half-open head unavailability windows, only for configured optical_pat heads."
     },
     "optical_pat": {
@@ -103,6 +109,14 @@
         "$ref": "#/$defs/access_beam"
       },
       "description": "Optional shared uplink MAC beam resources. Unlisted user RF links keep legacy independent transport."
+    },
+    "optical_steering_samples": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_steering_sample"
+      },
+      "description": "Optional all-PAT-link, time-ordered sampled steering angles in degrees. Rust holds each sample until the next, starting at t=0. Exclusive with static pointing, ITRS snapshots and sampled_pointing faults; no continuous attitude solution."
     }
   },
   "$defs": {
@@ -322,57 +336,154 @@
     "optical_geometry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["link_id", "at_ns", "frame", "from_position_m", "to_position_m", "from_boresight_itrs", "to_boresight_itrs", "from_max_off_axis_deg", "to_max_off_axis_deg"],
+      "required": [
+        "link_id",
+        "at_ns",
+        "frame",
+        "from_position_m",
+        "to_position_m",
+        "from_boresight_itrs",
+        "to_boresight_itrs",
+        "from_max_off_axis_deg",
+        "to_max_off_axis_deg"
+      ],
       "properties": {
-        "link_id": {"type": "string", "minLength": 1},
-        "at_ns": {"type": "integer", "minimum": 0},
-        "frame": {"const": "ITRS"},
-        "from_position_m": {"$ref": "#/$defs/vector3"},
-        "to_position_m": {"$ref": "#/$defs/vector3"},
-        "from_boresight_itrs": {"$ref": "#/$defs/vector3"},
-        "to_boresight_itrs": {"$ref": "#/$defs/vector3"},
-        "from_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
-        "to_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180}
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame": {
+          "const": "ITRS"
+        },
+        "from_position_m": {
+          "$ref": "#/$defs/vector3"
+        },
+        "to_position_m": {
+          "$ref": "#/$defs/vector3"
+        },
+        "from_boresight_itrs": {
+          "$ref": "#/$defs/vector3"
+        },
+        "to_boresight_itrs": {
+          "$ref": "#/$defs/vector3"
+        },
+        "from_max_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_max_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        }
       }
     },
     "vector3": {
       "type": "array",
       "minItems": 3,
       "maxItems": 3,
-      "items": {"type": "number", "minimum": -1000000000000, "maximum": 1000000000000}
+      "items": {
+        "type": "number",
+        "minimum": -1000000000000,
+        "maximum": 1000000000000
+      }
     },
     "optical_pointing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["link_id", "from_off_axis_deg", "to_off_axis_deg", "from_max_off_axis_deg", "to_max_off_axis_deg"],
+      "required": [
+        "link_id",
+        "from_off_axis_deg",
+        "to_off_axis_deg",
+        "from_max_off_axis_deg",
+        "to_max_off_axis_deg"
+      ],
       "properties": {
-        "link_id": {"type": "string", "minLength": 1},
-        "from_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
-        "to_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
-        "from_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
-        "to_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180}
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "from_max_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_max_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        }
       }
     },
     "optical_head_outage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["head_id", "start_ns", "end_ns"],
+      "required": [
+        "head_id",
+        "start_ns",
+        "end_ns"
+      ],
       "properties": {
-        "head_id": {"type": "string", "minLength": 1},
-        "start_ns": {"type": "integer", "minimum": 0},
-        "end_ns": {"type": "integer", "minimum": 1}
+        "head_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_ns": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "optical_pat_link": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["link_id", "from_head", "to_head", "slew_ns", "acquisition_ns"],
+      "required": [
+        "link_id",
+        "from_head",
+        "to_head",
+        "slew_ns",
+        "acquisition_ns"
+      ],
       "properties": {
-        "link_id": {"type": "string", "minLength": 1},
-        "from_head": {"type": "string", "minLength": 1},
-        "to_head": {"type": "string", "minLength": 1},
-        "slew_ns": {"type": "integer", "minimum": 0},
-        "acquisition_ns": {"type": "integer", "minimum": 1}
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_head": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to_head": {
+          "type": "string",
+          "minLength": 1
+        },
+        "slew_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "acquisition_ns": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "access_beam": {
@@ -441,6 +552,48 @@
         "weight": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "optical_steering_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "at_ns",
+        "from_off_axis_deg",
+        "to_off_axis_deg",
+        "from_max_off_axis_deg",
+        "to_max_off_axis_deg"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "from_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "from_max_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_max_off_axis_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
         }
       }
     }

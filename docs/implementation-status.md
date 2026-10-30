@@ -1,5 +1,23 @@
 # Implementation status and current fidelity
 
+## Runtime-evaluated optical steering observations
+
+The opt-in `optical_steering_samples[]` contract accepts strictly ordered
+scenario-relative steering angles for every PAT link, beginning at zero.
+Rust evaluates the two endpoint steering limits at each sample timestamp,
+holds the resulting feasibility state until the next sample, and combines
+it with independent administrative link faults before SYS-03 acquisition.
+A link cannot reacquire while either domain remains down. The new
+`optical-native-steering-samples.json` acceptance scenario checks tracking
+loss, overlapping failures, recovery, control events and packet accounting.
+Legacy `faults[]` inputs remain supported but cannot mix
+`sampled_pointing` fault edges with native steering samples.
+
+This is deterministic virtual-time **sample-and-hold** evaluation of supplied
+angles, not a continuous attitude/SGP4 solver, real optical PHY, or a proof
+of feasibility between observations. Already-admitted packets still complete
+under the existing L1 departure convention.
+
 ## Overlapping optical PAT fault domains
 
 The Rust PAT preparation stage now combines administrative and sampled
