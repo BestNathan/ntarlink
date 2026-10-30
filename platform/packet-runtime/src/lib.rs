@@ -1,6 +1,6 @@
 use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
 use ntarlink_contracts::{
-    ContactMode, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario,
+    ContactMode, Fault, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario,
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
@@ -688,31 +688,25 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .collect();
     let mut pointing_rejections = Vec::new();
 
-    // Faults at equal timestamps follow their original scenario order,
-    // matching the packet scheduler's sequence order at priority zero.
+    // Administrative and sampled-pointing faults are independent state domains.
+    // Fold all edges at the same timestamp before evaluating effective availability:
+    // a recovery in one domain must never reopen a still-failed other domain.
     let mut faults_by_link: HashMap<&str, Vec<_>> = HashMap::new();
-    let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
     for (index, fault) in scenario.faults.iter().enumerate() {
         if configs.contains_key(fault.link_id.as_str()) {
             faults_by_link
                 .entry(fault.link_id.as_str())
                 .or_default()
                 .push((index, fault));
-            if matches!(fault.action, LinkAction::Down) {
-                down_faults
-                    .entry((fault.link_id.as_str(), fault.at_ns))
-                    .or_insert(fault.cause);
-            }
         }
     }
     for faults in faults_by_link.values_mut() {
         faults.sort_by_key(|(index, fault)| (fault.at_ns, *index));
     }
 
-    // Build half-open admin-up intervals once per PAT link. Splitting a
-    // geometric contact at a fault boundary releases both reserved heads;
-    // the next up interval is a new acquisition candidate.
     let mut admin_windows: HashMap<&str, Vec<(u64, u64)>> = HashMap::new();
+    let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
+    let mut effective_faults: Vec<Fault> = Vec::new();
     for config in &scenario.optical_pat {
         let link = scenario
             .links
@@ -721,20 +715,57 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .expect("validated optical PAT link");
         let mut windows = Vec::new();
         let mut cursor = 0;
-        let mut up = link.up;
+        let mut admin_up = link.up;
+        let mut pointing_up = true;
         if let Some(faults) = faults_by_link.get(config.link_id.as_str()) {
-            for (_, fault) in faults {
-                let next_up = matches!(fault.action, LinkAction::Up);
-                if up != next_up {
-                    if up && cursor < fault.at_ns {
-                        windows.push((cursor, fault.at_ns));
+            let mut index = 0;
+            while index < faults.len() {
+                let at_ns = faults[index].1.at_ns;
+                let was_up = admin_up && pointing_up;
+                while index < faults.len() && faults[index].1.at_ns == at_ns {
+                    let fault = faults[index].1;
+                    match fault.cause {
+                        FaultCause::Administrative => {
+                            admin_up = matches!(fault.action, LinkAction::Up);
+                        }
+                        FaultCause::SampledPointing => {
+                            pointing_up = matches!(fault.action, LinkAction::Up);
+                        }
                     }
-                    up = next_up;
-                    cursor = fault.at_ns;
+                    index += 1;
+                }
+                let now_up = admin_up && pointing_up;
+                if was_up != now_up {
+                    if was_up && cursor < at_ns {
+                        windows.push((cursor, at_ns));
+                    }
+                    if !now_up {
+                        down_faults.insert(
+                            (config.link_id.as_str(), at_ns),
+                            if !admin_up {
+                                FaultCause::Administrative
+                            } else {
+                                FaultCause::SampledPointing
+                            },
+                        );
+                    }
+                    cursor = at_ns;
+                    // The packet engine consumes the *effective* state, not
+                    // independent raw fault edges that could reopen it early.
+                    effective_faults.push(Fault {
+                        at_ns,
+                        link_id: config.link_id.clone(),
+                        action: if now_up {
+                            LinkAction::Up
+                        } else {
+                            LinkAction::Down
+                        },
+                        cause: FaultCause::Administrative,
+                    });
                 }
             }
         }
-        if up && cursor < scenario.duration_ns {
+        if admin_up && pointing_up && cursor < scenario.duration_ns {
             windows.push((cursor, scenario.duration_ns));
         }
         admin_windows.insert(config.link_id.as_str(), windows);
@@ -877,14 +908,13 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Keeping the original PAT configuration would require rejected contacts to
     // remain present and would incorrectly reject fully unacquirable links.
     prepared.optical_pat.clear();
-    // The prepared packet scenario no longer owns PAT metadata. Its link
-    // availability is already gated; keep only the legacy fault semantics
-    // internally while preserving typed provenance in the PAT event trace.
-    for fault in &mut prepared.faults {
-        if fault.cause == FaultCause::SampledPointing {
-            fault.cause = FaultCause::Administrative;
-        }
-    }
+    // The prepared packet scenario no longer owns PAT metadata. Replace
+    // overlapping domain-specific PAT faults with effective transitions so
+    // control events and route installation never report a false recovery.
+    prepared
+        .faults
+        .retain(|fault| !configs.contains_key(fault.link_id.as_str()));
+    prepared.faults.extend(effective_faults);
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
     prepared.optical_geometry.clear();
@@ -1250,6 +1280,152 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn overlapping_fault_domains_only_reacquire_after_both_recover() {
+        for (first_cause, second_cause, expected_reason) in [
+            (
+                FaultCause::Administrative,
+                FaultCause::SampledPointing,
+                "administrative_link_down",
+            ),
+            (
+                FaultCause::SampledPointing,
+                FaultCause::Administrative,
+                "sampled_pointing_loss",
+            ),
+        ] {
+            let mut scenario = pat_fixture();
+            scenario.faults = vec![
+                Fault {
+                    at_ns: 30_000_000,
+                    link_id: "isl-a-b".into(),
+                    action: LinkAction::Down,
+                    cause: first_cause,
+                },
+                Fault {
+                    at_ns: 40_000_000,
+                    link_id: "isl-a-b".into(),
+                    action: LinkAction::Down,
+                    cause: second_cause,
+                },
+                Fault {
+                    at_ns: 50_000_000,
+                    link_id: "isl-a-b".into(),
+                    action: LinkAction::Up,
+                    cause: first_cause,
+                },
+                Fault {
+                    at_ns: 70_000_000,
+                    link_id: "isl-a-b".into(),
+                    action: LinkAction::Up,
+                    cause: second_cause,
+                },
+            ];
+            scenario.flows[0].packet_count = 18;
+            scenario.flows[0].interval_ns = 10_000_000;
+            let (prepared, _) = prepare_pat(&scenario).unwrap();
+            prepared.validate().unwrap();
+            let windows: Vec<_> = prepared
+                .contacts
+                .iter()
+                .filter(|c| c.link_id == "isl-a-b")
+                .map(|c| (c.start_ns, c.end_ns))
+                .collect();
+            assert_eq!(
+                windows,
+                vec![
+                    (20_000_000, 30_000_000),
+                    (90_000_000, 120_000_000),
+                    (140_000_000, 200_000_000)
+                ]
+            );
+            let report = run(&scenario).unwrap();
+            assert!(report.pat_events.iter().any(|event| {
+                event.at_ns == 30_000_000
+                    && event.state == "lost"
+                    && event.reason == Some(expected_reason)
+            }));
+            assert_eq!(
+                report
+                    .pat_events
+                    .iter()
+                    .filter(|event| event.state == "tracking")
+                    .map(|event| event.at_ns)
+                    .collect::<Vec<_>>(),
+                vec![20_000_000, 90_000_000, 140_000_000]
+            );
+            let fault_events: Vec<_> = report
+                .control_events
+                .iter()
+                .filter(|event| {
+                    event.link_id.as_deref() == Some("isl-a-b")
+                        && (event.kind == "link_up" || event.kind == "link_down")
+                })
+                .map(|event| (event.at_ns, event.kind.as_str()))
+                .collect();
+            assert_eq!(
+                fault_events,
+                vec![(30_000_000, "link_down"), (70_000_000, "link_up")]
+            );
+            assert_eq!(report.injected, report.delivered + report.dropped);
+            assert_eq!(
+                serde_json::to_vec(&report).unwrap(),
+                serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn simultaneous_fault_domains_have_order_independent_effective_state() {
+        let mut scenario = pat_fixture();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::SampledPointing,
+            },
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 70_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 70_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::SampledPointing,
+            },
+        ];
+        let first = run(&scenario).unwrap();
+        scenario.faults.swap(0, 1);
+        scenario.faults.swap(2, 3);
+        let second = run(&scenario).unwrap();
+        assert_eq!(first.pat_events, second.pat_events);
+        assert_eq!(first.control_events, second.control_events);
+        assert!(first.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000
+                && event.state == "lost"
+                && event.reason == Some("administrative_link_down")
+        }));
+        assert_eq!(
+            first
+                .pat_events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![20_000_000, 90_000_000, 140_000_000]
         );
     }
 
