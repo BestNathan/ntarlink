@@ -117,8 +117,8 @@ continuous steering feasibility, and the Rust runtime does not consume
 the time-indexed samples or generate mid-contact tracking-loss events.
 For a reproducible integration smoke, use
 `scenarios/optical-sgp4-attitude-sampled.synthetic.json` with the
-existing synthetic two-orbit scenario. No optical-head actuator slew-rate or angular-acceleration constraint is
-enforced. An optional modeled spacecraft body-attitude rate limit is described
+existing synthetic two-orbit scenario. No optical-head actuator slew-rate
+or angular-acceleration constraint is enforced. An optional modeled spacecraft body-attitude rate limit is described
 below; it is not a head steering-rate model.
 
 ## Optional sampled body-attitude angular-rate guard
