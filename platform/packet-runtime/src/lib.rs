@@ -707,11 +707,14 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         let mut up = link.up;
         if let Some(faults) = faults_by_link.get(config.link_id.as_str()) {
             for (_, fault) in faults {
-                if up && cursor < fault.at_ns {
-                    windows.push((cursor, fault.at_ns));
+                let next_up = matches!(fault.action, LinkAction::Up);
+                if up != next_up {
+                    if up && cursor < fault.at_ns {
+                        windows.push((cursor, fault.at_ns));
+                    }
+                    up = next_up;
+                    cursor = fault.at_ns;
                 }
-                up = matches!(fault.action, LinkAction::Up);
-                cursor = fault.at_ns;
             }
         }
         if up && cursor < scenario.duration_ns {
@@ -1140,6 +1143,94 @@ mod tests {
                 .start_ns,
             70_000_000
         );
+        assert!(run(&scenario).is_ok());
+    }
+
+    #[test]
+    fn redundant_admin_up_does_not_restart_tracking() {
+        use ntarlink_contracts::Fault;
+        let mut scenario = pat_fixture();
+        scenario.faults.push(Fault {
+            at_ns: 50_000_000,
+            link_id: "isl-a-b".into(),
+            action: LinkAction::Up,
+        });
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![20_000_000, 140_000_000]
+        );
+        assert_eq!(
+            prepared
+                .contacts
+                .iter()
+                .filter(|contact| contact.link_id == "isl-a-b")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn optical_head_is_released_for_competing_link_during_fault() {
+        use ntarlink_contracts::{Fault, Node, NodeKind, OpticalPatLink};
+        let mut scenario = pat_fixture();
+        scenario.nodes.push(Node {
+            id: "sat-c".into(),
+            kind: NodeKind::Satellite,
+            latitude_deg: None,
+            longitude_deg: None,
+        });
+        let mut second = scenario
+            .links
+            .iter()
+            .find(|link| link.id == "isl-a-b")
+            .unwrap()
+            .clone();
+        second.id = "isl-a-c".into();
+        second.to = "sat-c".into();
+        scenario.links.push(second);
+        scenario.contacts.push(ntarlink_contracts::ContactWindow {
+            link_id: "isl-a-c".into(),
+            start_ns: 40_000_000,
+            end_ns: 110_000_000,
+            propagation_delay_ns: Some(3_500_000),
+            propagation_delay_samples: vec![],
+        });
+        scenario.optical_pat.push(OpticalPatLink {
+            link_id: "isl-a-c".into(),
+            from_head: "sat-a/head-1".into(),
+            to_head: "sat-c/head-1".into(),
+            slew_ns: 10_000_000,
+            acquisition_ns: 10_000_000,
+        });
+        scenario.faults = vec![
+            Fault {
+                at_ns: 50_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+            },
+            Fault {
+                at_ns: 90_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+            },
+        ];
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        prepared.validate().unwrap();
+        assert!(events.iter().any(|event| {
+            event.link_id == "isl-a-c"
+                && event.state == "tracking"
+                && event.at_ns == 70_000_000
+        }));
+        assert!(!events.iter().any(|event| {
+            event.link_id == "isl-a-b"
+                && event.state == "tracking"
+                && (90_000_000..120_000_000).contains(&event.at_ns)
+        }));
         assert!(run(&scenario).is_ok());
     }
 
