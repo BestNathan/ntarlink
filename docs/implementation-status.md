@@ -260,6 +260,23 @@ a small historical ISS production-provider path. This is a local integrity
 boundary, **not** authenticated publisher provenance, a licensed multi-orbit
 catalog or 100k/500k measured performance.
 
+## Standalone SYS-03 optical PAT acquisition planner
+
+The Rust `ntarlink-optical-pat` crate now provides deterministic, bounded
+virtual-time acquisition planning for SYS-01 optical contact candidates.
+It enforces exclusive optical-head reservations, configured slew and
+acquisition dwell, half-open tracking windows and explicit rejection when
+contact expires before acquisition. Stable event ordering and input
+validation are covered by unit tests, including resource conflicts,
+reacquisition at contact boundaries and timestamp overflow.
+
+This is an **offline planning primitive only**: it does not change the Rust
+packet runtime, establish an actual optical bearer, simulate pointing
+angles or optical link budgets, or model degradation and recovery.
+SYS-02 attitude/terminal availability, live PAT state and cross-subsystem
+packet-routing integration remain open. See
+[SYS-03 crate documentation](../systems/space-network/README.md).
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
