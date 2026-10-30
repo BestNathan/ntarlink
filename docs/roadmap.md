@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in production SGP4/ITRS and fixed/sampled body attitude compiler emits bounded `optical_geometry_samples[]` for Rust-native reciprocal pointing evaluation, with shared deterministic probe grid, SHA-256 provenance, contract tests and PAT/packet CI (finite sample-and-hold; not live Rust SGP4 or continuous pointing). See [design](design/optical-native-itrs-compiler.md).
+
 - [x] Opt-in Rust-native time-indexed ITRS positions/boresights gate optical PAT through reciprocal line-of-sight geometry and independent administrative fault state; bounded schema, deterministic recovery and packet CI (supplied discrete observations, not live orbit/attitude propagation).
 
 - [x] Opt-in sampled body-to-ITRS attitude angular-rate cap, with shortest-arc

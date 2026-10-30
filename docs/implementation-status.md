@@ -1,3 +1,26 @@
+## Production SGP4 and attitude to Rust-native ITRS geometry
+
+The optional `--native-itrs-probes-per-contact` mode now compiles real
+Skyfield/SGP4 ITRS satellite positions and fixed or sampled body-to-ITRS
+optical head attitudes into `optical_geometry_samples[]`. The Rust SYS-02
+geometry evaluator, rather than Python, computes reciprocal off-axis angles
+and feeds SYS-03 PAT tracking loss/reacquisition. The deterministic
+microsecond probe grid is shared with the earlier native-angle compiler.
+It includes a t=0 observation per PAT link, contact start, interior and
+end probes, and a global 10,000-observation budget. Administrative faults
+remain independent. SHA-256 source/output digests, attitude-rate checks and
+per-contact counts are recorded in the manifest.
+
+Python contract tests cover fixed/sampled attitude, deterministic sampling,
+degenerate geometry, invalid mode composition, provenance and failed-write
+safety. CI exercises a synthetic geometry-driven PAT/packet case and a
+separate real SGP4 compiler smoke. See [design](design/optical-native-itrs-compiler.md).
+
+**Fidelity:** this is offline discrete ITRS observation compilation, not
+Rust-native orbital propagation, continuous attitude dynamics, calibrated
+optical PHY, or a proof of feasibility between sample instants. No
+large-scale throughput or memory benchmark is claimed.
+
 ## Rust-native time-indexed ITRS optical pointing observations
 
 SYS-02 now accepts opt-in `optical_geometry_samples[]` with frame-tagged

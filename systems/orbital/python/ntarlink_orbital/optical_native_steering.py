@@ -41,30 +41,11 @@ def _angles(link: dict, pat: dict, heads: dict, position, at_ns: int) -> dict:
     return angles
 
 
-def compile_native_steering(scenario: dict, compiled: dict, position,
-                            probes_per_contact: int, attitude: dict) -> tuple[dict, dict]:
-    """Generate bounded steering observations for the Rust PAT runtime.
-
-    Every PAT link gets an actual ITRS observation at t=0, even if its first
-    contact starts later. Contact start, interior and final representable
-    microsecond observations are added. Administrative faults remain separate.
-    """
+def _observation_schedule(scenario: dict, probes_per_contact: int) -> tuple[dict, list]:
+    """Bounded, deterministic microsecond sampling grid shared by native PAT modes."""
     if type(probes_per_contact) is not int or probes_per_contact not in (1, 3, 7):
         raise ValueError("probes_per_contact must be 1, 3 or 7")
-    if attitude.get("attitude_model") != "sampled_body_to_itrs_quaternion":
-        raise ValueError("native steering requires sampled attitude")
-    if scenario.get("optical_steering_samples"):
-        raise ValueError("existing native steering samples cannot be overwritten")
-    if any(fault.get("cause") == "sampled_pointing"
-           for fault in scenario.get("faults", [])):
-        raise ValueError("native steering cannot mix with sampled_pointing fault edges")
-    if "optical_geometry" not in compiled:
-        raise ValueError("missing validated optical geometry snapshots")
-
-    duration = scenario["duration_ns"]
-    heads = _heads(attitude, duration)
-    links = {link["id"]: link for link in scenario["links"]}
-    pats = {pat["link_id"]: pat for pat in scenario["optical_pat"]}
+    pats = {pat["link_id"] for pat in scenario["optical_pat"]}
     contacts = sorted(
         (contact for contact in scenario["contacts"] if contact["link_id"] in pats),
         key=lambda contact: (contact["start_ns"], contact["link_id"]),
@@ -92,7 +73,35 @@ def compile_native_steering(scenario: dict, compiled: dict, position,
 
     total = sum(len(ticks) for ticks in ticks_by_link.values())
     if total > MAX_STEERING_SAMPLES:
-        raise ValueError("native optical steering sample budget exceeded")
+        raise ValueError("native optical observation sample budget exceeded")
+    return ticks_by_link, reports
+
+
+def compile_native_steering(scenario: dict, compiled: dict, position,
+                            probes_per_contact: int, attitude: dict) -> tuple[dict, dict]:
+    """Generate bounded steering observations for the Rust PAT runtime.
+
+    Every PAT link gets an actual ITRS observation at t=0, even if its first
+    contact starts later. Contact start, interior and final representable
+    microsecond observations are added. Administrative faults remain separate.
+    """
+    if type(probes_per_contact) is not int or probes_per_contact not in (1, 3, 7):
+        raise ValueError("probes_per_contact must be 1, 3 or 7")
+    if attitude.get("attitude_model") != "sampled_body_to_itrs_quaternion":
+        raise ValueError("native steering requires sampled attitude")
+    if scenario.get("optical_steering_samples"):
+        raise ValueError("existing native steering samples cannot be overwritten")
+    if any(fault.get("cause") == "sampled_pointing"
+           for fault in scenario.get("faults", [])):
+        raise ValueError("native steering cannot mix with sampled_pointing fault edges")
+    if "optical_geometry" not in compiled:
+        raise ValueError("missing validated optical geometry snapshots")
+
+    duration = scenario["duration_ns"]
+    heads = _heads(attitude, duration)
+    links = {link["id"]: link for link in scenario["links"]}
+    pats = {pat["link_id"]: pat for pat in scenario["optical_pat"]}
+    ticks_by_link, reports = _observation_schedule(scenario, probes_per_contact)
 
     samples = []
     for link_id in sorted(pats):
