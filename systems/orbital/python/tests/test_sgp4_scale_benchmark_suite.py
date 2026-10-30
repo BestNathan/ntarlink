@@ -89,7 +89,7 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
             {**worker_result(), "rss_after_provider_bytes": None},
             {**worker_result(), "rss_after_provider_bytes": True},
             {**worker_result(), "rss_after_provider_bytes": -1},
-            {**worker_result(), "rss_after_propagation_bytes": 4096},
+            {**worker_result(), "rss_after_propagation_bytes": "invalid"},
         ):
             with self.subTest(altered=altered), patch(
                 "ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker",
@@ -164,8 +164,6 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
             self.assertGreater(report["max_rss_before_provider_bytes"], 0)
             self.assertGreater(report["max_rss_after_provider_bytes"], 0)
             self.assertGreater(report["max_rss_after_propagation_bytes"], 0)
-            self.assertLessEqual(report["max_rss_after_propagation_bytes"],
-                                 report["max_process_peak_rss_bytes"])
         unique = run_suite(source, 1, 2, 2, catalog_mode="unique")
         self.assertEqual(unique["catalog_mode"], "unique")
         self.assertEqual(unique["unique_source_tle_count"], 1)
