@@ -138,6 +138,16 @@ pub struct OpticalPatLink {
     pub acquisition_ns: u64,
 }
 
+/// SYS-02 scheduled unavailability of one spacecraft-owned optical head.
+/// The half-open interval is in scenario-relative virtual nanoseconds.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalHeadOutage {
+    pub head_id: String,
+    pub start_ns: u64,
+    pub end_ns: u64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContactMode {
@@ -169,6 +179,9 @@ pub struct Scenario {
     /// Opt-in PAT gating for geometric optical contacts; absent means legacy behavior.
     #[serde(default)]
     pub optical_pat: Vec<OpticalPatLink>,
+    /// Optional SYS-02 head maintenance/failure windows; only PAT heads are supported.
+    #[serde(default)]
+    pub optical_head_outages: Vec<OpticalHeadOutage>,
 }
 
 impl Scenario {
@@ -466,6 +479,29 @@ impl Scenario {
                 }
             }
         }
+        if self.optical_head_outages.len() > 10_000 {
+            return Err("optical head outage limit exceeded".into());
+        }
+        let mut outages: std::collections::HashMap<&str, Vec<(u64, u64)>> =
+            std::collections::HashMap::new();
+        for outage in &self.optical_head_outages {
+            if !head_owners.contains_key(outage.head_id.as_str()) {
+                return Err(format!("unknown PAT optical head: {}", outage.head_id));
+            }
+            if outage.start_ns >= outage.end_ns || outage.end_ns > self.duration_ns {
+                return Err(format!("invalid optical head outage: {}", outage.head_id));
+            }
+            outages
+                .entry(outage.head_id.as_str())
+                .or_default()
+                .push((outage.start_ns, outage.end_ns));
+        }
+        for (head, intervals) in &mut outages {
+            intervals.sort_unstable();
+            if intervals.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+                return Err(format!("overlapping optical head outages: {head}"));
+            }
+        }
         Ok(())
     }
 }
@@ -504,6 +540,36 @@ mod tests {
         s.optical_pat[0].acquisition_ns = 20;
         s.optical_pat.push(s.optical_pat[0].clone());
         assert!(s.validate().unwrap_err().contains("duplicate"));
+    }
+
+    #[test]
+    fn optical_head_outages_validate_ownership_bounds_and_overlap() {
+        let mut s = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        s.optical_head_outages.push(OpticalHeadOutage {
+            head_id: "sat-a/head-1".into(),
+            start_ns: 50_000_000,
+            end_ns: 70_000_000,
+        });
+        s.validate().unwrap();
+        s.optical_head_outages.push(OpticalHeadOutage {
+            head_id: "sat-a/head-1".into(),
+            start_ns: 70_000_000,
+            end_ns: 80_000_000,
+        });
+        s.validate().unwrap();
+        s.optical_head_outages[1].start_ns = 69_000_000;
+        assert!(s.validate().unwrap_err().contains("overlapping"));
+        s.optical_head_outages.pop();
+        s.optical_head_outages[0].head_id = "sat-c/head-1".into();
+        assert!(s.validate().unwrap_err().contains("unknown PAT"));
+        s.optical_head_outages[0].head_id = "sat-a/head-1".into();
+        s.optical_head_outages[0].end_ns = s.duration_ns + 1;
+        assert!(s.validate().unwrap_err().contains("invalid optical head outage"));
+        s.optical_head_outages[0].end_ns = s.optical_head_outages[0].start_ns;
+        assert!(s.validate().is_err());
     }
 
     #[test]
