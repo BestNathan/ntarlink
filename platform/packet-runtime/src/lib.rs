@@ -875,6 +875,14 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Keeping the original PAT configuration would require rejected contacts to
     // remain present and would incorrectly reject fully unacquirable links.
     prepared.optical_pat.clear();
+    // The prepared packet scenario no longer owns PAT metadata. Its link
+    // availability is already gated; keep only the legacy fault semantics
+    // internally while preserving typed provenance in the PAT event trace.
+    for fault in &mut prepared.faults {
+        if fault.cause == FaultCause::SampledPointing {
+            fault.cause = FaultCause::Administrative;
+        }
+    }
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
     prepared.optical_geometry.clear();
