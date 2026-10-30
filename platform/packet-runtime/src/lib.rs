@@ -1194,7 +1194,11 @@ mod tests {
         let report = run(&scenario).unwrap();
         assert_eq!(report.delivered, 0);
         assert_eq!(report.injected, report.dropped);
-        assert!(!report.packets.iter().flat_map(|p| &p.hops).any(|h| h.link_id == "isl-a-b"));
+        assert!(!report
+            .packets
+            .iter()
+            .flat_map(|p| &p.hops)
+            .any(|h| h.link_id == "isl-a-b"));
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
