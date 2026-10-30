@@ -78,7 +78,7 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
     """Validate a workload, repeat it in isolated processes, and aggregate medians.
 
     Timing excludes interpreter startup and imports; process RSS includes both.
-    The RSS high-water mark is not a per-stage or incremental memory measurement.
+    Linux VmRSS checkpoints are current values, not per-stage peaks or deltas.
     """
     source = Path(orbit_config).resolve()
     _validate_workload(source, satellites, samples_per_satellite, repetitions, catalog_mode)
@@ -120,6 +120,24 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
            for value in rss) or any((value is None) != (rss[0] is None) for value in rss):
         raise RuntimeError("SGP4 repetitions disagree on RSS measurement availability")
 
+    checkpoints = (
+        "rss_before_provider_bytes",
+        "rss_after_provider_bytes",
+        "rss_after_propagation_bytes",
+    )
+    checkpoint_available = first.get(checkpoints[0]) is not None
+    for run in runs:
+        values = [run.get(key) for key in checkpoints]
+        if any((value is None) == checkpoint_available for value in values):
+            raise RuntimeError("SGP4 repetitions disagree on RSS checkpoint availability")
+        if any(value is not None and (type(value) is not int or value <= 0)
+               for value in values):
+            raise RuntimeError("SGP4 repetition has invalid RSS checkpoint")
+        if (rss[0] is not None and
+                any(value is not None and value > run["process_peak_rss_bytes"]
+                    for value in values)):
+            raise RuntimeError("SGP4 checkpoint exceeds process peak RSS")
+
     return {
         "schema_version": 1,
         "workload": "isolated_" + WORKLOADS[catalog_mode],
@@ -143,7 +161,20 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
         "median_propagation_samples_per_second": statistics.median(
             run["propagation_samples_per_second"] for run in runs),
         "max_process_peak_rss_bytes": max(rss) if rss[0] is not None else None,
+        "max_rss_before_provider_bytes": (
+            max(run["rss_before_provider_bytes"] for run in runs)
+            if checkpoint_available else None
+        ),
+        "max_rss_after_provider_bytes": (
+            max(run["rss_after_provider_bytes"] for run in runs)
+            if checkpoint_available else None
+        ),
+        "max_rss_after_propagation_bytes": (
+            max(run["rss_after_propagation_bytes"] for run in runs)
+            if checkpoint_available else None
+        ),
         "rss_scope": "whole isolated worker process high-water RSS; includes imports and provider",
+        "rss_checkpoint_scope": "Linux current VmRSS at phase boundaries; not phase peaks",
         "timing_scope": "provider build separate from SGP4/ITRS positions and hashing",
         "runs": runs,
     }
