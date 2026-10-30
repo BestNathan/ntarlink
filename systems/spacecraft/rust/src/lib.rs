@@ -114,7 +114,9 @@ mod tests {
             availability.available_intervals("x", "y", 30, 100),
             vec![(30, 100)]
         );
-        assert!(availability.available_intervals("a", "b", 50, 50).is_empty());
+        assert!(availability
+            .available_intervals("a", "b", 50, 50)
+            .is_empty());
     }
 
     #[test]
