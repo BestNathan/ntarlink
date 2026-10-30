@@ -5,6 +5,7 @@ members = [
     "platform/packet-runtime",
     "systems/network-control",
     "systems/access/rust",
+    "systems/space-network/rust",
     "applications/cli",
 ]
 resolver = "2"
