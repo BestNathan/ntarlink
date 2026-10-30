@@ -1280,7 +1280,10 @@ mod tests {
             .collect();
         assert_eq!(windows, vec![(20_000_000, 120_000_000)]);
         assert_eq!(
-            events.iter().filter(|e| e.reason == Some("geometry_outside_envelope")).count(),
+            events
+                .iter()
+                .filter(|e| e.reason == Some("geometry_outside_envelope"))
+                .count(),
             1
         );
         let report = run(&scenario).unwrap();
