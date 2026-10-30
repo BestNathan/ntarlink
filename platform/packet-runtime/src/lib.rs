@@ -3,7 +3,7 @@ use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySamp
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
-use ntarlink_spacecraft::{pointing_allowed, HeadAvailability};
+use ntarlink_spacecraft::{geometry_pointing_allowed, pointing_allowed, HeadAvailability};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -679,6 +679,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .iter()
         .map(|pointing| (pointing.link_id.as_str(), pointing))
         .collect();
+    let geometry_by_contact: HashMap<_, _> = scenario
+        .optical_geometry
+        .iter()
+        .map(|geometry| ((geometry.link_id.as_str(), geometry.at_ns), geometry))
+        .collect();
     let mut pointing_rejections = Vec::new();
 
     // Faults at equal timestamps follow their original scenario order,
@@ -763,6 +768,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                         at_ns: start_ns,
                         state: "rejected",
                         reason: Some("pointing_outside_envelope"),
+                    });
+                    continue;
+                }
+            }
+            // SYS-02 frame-tagged ITRS snapshot at the geometric contact start.
+            // The supplied boresight is held fixed throughout this contact.
+            if let Some(geometry) =
+                geometry_by_contact.get(&(contact.link_id.as_str(), contact.start_ns))
+            {
+                if !geometry_pointing_allowed(geometry) {
+                    pointing_rejections.push(PatEventTrace {
+                        link_id: contact.link_id.clone(),
+                        at_ns: start_ns,
+                        state: "rejected",
+                        reason: Some("geometry_outside_envelope"),
                     });
                     continue;
                 }
@@ -855,6 +875,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.optical_pat.clear();
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
+    prepared.optical_geometry.clear();
     let mut events: Vec<PatEventTrace> = plan
         .events
         .into_iter()
@@ -1226,6 +1247,58 @@ mod tests {
         assert_eq!(starts, vec![20_000_000, 140_000_000]);
         assert!(!events.iter().any(|e| e.state == "rejected"));
         assert!(run(&scenario).unwrap().delivered > 0);
+    }
+
+    #[test]
+    fn itrs_contact_snapshots_gate_individual_optical_windows() {
+        use ntarlink_contracts::OpticalGeometry;
+        let mut scenario = pat_fixture();
+        let first = OpticalGeometry {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "ITRS".into(),
+            from_position_m: [7_000_000.0, 0.0, 0.0],
+            to_position_m: [7_001_000.0, 0.0, 0.0],
+            from_boresight_itrs: [1.0, 0.0, 0.0],
+            to_boresight_itrs: [-1.0, 0.0, 0.0],
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        scenario.optical_geometry.push(first.clone());
+        scenario.optical_geometry.push(OpticalGeometry {
+            at_ns: 120_000_000,
+            from_boresight_itrs: [0.0, 1.0, 0.0],
+            ..first
+        });
+        scenario.validate().unwrap();
+        let (prepared, events) = prepare_pat(&scenario).unwrap();
+        let windows: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|c| c.link_id == "isl-a-b")
+            .map(|c| (c.start_ns, c.end_ns))
+            .collect();
+        assert_eq!(windows, vec![(20_000_000, 120_000_000)]);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e.reason == Some("geometry_outside_envelope"))
+                .count(),
+            1
+        );
+        let report = run(&scenario).unwrap();
+        assert!(report.delivered > 0 && report.dropped > 0);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|p| &p.hops)
+            .filter(|h| h.link_id == "isl-a-b")
+            .all(|h| (20_000_000..120_000_000).contains(&h.transmit_started_ns)));
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
     }
 
     #[test]

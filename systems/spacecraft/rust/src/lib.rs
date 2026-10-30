@@ -1,5 +1,5 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
-use ntarlink_contracts::{OpticalHeadOutage, OpticalPointing};
+use ntarlink_contracts::{OpticalGeometry, OpticalHeadOutage, OpticalPointing};
 use std::collections::HashMap;
 
 /// Conservative static steering-envelope gate for an operator-supplied
@@ -16,6 +16,49 @@ pub fn pointing_allowed(pointing: &OpticalPointing) -> bool {
             && (0.0..=180.0).contains(angle)
             && (0.0..=180.0).contains(limit)
             && angle <= limit
+    })
+}
+
+/// Compute the two line-of-sight steering angles from one ITRS snapshot.
+/// Boresight and position vectors must share the ITRS axes; a fixed snapshot
+/// is not a time-varying attitude or ephemeris model. A degenerate vector
+/// fails closed. The numerical comparison tolerance is 1e-9 degrees.
+pub fn geometry_pointing_allowed(geometry: &OpticalGeometry) -> bool {
+    if geometry.frame != "ITRS" {
+        return false;
+    }
+    let delta =
+        std::array::from_fn::<_, 3, _>(|i| geometry.to_position_m[i] - geometry.from_position_m[i]);
+    let reverse = delta.map(|v| -v);
+    [
+        (
+            delta,
+            geometry.from_boresight_itrs,
+            geometry.from_max_off_axis_deg,
+        ),
+        (
+            reverse,
+            geometry.to_boresight_itrs,
+            geometry.to_max_off_axis_deg,
+        ),
+    ]
+    .iter()
+    .all(|(direction, boresight, limit)| {
+        if !limit.is_finite() || !(0.0..=180.0).contains(limit) {
+            return false;
+        }
+        let norm = |v: &[f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let a = norm(direction);
+        let b = norm(boresight);
+        if !a.is_finite() || !b.is_finite() || a <= 0.0 || b <= 0.0 {
+            return false;
+        }
+        let dot = direction
+            .iter()
+            .zip(boresight)
+            .map(|(x, y)| (x / a) * (y / b))
+            .sum::<f64>();
+        dot.is_finite() && dot.clamp(-1.0, 1.0).acos().to_degrees() <= limit + 1.0e-9
     })
 }
 
@@ -118,6 +161,34 @@ mod tests {
         assert!(!pointing_allowed(&pointing));
         pointing.from_off_axis_deg = f64::NAN;
         assert!(!pointing_allowed(&pointing));
+    }
+
+    #[test]
+    fn itrs_geometry_checks_both_reciprocal_los_directions() {
+        let mut g = OpticalGeometry {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "ITRS".into(),
+            from_position_m: [7_000_000.0, 0.0, 0.0],
+            to_position_m: [7_001_000.0, 0.0, 0.0],
+            from_boresight_itrs: [1.0, 0.0, 0.0],
+            to_boresight_itrs: [-1.0, 0.0, 0.0],
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        assert!(geometry_pointing_allowed(&g));
+        g.to_boresight_itrs = [0.0, 1.0, 0.0];
+        assert!(!geometry_pointing_allowed(&g));
+        g.to_max_off_axis_deg = 90.0;
+        assert!(geometry_pointing_allowed(&g));
+        g.from_boresight_itrs = [0.0, 0.0, 0.0];
+        assert!(!geometry_pointing_allowed(&g));
+        g.from_boresight_itrs = [1.0, 0.0, 0.0];
+        g.to_position_m = g.from_position_m;
+        assert!(!geometry_pointing_allowed(&g));
+        g.to_position_m = [7_001_000.0, 0.0, 0.0];
+        g.frame = "TEME".into();
+        assert!(!geometry_pointing_allowed(&g));
     }
 
     #[test]

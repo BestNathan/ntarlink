@@ -60,6 +60,26 @@ visibility alone does not permit forwarding. This is a **static assumed-angle
 feasibility gate**, not an ephemeris-derived target vector, spacecraft attitude
 solution, time-varying steering trajectory or measured pointing error.
 
+## Implemented ITRS pointing snapshot slice
+
+The optional `optical_geometry[]` contract supplies one snapshot for every
+configured PAT contact, keyed by directed link ID and contact start time
+(`at_ns`, scenario-relative virtual nanoseconds). Both satellite positions
+are Cartesian ITRS meters; both optical-head boresight directions are
+dimensionless vectors expressed in the same ITRS axes. The gate computes
+reciprocal line-of-sight vectors and checks both off-boresight angles against
+inclusive per-head limits in degrees. Nonfinite, zero, coincident, wrong-frame,
+missing/duplicate or inconsistent shared-head snapshots are rejected.
+`optical_geometry` and static `optical_pointing` are mutually exclusive.
+
+The snapshot is **held fixed for the entire geometric contact**. This does
+not interpolate orbit positions, transform spacecraft body-frame attitude,
+model tracking error or certify line-of-sight pointing throughout a window.
+A future SYS-01 adapter must populate these vectors from authenticated,
+time-aligned ephemerides and an explicit attitude/installation model.
+The synthetic `scenarios/optical-itrs-pointing.json` fixture verifies
+contact-by-contact PAT admission, rejection and packet suppression.
+
 ## Faults, validation, and milestones
 
 Faults: power derating, single optical head failure, antenna mispointing, thermal throttling, unavailable compute, safe mode and satellite retirement. Each invalidates advertised link capability and leads to SYS-03/05/06 link changes, SYS-07 route reoptimization and SYS-10 alarms.

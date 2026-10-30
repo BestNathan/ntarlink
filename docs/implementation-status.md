@@ -353,6 +353,21 @@ operator-supplied constants**, not calculated from propagated position,
 attitude, boresight or terminal motion. No time-varying pointing, calibration
 or optical PHY is claimed.
 
+## SYS-02 ITRS optical pointing snapshots
+
+The opt-in `optical_geometry[]` scenario contract now accepts one
+frame-tagged ITRS position/boresight snapshot per directed PAT contact.
+SYS-02 calculates both reciprocal line-of-sight steering angles from
+Cartesian positions in meters and boresight directions in the same frame.
+Malformed, incomplete or inconsistent geometry fails validation, while
+out-of-envelope contacts are rejected before SYS-03 acquisition. PAT
+rejection events use `geometry_outside_envelope`; the packet runtime
+removes unacquired windows and preserves delayed route recomputation.
+A synthetic two-window CLI fixture exercises one accepted and one rejected
+contact with packet accounting. This is **not** a production ephemeris
+adapter or an attitude solution: the supplied vectors are fixed over each
+window and are not guaranteed physically valid at later times.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.

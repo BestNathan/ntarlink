@@ -70,6 +70,12 @@
       ],
       "description": "Static: unspecified orbital links remain available; scheduled: orbital links need a contact window to be usable."
     },
+    "optical_geometry": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/optical_geometry"},
+      "description": "Optional ITRS Cartesian position (meters) and boresight (unitless) snapshot at every PAT contact start. Fixed over the contact; mutually exclusive with optical_pointing."
+    },
     "optical_pointing": {
       "type": "array",
       "maxItems": 10000,
@@ -305,6 +311,28 @@
           "description": "One-way geometric propagation delay in nanoseconds."
         }
       }
+    },
+    "optical_geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["link_id", "at_ns", "frame", "from_position_m", "to_position_m", "from_boresight_itrs", "to_boresight_itrs", "from_max_off_axis_deg", "to_max_off_axis_deg"],
+      "properties": {
+        "link_id": {"type": "string", "minLength": 1},
+        "at_ns": {"type": "integer", "minimum": 0},
+        "frame": {"const": "ITRS"},
+        "from_position_m": {"$ref": "#/$defs/vector3"},
+        "to_position_m": {"$ref": "#/$defs/vector3"},
+        "from_boresight_itrs": {"$ref": "#/$defs/vector3"},
+        "to_boresight_itrs": {"$ref": "#/$defs/vector3"},
+        "from_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180},
+        "to_max_off_axis_deg": {"type": "number", "minimum": 0, "maximum": 180}
+      }
+    },
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "number", "minimum": -1000000000000, "maximum": 1000000000000}
     },
     "optical_pointing": {
       "type": "object",

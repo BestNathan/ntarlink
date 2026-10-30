@@ -71,6 +71,23 @@ jobs:
           assert not any(h["link_id"] == "isl-a-b" for p in r["packets"] for h in p["hops"])
           print("SYS-02 static pointing:", len(rejected), "rejected contacts")
           PY
+      - name: Verify SYS-02 ITRS geometry gates individual optical contacts
+        run: |
+          python3 -m json.tool scenarios/optical-itrs-pointing.json > /dev/null
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-itrs-pointing.json --json > /tmp/ntarlink-itrs-pointing.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/ntarlink-itrs-pointing.json"))
+          tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
+          rejected = [e for e in r["pat_events"] if e["reason"] == "geometry_outside_envelope"]
+          assert tracking == [20000000], tracking
+          assert len(rejected) == 1 and rejected[0]["at_ns"] == 120000000, rejected
+          assert r["delivered"] > 0 and r["dropped"] > 0, r
+          assert r["injected"] == r["delivered"] + r["dropped"], r
+          hops = [h for p in r["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          assert hops and all(20000000 <= h["transmit_started_ns"] < 120000000 for h in hops), hops
+          print("SYS-02 ITRS pointing:", len(tracking), "acquired,", len(rejected), "rejected")
+          PY
       - name: Verify SYS-02 optical head outage gates PAT and packet forwarding
         run: |
           python3 -m json.tool scenarios/optical-head-outage.json > /dev/null

@@ -42,6 +42,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [ ] Actual access/optical acquisition feasibility, calibrated link budgets with interference, and validated relativistic/light-time delay models.
 - [x] Opt-in SYS-02 spacecraft optical-head outage windows gate SYS-03 PAT acquisition, release shared heads, and require reacquisition after recovery (deterministic preplanned availability, not pointing physics).
 - [x] Opt-in SYS-02 static optical pointing-envelope gate using operator-supplied per-link off-boresight angles and consistent per-head limits, with PAT rejection and packet suppression (not ephemeris-derived attitude or steering dynamics).
+- [x] Opt-in per-contact frame-tagged ITRS position and boresight snapshots for SYS-02 steering feasibility, gating PAT and packet forwarding (supplied geometry only, no ephemeris adapter or attitude dynamics).
 - [ ] Spacecraft payload mode, ephemeris-derived optical pointing, and attitude constraints (SYS-02).
 - [x] Standalone deterministic SYS-03 optical PAT contact acquisition planner with exclusive-head reservations, finite slew/acquisition dwell and half-open tracking windows (not yet connected to packet forwarding or calibrated optical physics).
 - [x] Opt-in SYS-03 PAT tracking-window gate for scheduled optical contacts in the Rust packet engine, with exclusive-head contention, route reconvergence, packet accounting and deterministic PAT trace (not a live PHY or tracking-fault recovery).
