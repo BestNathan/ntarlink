@@ -31,6 +31,9 @@ def worker_result(digest="a" * 64):
         "propagation_wall_seconds": 0.2,
         "propagation_samples_per_second": 30.0,
         "process_peak_rss_bytes": 2048,
+        "rss_before_provider_bytes": 1024,
+        "rss_after_provider_bytes": 1536,
+        "rss_after_propagation_bytes": 1792,
     }
 
 
@@ -53,6 +56,9 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
         self.assertEqual(report["repetitions"], 2)
         self.assertEqual(report["median_propagation_samples_per_second"], 45.0)
         self.assertEqual(report["max_process_peak_rss_bytes"], 4096)
+        self.assertEqual(report["max_rss_before_provider_bytes"], 1024)
+        self.assertEqual(report["max_rss_after_provider_bytes"], 1536)
+        self.assertEqual(report["max_rss_after_propagation_bytes"], 1792)
         self.assertEqual(report["position_digest_sha256"], "a" * 64)
 
     def test_invalid_workloads_fail_before_spawning(self):
@@ -80,6 +86,10 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
             {**worker_result(), "propagation_wall_seconds": float("nan")},
             {**worker_result(), "process_peak_rss_bytes": None},
             {**worker_result(), "position_digest_sha256": "invalid"},
+            {**worker_result(), "rss_after_provider_bytes": None},
+            {**worker_result(), "rss_after_provider_bytes": True},
+            {**worker_result(), "rss_after_provider_bytes": -1},
+            {**worker_result(), "rss_after_propagation_bytes": "invalid"},
         ):
             with self.subTest(altered=altered), patch(
                 "ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker",
@@ -98,6 +108,18 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
         report = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(report["sample_count"], 6)
         self.assertEqual(report["repetitions"], 1)
+        self.assertEqual(report["max_rss_after_propagation_bytes"], 1792)
+
+    def test_allows_unavailable_checkpoints_on_unsupported_platforms(self):
+        unavailable = {**worker_result(),
+                       "rss_before_provider_bytes": None,
+                       "rss_after_provider_bytes": None,
+                       "rss_after_propagation_bytes": None}
+        with patch("ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker",
+                   return_value=unavailable):
+            report = run_suite(self.source, 2, 3, 2)
+        self.assertIsNone(report["max_rss_after_provider_bytes"])
+        self.assertEqual(report["max_process_peak_rss_bytes"], 2048)
 
     def test_unique_mode_rejects_duplicates_before_worker(self):
         with patch("ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker") as worker:
@@ -139,6 +161,9 @@ class Sgp4ScaleBenchmarkSuiteTests(unittest.TestCase):
         self.assertGreater(report["median_propagation_samples_per_second"], 0)
         if sys.platform == "linux":
             self.assertGreater(report["max_process_peak_rss_bytes"], 0)
+            self.assertGreater(report["max_rss_before_provider_bytes"], 0)
+            self.assertGreater(report["max_rss_after_provider_bytes"], 0)
+            self.assertGreater(report["max_rss_after_propagation_bytes"], 0)
         unique = run_suite(source, 1, 2, 2, catalog_mode="unique")
         self.assertEqual(unique["catalog_mode"], "unique")
         self.assertEqual(unique["unique_source_tle_count"], 1)

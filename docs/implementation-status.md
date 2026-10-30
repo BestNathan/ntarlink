@@ -128,6 +128,18 @@ with a single historical ISS TLE in this mode. No independent multi-orbit
 catalog has yet been sourced or validated, and the 100k/500k runs remain
 unmeasured. See [SGP4 benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
 
+## SGP4 phase-boundary resident-memory observations
+
+The production SGP4/ITRS benchmark now records three Linux current-RSS
+checkpoints (before provider build, after provider build, and after position
+propagation). The isolated suite validates the checkpoint contract across
+runs and aggregates their maximum observed values. These are snapshots,
+not per-stage memory peaks or allocations. Whole-process high-water RSS
+remains separately reported. Unsupported platforms return null; the small
+real-provider CI smoke checks the Linux values. No 100k/500k workload has
+been measured or performance-certified by this change. See
+[benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
+
 ## Opt-in production SYS-01 Earth-orientation input
 
 The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A

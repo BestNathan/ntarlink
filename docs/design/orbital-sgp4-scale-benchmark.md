@@ -83,6 +83,28 @@ constellation. Reports label `catalog_mode`, `source_tle_count`,
 `unique_source_tle_count`, and the selected workload/fidelity explicitly.
 The 1,000 satellite and 500,000 position limits apply in both modes.
 
+## Linux phase-boundary resident-memory checkpoints
+
+The production benchmark now samples Linux `/proc/self/status` `VmRSS` at
+three boundaries: immediately before provider construction, immediately
+after provider construction, and immediately after propagation and digesting.
+Values are reported as `rss_before_provider_bytes`,
+`rss_after_provider_bytes`, and `rss_after_propagation_bytes`.
+The isolated suite validates their availability and positive integer units
+across repetitions and reports the maximum observed value for each boundary.
+
+These are **current RSS snapshots**, not per-stage peak RSS, retained-heap
+attribution, incremental allocation, or a reliable difference in phase
+memory costs. Allocators may retain pages, memory may be freed between
+checkpoints, and short-lived peaks can be missed. The existing
+`max_process_peak_rss_bytes` remains a whole-process high-water mark.
+Linux `VmRSS` and `getrusage().ru_maxrss` are different kernel
+estimators and can disagree slightly, so snapshots are not constrained
+to be numerically below the separately reported high-water mark.
+On macOS and other non-Linux platforms checkpoint fields are null rather
+than reporting an unsupported approximation. No performance thresholds
+are enforced in CI.
+
 ## Isolated repeated measurement protocol
 
 The optional `ntarlink_orbital.sgp4_scale_benchmark_suite` wraps the same

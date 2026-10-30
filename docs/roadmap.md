@@ -31,6 +31,7 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Bounded real SGP4/Skyfield ITRS throughput smoke using replicated historical TLEs, with separate provider-build timing and position digest (not a real constellation or large-scale capacity validation).
 - [x] Isolated repeated real SGP4/ITRS benchmark with digest consistency, throughput medians and process RSS high-water marks (small CI smoke; no 100k/500k measurement).
 - [x] Opt-in distinct supplied-TLE benchmark mode, rejecting repeated TLE pairs and mismatched source counts (single-ISS CI smoke; no multi-orbit catalog bundled).
+- [x] Linux current-RSS checkpoints before/after SGP4 provider build and after propagation, aggregated across isolated workers (not per-stage peaks or 100k/500k measurements).
 - [ ] Independent published multi-epoch ITRF reference verification, certified IERS/leap-second archive handling, columnar ephemerides and large constellation benchmarks.
 - [x] First-order Doppler/range-rate observations at contact midpoints, exported as a separate analytical artifact (not PHY carrier recovery).
 - [x] Initial SYS-05 analytical RF link-budget sidecar from SYS-01 midpoint contact delays (Friis, thermal C/N, reference margin); no PHY/MAC admission.

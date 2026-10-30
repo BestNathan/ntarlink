@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ntarlink_orbital.sgp4_scale_benchmark import benchmark, main
+from ntarlink_orbital.sgp4_scale_benchmark import _current_rss_bytes, benchmark, main
 
 
 SOURCE = {
@@ -83,6 +83,38 @@ class Sgp4ScaleBenchmarkTests(unittest.TestCase):
                     benchmark(invalid, count, 1, catalog_mode="unique")
         with self.assertRaisesRegex(ValueError, "catalog_mode"):
             benchmark(SOURCE, 1, 1, catalog_mode="invalid")
+
+    @patch("ntarlink_orbital.sgp4_scale_benchmark.build_sgp4_provider")
+    @patch("ntarlink_orbital.sgp4_scale_benchmark._current_rss_bytes",
+           side_effect=[1024, 2048, 3072])
+    def test_samples_rss_at_phase_boundaries(self, rss, provider):
+        provider.return_value = lambda satellite, at_ns: (1.0, 2.0, 3.0)
+        report = benchmark(SOURCE, 1, 2)
+        self.assertEqual(rss.call_count, 3)
+        self.assertEqual(
+            [report[key] for key in (
+                "rss_before_provider_bytes", "rss_after_provider_bytes",
+                "rss_after_propagation_bytes",
+            )], [1024, 2048, 3072]
+        )
+
+    def test_linux_current_rss_parser_fails_closed(self):
+        with patch("ntarlink_orbital.sgp4_scale_benchmark.sys.platform", "linux"):
+            with patch("ntarlink_orbital.sgp4_scale_benchmark.Path.read_text",
+                       return_value="Name: python" + chr(10) + "VmRSS: 42 kB"):
+                self.assertEqual(_current_rss_bytes(), 42 * 1024)
+            for content in ("VmRSS: 42 MB", "VmRSS: nonsense kB",
+                            "VmRSS: -1 kB", "Name: python"):
+                with self.subTest(content=content), patch(
+                    "ntarlink_orbital.sgp4_scale_benchmark.Path.read_text",
+                    return_value=content
+                ):
+                    self.assertIsNone(_current_rss_bytes())
+            with patch("ntarlink_orbital.sgp4_scale_benchmark.Path.read_text",
+                       side_effect=OSError):
+                self.assertIsNone(_current_rss_bytes())
+        with patch("ntarlink_orbital.sgp4_scale_benchmark.sys.platform", "darwin"):
+            self.assertIsNone(_current_rss_bytes())
 
     @patch("ntarlink_orbital.sgp4_scale_benchmark.build_sgp4_provider")
     def test_cli_writes_report(self, provider):
