@@ -1222,9 +1222,7 @@ mod tests {
         let (prepared, events) = prepare_pat(&scenario).unwrap();
         prepared.validate().unwrap();
         assert!(events.iter().any(|event| {
-            event.link_id == "isl-a-c"
-                && event.state == "tracking"
-                && event.at_ns == 70_000_000
+            event.link_id == "isl-a-c" && event.state == "tracking" && event.at_ns == 70_000_000
         }));
         assert!(!events.iter().any(|event| {
             event.link_id == "isl-a-b"
