@@ -646,9 +646,7 @@ impl Scenario {
                 || !self.optical_geometry.is_empty()
                 || !self.optical_geometry_samples.is_empty()
             {
-                return Err(
-                    "optical steering samples cannot mix with other pointing modes".into(),
-                );
+                return Err("optical steering samples cannot mix with other pointing modes".into());
             }
             let mut last_by_link: std::collections::HashMap<&str, u64> =
                 std::collections::HashMap::new();
@@ -811,8 +809,7 @@ impl Scenario {
             }
             let mut last_by_link: std::collections::HashMap<&str, u64> =
                 std::collections::HashMap::new();
-            let mut limits: std::collections::HashMap<&str, f64> =
-                std::collections::HashMap::new();
+            let mut limits: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
             for sample in &self.optical_geometry_samples {
                 let pat = self
                     .optical_pat
@@ -1101,7 +1098,10 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("zero optical ITRS"));
         s.optical_geometry_samples[1].to_boresight_itrs = sample.to_boresight_itrs;
         s.optical_geometry_samples[1].to_max_off_axis_deg = 20.0;
-        assert!(s.validate().unwrap_err().contains("inconsistent optical ITRS"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("inconsistent optical ITRS"));
         s.optical_geometry_samples[1].to_max_off_axis_deg = 30.0;
         s.faults.push(Fault {
             at_ns: 50_000_000,
