@@ -1446,24 +1446,40 @@ mod tests {
         scenario.flows[0].packet_count = 18;
         scenario.flows[0].interval_ns = 10_000_000;
         let report = run(&scenario).unwrap();
-        let tracking: Vec<_> = report.pat_events.iter()
-            .filter(|e| e.state == "tracking").map(|e| e.at_ns).collect();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|e| e.state == "tracking")
+            .map(|e| e.at_ns)
+            .collect();
         assert_eq!(tracking, vec![20_000_000, 90_000_000, 140_000_000]);
         assert!(report.pat_events.iter().any(|e| {
-            e.at_ns == 30_000_000 && e.state == "lost"
-                && e.reason == Some("sampled_pointing_loss")
+            e.at_ns == 30_000_000 && e.state == "lost" && e.reason == Some("sampled_pointing_loss")
         }));
-        let fault_edges: Vec<_> = report.control_events.iter()
-            .filter(|e| e.link_id.as_deref() == Some("isl-a-b")
-                && (e.kind == "link_down" || e.kind == "link_up"))
-            .map(|e| (e.at_ns, e.kind.as_str())).collect();
-        assert_eq!(fault_edges, vec![(30_000_000, "link_down"), (70_000_000, "link_up")]);
-        assert!(report.packets.iter().flat_map(|p| &p.hops)
+        let fault_edges: Vec<_> = report
+            .control_events
+            .iter()
+            .filter(|e| {
+                e.link_id.as_deref() == Some("isl-a-b")
+                    && (e.kind == "link_down" || e.kind == "link_up")
+            })
+            .map(|e| (e.at_ns, e.kind.as_str()))
+            .collect();
+        assert_eq!(
+            fault_edges,
+            vec![(30_000_000, "link_down"), (70_000_000, "link_up")]
+        );
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|p| &p.hops)
             .filter(|h| h.link_id == "isl-a-b")
             .all(|h| !(30_000_000..90_000_000).contains(&h.transmit_started_ns)));
         assert_eq!(report.injected, report.delivered + report.dropped);
-        assert_eq!(serde_json::to_vec(&report).unwrap(),
-            serde_json::to_vec(&run(&scenario).unwrap()).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
     }
 
     #[test]

@@ -639,37 +639,64 @@ impl Scenario {
         }
         if !self.optical_steering_samples.is_empty() {
             if !self.optical_pointing.is_empty() || !self.optical_geometry.is_empty() {
-                return Err("optical steering samples cannot mix with static pointing or geometry".into());
+                return Err(
+                    "optical steering samples cannot mix with static pointing or geometry".into(),
+                );
             }
             let mut last_by_link: std::collections::HashMap<&str, u64> =
                 std::collections::HashMap::new();
             let mut sample_limits: std::collections::HashMap<&str, f64> =
                 std::collections::HashMap::new();
             for sample in &self.optical_steering_samples {
-                let pat = self.optical_pat.iter()
+                let pat = self
+                    .optical_pat
+                    .iter()
                     .find(|pat| pat.link_id == sample.link_id)
-                    .ok_or_else(|| format!("unknown PAT steering sample link: {}", sample.link_id))?;
+                    .ok_or_else(|| {
+                        format!("unknown PAT steering sample link: {}", sample.link_id)
+                    })?;
                 if sample.at_ns >= self.duration_ns {
-                    return Err(format!("optical steering sample out of horizon: {}", sample.link_id));
+                    return Err(format!(
+                        "optical steering sample out of horizon: {}",
+                        sample.link_id
+                    ));
                 }
                 if let Some(previous) = last_by_link.insert(&sample.link_id, sample.at_ns) {
                     if sample.at_ns <= previous {
-                        return Err(format!("optical steering samples must be strictly increasing: {}", sample.link_id));
+                        return Err(format!(
+                            "optical steering samples must be strictly increasing: {}",
+                            sample.link_id
+                        ));
                     }
                 } else if sample.at_ns != 0 {
-                    return Err(format!("optical steering samples must start at zero: {}", sample.link_id));
+                    return Err(format!(
+                        "optical steering samples must start at zero: {}",
+                        sample.link_id
+                    ));
                 }
                 for (head, angle, limit) in [
-                    (pat.from_head.as_str(), sample.from_off_axis_deg, sample.from_max_off_axis_deg),
-                    (pat.to_head.as_str(), sample.to_off_axis_deg, sample.to_max_off_axis_deg),
+                    (
+                        pat.from_head.as_str(),
+                        sample.from_off_axis_deg,
+                        sample.from_max_off_axis_deg,
+                    ),
+                    (
+                        pat.to_head.as_str(),
+                        sample.to_off_axis_deg,
+                        sample.to_max_off_axis_deg,
+                    ),
                 ] {
-                    if !angle.is_finite() || !limit.is_finite()
+                    if !angle.is_finite()
+                        || !limit.is_finite()
                         || !(0.0..=180.0).contains(&angle)
                         || !(0.0..=180.0).contains(&limit)
                     {
                         return Err(format!("invalid optical steering sample angle: {head}"));
                     }
-                    if sample_limits.insert(head, limit).is_some_and(|previous| previous != limit) {
+                    if sample_limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
                         return Err(format!("inconsistent sampled optical head limit: {head}"));
                     }
                 }
@@ -677,8 +704,15 @@ impl Scenario {
             if last_by_link.len() != pat_links.len() {
                 return Err("optical steering samples must cover every PAT link".into());
             }
-            if self.faults.iter().any(|fault| fault.cause == FaultCause::SampledPointing) {
-                return Err("sampled pointing faults cannot mix with native optical steering samples".into());
+            if self
+                .faults
+                .iter()
+                .any(|fault| fault.cause == FaultCause::SampledPointing)
+            {
+                return Err(
+                    "sampled pointing faults cannot mix with native optical steering samples"
+                        .into(),
+                );
             }
         }
         if self.optical_geometry.len() > 10_000 {
@@ -1087,7 +1121,8 @@ mod tests {
     fn native_optical_steering_samples_validate_timeline_and_exclusivity() {
         let mut s = Scenario::from_json(include_str!(
             "../../../scenarios/optical-pat-acquisition.json"
-        )).unwrap();
+        ))
+        .unwrap();
         let sample = OpticalSteeringSample {
             link_id: "isl-a-b".into(),
             at_ns: 0,
@@ -1114,7 +1149,10 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("inconsistent sampled"));
         s.optical_steering_samples[1].from_max_off_axis_deg = 30.0;
         s.optical_steering_samples[1].to_off_axis_deg = f64::NAN;
-        assert!(s.validate().unwrap_err().contains("invalid optical steering"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical steering"));
         s.optical_steering_samples[1].to_off_axis_deg = 10.0;
         s.faults.push(Fault {
             at_ns: 50_000_000,
