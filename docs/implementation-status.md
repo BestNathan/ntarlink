@@ -1,5 +1,17 @@
 # Implementation status and current fidelity
 
+## Overlapping optical PAT fault domains
+
+The Rust PAT preparation stage now combines administrative and sampled
+pointing faults independently. A recovery edge cannot restore a link
+while the other fault domain is still down. Only combined-state
+transitions reach the packet runtime; PAT loss events preserve the
+initiating cause, and simultaneous failures use administrative precedence.
+Rust contract tests and the `optical-pat-overlapping-faults.json`
+CI scenario verify reacquisition, control-event causality, and packet
+accounting. This is deterministic virtual-time fault scheduling, not a
+native continuous attitude or physical optical tracking model.
+
 ## Operational P0 and P1 orbital-contact bridge
 
 The existing P0 Rust packet simulator executes a deterministic packet journey across user RF, satellite optical ISL, feeder station, terrestrial backhaul and internet endpoint. The new **P1 orbital bridge** provides offline TLE/SGP4 propagation, Skyfield TEME-to-ITRS transformation, WGS84 elevation and Earth-occlusion geometry, sampled contact windows with optional bisection-refined boundaries and geometric propagation delay, plus optional per-contact analytical range-rate/Doppler observations in a separate sidecar.
