@@ -117,6 +117,14 @@
         "$ref": "#/$defs/optical_steering_sample"
       },
       "description": "Optional all-PAT-link, time-ordered sampled steering angles in degrees. Rust holds each sample until the next, starting at t=0. Exclusive with static pointing, ITRS snapshots and sampled_pointing faults; no continuous attitude solution."
+    },
+    "optical_geometry_samples": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_geometry"
+      },
+      "description": "Optional all-PAT-link, time-ordered ITRS positions (meters) and boresights (dimensionless). Rust evaluates reciprocal line of sight and holds each result from t=0 until the next sample. Exclusive with other pointing modes and sampled_pointing faults; not continuous orbit/attitude propagation."
     }
   },
   "$defs": {

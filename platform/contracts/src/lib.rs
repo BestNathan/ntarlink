@@ -250,6 +250,10 @@ pub struct Scenario {
     /// Optional runtime-evaluated piecewise-constant steering samples for all PAT links.
     #[serde(default)]
     pub optical_steering_samples: Vec<OpticalSteeringSample>,
+    /// Optional time-indexed ITRS positions and boresights evaluated by Rust PAT.
+    /// Each observation is held until the next sample on the same link.
+    #[serde(default)]
+    pub optical_geometry_samples: Vec<OpticalGeometry>,
     /// Optional ITRS position/boresight snapshots at each PAT contact start.
     #[serde(default)]
     pub optical_geometry: Vec<OpticalGeometry>,
@@ -638,10 +642,11 @@ impl Scenario {
             return Err("optical steering sample budget exceeded".into());
         }
         if !self.optical_steering_samples.is_empty() {
-            if !self.optical_pointing.is_empty() || !self.optical_geometry.is_empty() {
-                return Err(
-                    "optical steering samples cannot mix with static pointing or geometry".into(),
-                );
+            if !self.optical_pointing.is_empty()
+                || !self.optical_geometry.is_empty()
+                || !self.optical_geometry_samples.is_empty()
+            {
+                return Err("optical steering samples cannot mix with other pointing modes".into());
             }
             let mut last_by_link: std::collections::HashMap<&str, u64> =
                 std::collections::HashMap::new();
@@ -790,6 +795,110 @@ impl Scenario {
                         return Err(format!("inconsistent optical geometry head limit: {head}"));
                     }
                 }
+            }
+        }
+        if self.optical_geometry_samples.len() > 10_000 {
+            return Err("optical ITRS sample budget exceeded".into());
+        }
+        if !self.optical_geometry_samples.is_empty() {
+            if !self.optical_geometry.is_empty()
+                || !self.optical_pointing.is_empty()
+                || !self.optical_steering_samples.is_empty()
+            {
+                return Err("optical ITRS samples cannot mix with other pointing modes".into());
+            }
+            let mut last_by_link: std::collections::HashMap<&str, u64> =
+                std::collections::HashMap::new();
+            let mut limits: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
+            for sample in &self.optical_geometry_samples {
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == sample.link_id)
+                    .ok_or_else(|| format!("unknown PAT ITRS sample link: {}", sample.link_id))?;
+                if sample.at_ns >= self.duration_ns {
+                    return Err(format!(
+                        "optical ITRS sample out of horizon: {}",
+                        sample.link_id
+                    ));
+                }
+                if let Some(previous) = last_by_link.insert(&sample.link_id, sample.at_ns) {
+                    if sample.at_ns <= previous {
+                        return Err(format!(
+                            "optical ITRS samples must be strictly increasing: {}",
+                            sample.link_id
+                        ));
+                    }
+                } else if sample.at_ns != 0 {
+                    return Err(format!(
+                        "optical ITRS samples must start at zero: {}",
+                        sample.link_id
+                    ));
+                }
+                if sample.frame != "ITRS" {
+                    return Err(format!(
+                        "optical ITRS sample requires ITRS frame: {}",
+                        sample.link_id
+                    ));
+                }
+                for vector in [
+                    sample.from_position_m,
+                    sample.to_position_m,
+                    sample.from_boresight_itrs,
+                    sample.to_boresight_itrs,
+                ] {
+                    if vector
+                        .iter()
+                        .any(|value| !value.is_finite() || value.abs() > 1.0e12)
+                    {
+                        return Err(format!(
+                            "invalid optical ITRS sample vector: {}",
+                            sample.link_id
+                        ));
+                    }
+                }
+                for boresight in [sample.from_boresight_itrs, sample.to_boresight_itrs] {
+                    if boresight.iter().all(|value| *value == 0.0) {
+                        return Err(format!(
+                            "zero optical ITRS sample boresight: {}",
+                            sample.link_id
+                        ));
+                    }
+                }
+                if sample.from_position_m == sample.to_position_m {
+                    return Err(format!(
+                        "coincident optical ITRS sample positions: {}",
+                        sample.link_id
+                    ));
+                }
+                for (head, limit) in [
+                    (pat.from_head.as_str(), sample.from_max_off_axis_deg),
+                    (pat.to_head.as_str(), sample.to_max_off_axis_deg),
+                ] {
+                    if !limit.is_finite() || !(0.0..=180.0).contains(&limit) {
+                        return Err(format!(
+                            "invalid optical ITRS sample steering limit: {head}"
+                        ));
+                    }
+                    if limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
+                        return Err(format!(
+                            "inconsistent optical ITRS sample head limit: {head}"
+                        ));
+                    }
+                }
+            }
+            if last_by_link.len() != pat_links.len() {
+                return Err("optical ITRS samples must cover every PAT link".into());
+            }
+            if self
+                .faults
+                .iter()
+                .any(|fault| fault.cause == FaultCause::SampledPointing)
+            {
+                return Err("sampled pointing faults cannot mix with optical ITRS samples".into());
             }
         }
         Ok(())
@@ -950,6 +1059,70 @@ mod tests {
             to_max_off_axis_deg: 30.0,
         });
         assert!(s.validate().unwrap_err().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn native_itrs_samples_validate_frame_timeline_and_fault_exclusivity() {
+        let mut s = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        let sample = OpticalGeometry {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "ITRS".into(),
+            from_position_m: [7_000_000.0, 0.0, 0.0],
+            to_position_m: [7_001_000.0, 0.0, 0.0],
+            from_boresight_itrs: [1.0, 0.0, 0.0],
+            to_boresight_itrs: [-1.0, 0.0, 0.0],
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        s.optical_geometry_samples.push(sample.clone());
+        s.validate().unwrap();
+        s.optical_geometry_samples.push(OpticalGeometry {
+            at_ns: 30_000_000,
+            from_boresight_itrs: [0.0, 1.0, 0.0],
+            ..sample.clone()
+        });
+        s.validate().unwrap();
+        s.optical_geometry_samples[1].at_ns = 0;
+        assert!(s.validate().unwrap_err().contains("strictly increasing"));
+        s.optical_geometry_samples[1].at_ns = 30_000_000;
+        s.optical_geometry_samples[0].at_ns = 1;
+        assert!(s.validate().unwrap_err().contains("start at zero"));
+        s.optical_geometry_samples[0].at_ns = 0;
+        s.optical_geometry_samples[1].frame = "TEME".into();
+        assert!(s.validate().unwrap_err().contains("ITRS frame"));
+        s.optical_geometry_samples[1].frame = "ITRS".into();
+        s.optical_geometry_samples[1].from_position_m[0] = f64::NAN;
+        assert!(s.validate().unwrap_err().contains("invalid optical ITRS"));
+        s.optical_geometry_samples[1].from_position_m = sample.from_position_m;
+        s.optical_geometry_samples[1].to_boresight_itrs = [0.0; 3];
+        assert!(s.validate().unwrap_err().contains("zero optical ITRS"));
+        s.optical_geometry_samples[1].to_boresight_itrs = sample.to_boresight_itrs;
+        s.optical_geometry_samples[1].to_max_off_axis_deg = 20.0;
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("inconsistent optical ITRS"));
+        s.optical_geometry_samples[1].to_max_off_axis_deg = 30.0;
+        s.faults.push(Fault {
+            at_ns: 50_000_000,
+            link_id: "isl-a-b".into(),
+            action: LinkAction::Down,
+            cause: FaultCause::SampledPointing,
+        });
+        assert!(s.validate().unwrap_err().contains("cannot mix"));
+        s.faults.clear();
+        s.optical_pointing.push(OpticalPointing {
+            link_id: "isl-a-b".into(),
+            from_off_axis_deg: 0.0,
+            to_off_axis_deg: 0.0,
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        });
+        assert!(s.validate().unwrap_err().contains("cannot mix"));
     }
 
     #[test]
