@@ -1,5 +1,7 @@
 use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
-use ntarlink_contracts::{ContactMode, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario};
+use ntarlink_contracts::{
+    ContactMode, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario,
+};
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
@@ -1232,15 +1234,18 @@ mod tests {
                 && event.reason == Some("sampled_pointing_loss")
         }));
         assert_eq!(
-            report.pat_events.iter()
+            report
+                .pat_events
+                .iter()
                 .filter(|event| event.state == "tracking")
                 .map(|event| event.at_ns)
                 .collect::<Vec<_>>(),
             vec![20_000_000, 110_000_000, 140_000_000]
         );
-        assert!(report.control_events.iter().any(|event| {
-            event.kind == "link_down" && event.at_ns == 30_000_000
-        }));
+        assert!(report
+            .control_events
+            .iter()
+            .any(|event| { event.kind == "link_down" && event.at_ns == 30_000_000 }));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
