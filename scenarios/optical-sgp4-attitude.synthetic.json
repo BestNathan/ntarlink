@@ -1,0 +1,36 @@
+{
+  "frame": "ITRS",
+  "attitude_model": "fixed_body_to_itrs_quaternion",
+  "heads": [
+    {
+      "head_id": "sat-a/head-1",
+      "boresight_body": [
+        1,
+        0,
+        0
+      ],
+      "body_to_itrs_quaternion_wxyz": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "max_off_axis_deg": 180
+    },
+    {
+      "head_id": "sat-b/head-1",
+      "boresight_body": [
+        -1,
+        0,
+        0
+      ],
+      "body_to_itrs_quaternion_wxyz": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "max_off_axis_deg": 180
+    }
+  ]
+}
