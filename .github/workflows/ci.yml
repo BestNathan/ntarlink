@@ -284,9 +284,9 @@ jobs:
           import json
           from pathlib import Path
           source = json.loads(Path("scenarios/optical-sgp4-attitude-sampled.synthetic.json").read_text())
-          source["heads"][0]["max_body_attitude_rate_deg_per_s"] = 200.0
+          source["heads"][0]["max_body_attitude_rate_deg_per_s"] = 120.0
           Path("/tmp/optical-rate-valid.json").write_text(json.dumps(source))
-          source["heads"][0]["max_body_attitude_rate_deg_per_s"] = 100.0
+          source["heads"][0]["max_body_attitude_rate_deg_per_s"] = 90.0
           Path("/tmp/optical-rate-invalid.json").write_text(json.dumps(source))
           PY
           python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json /tmp/optical-rate-valid.json --native-steering-probes-per-contact 3 --out /tmp/optical-rate-compiled.json
@@ -298,8 +298,8 @@ jobs:
           artifact = Path("/tmp/optical-rate-compiled.json")
           manifest = json.loads(Path(str(artifact) + ".optical-manifest.json").read_text())
           rates = {entry["head_id"]: entry for entry in manifest["attitude_rate_audit"]}
-          assert rates["sat-a/head-1"]["max_body_attitude_rate_deg_per_s"] == 200.0
-          assert abs(rates["sat-a/head-1"]["peak_interpolated_rate_deg_per_s"] - 150.0) < 1e-6
+          assert rates["sat-a/head-1"]["max_body_attitude_rate_deg_per_s"] == 120.0
+          assert abs(rates["sat-a/head-1"]["peak_interpolated_rate_deg_per_s"] - 100.0) < 1e-6
           assert manifest["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
           report = json.loads(Path("/tmp/optical-rate-report.json").read_text())
           assert report["delivered"] > 0
