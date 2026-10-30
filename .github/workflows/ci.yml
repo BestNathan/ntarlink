@@ -204,6 +204,25 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"], r
           print("Sampled pointing tracking:", tracking, "delivered", r["delivered"])
           PY
+      - name: Verify overlapping administrative and pointing faults cannot reopen PAT early
+        run: |
+          python3 -m json.tool scenarios/optical-pat-overlapping-faults.json > /dev/null
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-overlapping-faults.json --json > /tmp/optical-overlap-report.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/optical-overlap-report.json"))
+          tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 90000000, 140000000], tracking
+          assert any(e["at_ns"] == 30000000 and e["state"] == "lost"
+                     and e["reason"] == "sampled_pointing_loss" for e in r["pat_events"])
+          fault_edges = [(e["at_ns"], e["kind"]) for e in r["control_events"]
+                         if e["link_id"] == "isl-a-b" and e["kind"] in ("link_up", "link_down")]
+          assert fault_edges == [(30000000, "link_down"), (70000000, "link_up")], fault_edges
+          hops = [h for p in r["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          assert hops and all(not 30000000 <= h["transmit_started_ns"] < 90000000 for h in hops), hops
+          assert r["injected"] == r["delivered"] + r["dropped"], r
+          print("Independent PAT fault domains:", r["delivered"], "delivered,", r["dropped"], "dropped")
+          PY
       - name: Generate real SGP4 visibility windows and run the Rust packet engine
         run: |
           python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-pass-compiled.json
