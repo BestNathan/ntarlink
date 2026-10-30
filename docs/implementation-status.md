@@ -368,6 +368,23 @@ contact with packet accounting. This is **not** a production ephemeris
 adapter or an attitude solution: the supplied vectors are fixed over each
 window and are not guaranteed physically valid at later times.
 
+## Offline SYS-01 SGP4 to SYS-02 fixed-attitude optical adapter
+
+The optional Python `ntarlink_orbital.optical_geometry` command samples
+the production SGP4/Skyfield ITRS position provider at each optical PAT
+contact start, rotates explicitly supplied body-frame optical boresights
+using fixed body-to-ITRS unit quaternions, and emits the existing
+`optical_geometry[]` contract. A companion SHA-256 manifest records
+the scenario, orbital source, attitude input and output digests. Contract
+tests cover frame, quaternion, head ownership, timestamps, malformed
+geometry and reproducibility. A synthetic perturbed-ISS two-orbit fixture
+exercises the actual Python-to-Rust PAT packet path in CI.
+
+This **does not** infer or propagate spacecraft attitude, verify the
+synthetic orbit against independent reference data, recalculate geometric
+contact visibility, or model pointing drift during the contact. See
+[adapter design](design/orbital-optical-attitude-adapter.md).
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
