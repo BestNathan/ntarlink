@@ -530,7 +530,10 @@ impl Scenario {
             std::collections::HashMap::new();
         for pointing in &self.optical_pointing {
             if !pointing_links.insert(&pointing.link_id) {
-                return Err(format!("duplicate optical pointing link: {}", pointing.link_id));
+                return Err(format!(
+                    "duplicate optical pointing link: {}",
+                    pointing.link_id
+                ));
             }
             let pat = self
                 .optical_pat
@@ -538,8 +541,16 @@ impl Scenario {
                 .find(|pat| pat.link_id == pointing.link_id)
                 .ok_or_else(|| format!("unknown PAT pointing link: {}", pointing.link_id))?;
             for (head, angle, limit) in [
-                (&pat.from_head, pointing.from_off_axis_deg, pointing.from_max_off_axis_deg),
-                (&pat.to_head, pointing.to_off_axis_deg, pointing.to_max_off_axis_deg),
+                (
+                    &pat.from_head,
+                    pointing.from_off_axis_deg,
+                    pointing.from_max_off_axis_deg,
+                ),
+                (
+                    &pat.to_head,
+                    pointing.to_off_axis_deg,
+                    pointing.to_max_off_axis_deg,
+                ),
             ] {
                 if !angle.is_finite()
                     || !limit.is_finite()
@@ -548,7 +559,10 @@ impl Scenario {
                 {
                     return Err(format!("invalid optical pointing angle for {head}"));
                 }
-                if head_limits.insert(head, limit).is_some_and(|previous| previous != limit) {
+                if head_limits
+                    .insert(head, limit)
+                    .is_some_and(|previous| previous != limit)
+                {
                     return Err(format!("inconsistent optical head pointing limit: {head}"));
                 }
             }
@@ -641,7 +655,10 @@ mod tests {
         });
         s.validate().unwrap();
         s.optical_pointing[0].to_off_axis_deg = f64::NAN;
-        assert!(s.validate().unwrap_err().contains("invalid optical pointing"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical pointing"));
         s.optical_pointing[0].to_off_axis_deg = 20.0;
         s.optical_pointing[0].from_max_off_axis_deg = -1.0;
         assert!(s.validate().is_err());
