@@ -128,7 +128,20 @@ with a single historical ISS TLE in this mode. No independent multi-orbit
 catalog has yet been sourced or validated, and the 100k/500k runs remain
 unmeasured. See [SGP4 benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
 
-## SGP4 phase-boundary resident-memory observations
+## SGP4 phase-boundary resident-memory observations## Offline TLE catalog intake and provenance
+
+The optional `ntarlink_orbital.tle_catalog` CLI imports strict local ASCII
+TLE pairs, verifies both mod-10 checksums, matching and unique NORAD IDs,
+valid source epochs and configured freshness, and writes an existing-compatible
+orbit configuration with a SHA-256 manifest. Caller-supplied HTTPS source,
+license/permission descriptor and retrieval timestamp are recorded but are
+**not independently authenticated**. Tests cover malformed input, bounded
+resource use, output digests, the distinct-TLE benchmark handoff and a real
+historical ISS SGP4/ITRS smoke. No multi-orbit licensed catalog is bundled,
+and no large-scale measurements are claimed. See
+[catalog intake design](design/orbital-tle-catalog-intake.md).
+
+
 
 The production SGP4/ITRS benchmark now records three Linux current-RSS
 checkpoints (before provider build, after provider build, and after position
