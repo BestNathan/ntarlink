@@ -98,6 +98,9 @@ attribution, incremental allocation, or a reliable difference in phase
 memory costs. Allocators may retain pages, memory may be freed between
 checkpoints, and short-lived peaks can be missed. The existing
 `max_process_peak_rss_bytes` remains a whole-process high-water mark.
+Linux `VmRSS` and `getrusage().ru_maxrss` are different kernel
+estimators and can disagree slightly, so snapshots are not constrained
+to be numerically below the separately reported high-water mark.
 On macOS and other non-Linux platforms checkpoint fields are null rather
 than reporting an unsupported approximation. No performance thresholds
 are enforced in CI.
