@@ -104,6 +104,18 @@ ISS case. This is a computation baseline, not a physically diverse
 constellation, multi-epoch orbit validation, or a 100k/500k performance
 measurement. See [benchmark scope](design/orbital-sgp4-scale-benchmark.md).
 
+## Isolated production SGP4/ITRS benchmark repetitions
+
+The opt-in `ntarlink_orbital.sgp4_scale_benchmark_suite` runs the existing
+replicated historical-TLE SGP4/ITRS workload in fresh Python subprocesses.
+It checks position and input digests across runs, reports median build and
+propagation timing/throughput, and records whole-process peak RSS in bytes
+on Linux/macOS. A small historical ISS subprocess smoke is exercised by
+Python CI. Large 100k/500k workloads remain manual and unmeasured here.
+The RSS high-water mark is not a per-stage measurement; replicated TLEs
+do not represent a physical constellation. See
+[SGP4 benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
+
 ## Opt-in production SYS-01 Earth-orientation input
 
 The SGP4 provider can now load a local, SHA-256-pinned IERS finals2000A
