@@ -1,5 +1,19 @@
 # Implementation status and current fidelity
 
+## SGP4/ITRS and sampled attitude to Rust-native steering
+
+The optional `--native-steering-probes-per-contact` mode compiles real
+Skyfield/SGP4 ITRS positions and time-indexed body-to-ITRS head attitudes
+into bounded `optical_steering_samples[]` for the Rust PAT planner, rather
+than emitting `optical_geometry[]` start snapshots or preplanned pointing
+fault edges. It preserves independent administrative link faults, evaluates
+every PAT link at t=0 and at each contact's finite interior/end probes,
+and records exact SHA-256 provenance. Python contract tests and a synthetic
+ITRS-to-Rust PAT/packet CI acceptance cover pointing loss, overlapping
+faults, reacquisition and packet accounting. This is **discrete sample-and-hold
+steering**; neither continuous attitude propagation nor laser PHY is
+implemented. See [adapter design](design/optical-native-steering-compiler.md).
+
 ## Runtime-evaluated optical steering observations
 
 The opt-in `optical_steering_samples[]` contract accepts strictly ordered
