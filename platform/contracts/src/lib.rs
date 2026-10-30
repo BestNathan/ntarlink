@@ -567,7 +567,10 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("unknown PAT"));
         s.optical_head_outages[0].head_id = "sat-a/head-1".into();
         s.optical_head_outages[0].end_ns = s.duration_ns + 1;
-        assert!(s.validate().unwrap_err().contains("invalid optical head outage"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical head outage"));
         s.optical_head_outages[0].end_ns = s.optical_head_outages[0].start_ns;
         assert!(s.validate().is_err());
     }
