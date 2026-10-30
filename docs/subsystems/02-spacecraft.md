@@ -46,6 +46,20 @@ SYS-03 performs a fresh acquisition. The packet runtime and delayed routing
 control consume the resulting acquired contact windows. This is a modeled
 availability contract, not a physical attitude/pointing or power budget.
 
+## Implemented static pointing-envelope slice
+
+The optional `optical_pointing[]` scenario contract provides operator-supplied,
+constant per-link off-boresight angles and per-head steering limits in degrees.
+When enabled, every PAT link must have a pointing entry; head limits must agree
+across links sharing a head. SYS-02 rejects a contact if either endpoint's
+assumed angle exceeds its inclusive limit, before SYS-03 reserves heads or
+starts acquisition. The packet report records
+`pointing_outside_envelope` rejection events. The deterministic
+`scenarios/optical-pointing-envelope.json` fixture verifies that geometric
+visibility alone does not permit forwarding. This is a **static assumed-angle
+feasibility gate**, not an ephemeris-derived target vector, spacecraft attitude
+solution, time-varying steering trajectory or measured pointing error.
+
 ## Faults, validation, and milestones
 
 Faults: power derating, single optical head failure, antenna mispointing, thermal throttling, unavailable compute, safe mode and satellite retirement. Each invalidates advertised link capability and leads to SYS-03/05/06 link changes, SYS-07 route reoptimization and SYS-10 alarms.
