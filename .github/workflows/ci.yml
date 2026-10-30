@@ -257,6 +257,27 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"]
           print("SGP4/attitude to native PAT:", tracking, r["delivered"], "delivered")
           PY
+      - name: Verify real SGP4 ITRS samples drive Rust-native PAT tracking
+        run: |
+          python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json scenarios/optical-sgp4-attitude-sampled.synthetic.json --native-steering-probes-per-contact 3 --out /tmp/optical-native-real-sgp4.json
+          cargo run -p ntarlink-cli -- validate /tmp/optical-native-real-sgp4.json
+          cargo run -p ntarlink-cli -- simulate /tmp/optical-native-real-sgp4.json --json > /tmp/optical-native-real-sgp4-report.json
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          artifact = Path("/tmp/optical-native-real-sgp4.json")
+          scenario = json.loads(artifact.read_text())
+          manifest = json.loads(Path(str(artifact) + ".optical-manifest.json").read_text())
+          report = json.loads(Path("/tmp/optical-native-real-sgp4-report.json").read_text())
+          assert "optical_geometry" not in scenario
+          assert len(scenario["optical_steering_samples"]) == 10
+          assert manifest["steering_sample_count"] == 10
+          assert manifest["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+          assert [e["at_ns"] for e in report["pat_events"] if e["state"] == "tracking"] == [20000000, 140000000]
+          assert report["delivered"] > 0
+          assert report["injected"] == report["delivered"] + report["dropped"]
+          print("Real SGP4 to native PAT:", report["delivered"], "delivered")
+          PY
       - name: Verify overlapping administrative and pointing faults cannot reopen PAT early
         run: |
           python3 -m json.tool scenarios/optical-pat-overlapping-faults.json > /dev/null
