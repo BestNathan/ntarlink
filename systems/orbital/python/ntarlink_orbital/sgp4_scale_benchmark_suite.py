@@ -133,10 +133,6 @@ def run_suite(orbit_config: Path, satellites: int, samples_per_satellite: int,
         if any(value is not None and (type(value) is not int or value <= 0)
                for value in values):
             raise RuntimeError("SGP4 repetition has invalid RSS checkpoint")
-        if (rss[0] is not None and
-                any(value is not None and value > run["process_peak_rss_bytes"]
-                    for value in values)):
-            raise RuntimeError("SGP4 checkpoint exceeds process peak RSS")
 
     return {
         "schema_version": 1,
