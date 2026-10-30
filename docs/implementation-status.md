@@ -441,8 +441,10 @@ then runs the generated scenario through Rust validation and packet
 forwarding. Separate existing CI checks still exercise the real SGP4
 provider. This is an **offline finite-probe fault plan**, not a live
 attitude controller or independently validated orbital/attitude
-solution. The PAT trace currently reports the generic administrative
-fault reason; the manifest identifies the sampled pointing source.
+solution. Derived faults now carry optional `cause: "sampled_pointing"`
+provenance, and PAT `lost` events report `sampled_pointing_loss`.
+Legacy administrative faults remain backward compatible. This is
+still an offline sampled fault plan, not native runtime steering evaluation.
 Between-probe excursions and already-admitted packet interruption
 remain unmodeled. See [optical attitude adapter](design/orbital-optical-attitude-adapter.md).
 
