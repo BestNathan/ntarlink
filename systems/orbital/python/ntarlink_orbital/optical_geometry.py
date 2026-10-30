@@ -216,12 +216,6 @@ def main(argv=None):
         raise ValueError("input and output paths must be distinct")
     loaded = [_read_json(path) for path in inputs]
     (scenario, scenario_bytes), (orbit, orbit_bytes), (attitude, attitude_bytes) = loaded
-    # Validate all static contracts before constructing the real SGP4 provider.
-    compile_optical_geometry(scenario, orbit, attitude,
-                             lambda sat, _at: (7_000_000.0, 0.0, 0.0)
-                             if sat == sorted(n["id"] for n in scenario["nodes"]
-                                              if n["kind"] == "satellite")[0]
-                             else (7_001_000.0, 0.0, 0.0))
     provider = build_sgp4_provider(orbit, scenario["duration_ns"],
                                   args.orbit_config.resolve().parent)
     compiled = compile_optical_geometry(scenario, orbit, attitude, provider)
