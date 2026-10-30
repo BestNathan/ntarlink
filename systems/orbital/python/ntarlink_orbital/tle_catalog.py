@@ -19,8 +19,8 @@ from urllib.parse import urlsplit
 
 MAX_CATALOG_BYTES = 1_000_000
 MAX_SATELLITES = 1_000
-EPOCH_PATTERN = re.compile(r"^[0-9]{5}\\.[0-9]{8}$")
-UTC_PATTERN = re.compile(r"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$")
+EPOCH_PATTERN = re.compile(r"^[0-9]{5}\.[0-9]{8}$")
+UTC_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def _utc(value: str, name: str) -> datetime:
