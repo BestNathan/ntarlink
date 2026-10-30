@@ -5,7 +5,9 @@ use ntarlink_contracts::{
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
-use ntarlink_spacecraft::{geometry_pointing_allowed, pointing_allowed, HeadAvailability};
+use ntarlink_spacecraft::{
+    geometry_los_rate_allowed, geometry_pointing_allowed, pointing_allowed, HeadAvailability,
+};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -710,21 +712,37 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
-    steering_faults.extend(
-        scenario
-            .optical_geometry_samples
-            .iter()
-            .map(|sample| Fault {
-                at_ns: sample.at_ns,
-                link_id: sample.link_id.clone(),
-                action: if geometry_pointing_allowed(sample) {
-                    LinkAction::Up
-                } else {
-                    LinkAction::Down
-                },
-                cause: FaultCause::SampledPointing,
-            }),
-    );
+    let tracking_rates: HashMap<_, _> = scenario
+        .optical_tracking_rates
+        .iter()
+        .map(|rate| (rate.link_id.as_str(), rate))
+        .collect();
+    let mut previous_geometry: HashMap<&str, &ntarlink_contracts::OpticalGeometry> = HashMap::new();
+    steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
+        let previous = previous_geometry.insert(sample.link_id.as_str(), sample);
+        let rate_allowed = tracking_rates
+            .get(sample.link_id.as_str())
+            .is_none_or(|rate| {
+                previous.is_none_or(|earlier| {
+                    geometry_los_rate_allowed(
+                        earlier,
+                        sample,
+                        rate.from_max_los_rate_deg_per_s
+                            .min(rate.to_max_los_rate_deg_per_s),
+                    )
+                })
+            });
+        Fault {
+            at_ns: sample.at_ns,
+            link_id: sample.link_id.clone(),
+            action: if geometry_pointing_allowed(sample) && rate_allowed {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
+            cause: FaultCause::SampledPointing,
+        }
+    }));
 
     // Administrative and sampled-pointing faults are independent state domains.
     // Fold all edges at the same timestamp before evaluating effective availability:
@@ -963,6 +981,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.optical_pointing.clear();
     prepared.optical_steering_samples.clear();
     prepared.optical_geometry_samples.clear();
+    prepared.optical_tracking_rates.clear();
     prepared.optical_geometry.clear();
     let mut events: Vec<PatEventTrace> = plan
         .events
@@ -1596,6 +1615,70 @@ mod tests {
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn native_itrs_los_rate_gate_forces_pat_reacquisition_without_false_recovery() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-itrs-los-rate-gate.json"
+        ))
+        .unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 90_000_000, 140_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000
+                && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        let edges: Vec<_> = report
+            .control_events
+            .iter()
+            .filter(|event| {
+                event.link_id.as_deref() == Some("isl-a-b")
+                    && (event.kind == "link_down" || event.kind == "link_up")
+            })
+            .map(|event| (event.at_ns, event.kind.as_str()))
+            .collect();
+        assert_eq!(
+            edges,
+            vec![(30_000_000, "link_down"), (70_000_000, "link_up")]
+        );
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .all(|hop| !(30_000_000..90_000_000).contains(&hop.transmit_started_ns)));
+        assert!(report.delivered > 0 && report.dropped > 0);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+        // Without the opt-in rate gate every sample remains within its
+        // steering envelope and tracking is uninterrupted until contact end.
+        let mut unbounded = scenario.clone();
+        unbounded.optical_tracking_rates.clear();
+        let baseline = run(&unbounded).unwrap();
+        assert_eq!(
+            baseline
+                .pat_events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![20_000_000, 90_000_000, 140_000_000]
+        );
+        assert!(!baseline
+            .pat_events
+            .iter()
+            .any(|event| { event.at_ns == 30_000_000 && event.state == "lost" }));
     }
 
     #[test]

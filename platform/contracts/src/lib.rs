@@ -192,6 +192,16 @@ pub struct OpticalSteeringSample {
     pub to_max_off_axis_deg: f64,
 }
 
+/// Optional per-head upper bound on the sampled ITRS line-of-sight angular rate.
+/// This is a discrete geometric tracking proxy, not a body-frame gimbal model.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalTrackingRate {
+    pub link_id: String,
+    pub from_max_los_rate_deg_per_s: f64,
+    pub to_max_los_rate_deg_per_s: f64,
+}
+
 /// One frame-tagged SYS-02 pointing snapshot at the start of a geometric ISL contact.
 /// All vectors are ITRS Earth-fixed Cartesian coordinates; positions are meters.
 /// Boresight directions are unitless and fixed over the entire contact window.
@@ -254,6 +264,9 @@ pub struct Scenario {
     /// Each observation is held until the next sample on the same link.
     #[serde(default)]
     pub optical_geometry_samples: Vec<OpticalGeometry>,
+    /// Optional per-PAT-link rate limits for consecutive native ITRS LOS samples.
+    #[serde(default)]
+    pub optical_tracking_rates: Vec<OpticalTrackingRate>,
     /// Optional ITRS position/boresight snapshots at each PAT contact start.
     #[serde(default)]
     pub optical_geometry: Vec<OpticalGeometry>,
@@ -901,6 +914,46 @@ impl Scenario {
                 return Err("sampled pointing faults cannot mix with optical ITRS samples".into());
             }
         }
+        if self.optical_tracking_rates.len() > self.optical_pat.len() {
+            return Err("optical tracking rate configuration limit exceeded".into());
+        }
+        if !self.optical_tracking_rates.is_empty() {
+            if self.optical_geometry_samples.is_empty() {
+                return Err("optical tracking rates require native ITRS samples".into());
+            }
+            let mut configured_links = HashSet::new();
+            let mut head_rates: std::collections::HashMap<&str, f64> =
+                std::collections::HashMap::new();
+            for rate in &self.optical_tracking_rates {
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == rate.link_id)
+                    .ok_or_else(|| {
+                        format!("unknown PAT optical tracking rate link: {}", rate.link_id)
+                    })?;
+                if !configured_links.insert(rate.link_id.as_str()) {
+                    return Err(format!(
+                        "duplicate optical tracking rate link: {}",
+                        rate.link_id
+                    ));
+                }
+                for (head, limit) in [
+                    (pat.from_head.as_str(), rate.from_max_los_rate_deg_per_s),
+                    (pat.to_head.as_str(), rate.to_max_los_rate_deg_per_s),
+                ] {
+                    if !limit.is_finite() || limit < 0.0 {
+                        return Err(format!("invalid optical tracking rate for {head}"));
+                    }
+                    if head_rates
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
+                        return Err(format!("inconsistent optical head tracking rate: {head}"));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -1123,6 +1176,37 @@ mod tests {
             to_max_off_axis_deg: 30.0,
         });
         assert!(s.validate().unwrap_err().contains("cannot mix"));
+    }
+
+    #[test]
+    fn optical_tracking_rate_contract_requires_native_itrs_and_consistent_heads() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-itrs-los-rate-gate.json"
+        ))
+        .unwrap();
+        let encoded = serde_json::to_string(&scenario).unwrap();
+        assert!(encoded.contains("optical_tracking_rates"));
+        scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = f64::NAN;
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical tracking rate"));
+        scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = -1.0;
+        assert!(scenario.validate().is_err());
+        scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = 1000.0;
+        scenario
+            .optical_tracking_rates
+            .push(scenario.optical_tracking_rates[0].clone());
+        assert!(scenario.validate().is_err());
+        scenario.optical_tracking_rates.pop();
+        scenario.optical_tracking_rates[0].link_id = "missing".into();
+        assert!(scenario.validate().unwrap_err().contains("unknown PAT"));
+        scenario.optical_tracking_rates[0].link_id = "isl-a-b".into();
+        scenario.optical_geometry_samples.clear();
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("require native ITRS"));
     }
 
     #[test]

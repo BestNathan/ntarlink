@@ -125,6 +125,14 @@
         "$ref": "#/$defs/optical_geometry"
       },
       "description": "Optional all-PAT-link, time-ordered ITRS positions (meters) and boresights (dimensionless). Rust evaluates reciprocal line of sight and holds each result from t=0 until the next sample. Exclusive with other pointing modes and sampled_pointing faults; not continuous orbit/attitude propagation."
+    },
+    "optical_tracking_rates": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_tracking_rate"
+      },
+      "description": "Optional per-PAT-link ITRS line-of-sight angular rate limits (degrees per second) for native optical_geometry_samples only. Evaluated at the later observation, not continuous gimbal dynamics."
     }
   },
   "$defs": {
@@ -338,6 +346,29 @@
           "type": "integer",
           "minimum": 1,
           "description": "One-way geometric propagation delay in nanoseconds."
+        }
+      }
+    },
+    "optical_tracking_rate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "from_max_los_rate_deg_per_s",
+        "to_max_los_rate_deg_per_s"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_max_los_rate_deg_per_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "to_max_los_rate_deg_per_s": {
+          "type": "number",
+          "minimum": 0
         }
       }
     },
