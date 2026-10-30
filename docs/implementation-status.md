@@ -128,7 +128,7 @@ with a single historical ISS TLE in this mode. No independent multi-orbit
 catalog has yet been sourced or validated, and the 100k/500k runs remain
 unmeasured. See [SGP4 benchmark protocol](design/orbital-sgp4-scale-benchmark.md).
 
-## SGP4 phase-boundary resident-memory observations## Offline TLE catalog intake and provenance
+## Offline TLE catalog intake and provenance
 
 The optional `ntarlink_orbital.tle_catalog` CLI imports strict local ASCII
 TLE pairs, verifies both mod-10 checksums, matching and unique NORAD IDs,
