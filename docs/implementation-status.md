@@ -337,6 +337,22 @@ during the outage. The model is **preplanned availability**, not a pointing
 envelope, spacecraft power/thermal budget, measured head health or a laser
 PHY. Existing in-flight packet completion semantics remain unchanged.
 
+## SYS-02 static optical pointing-envelope gate
+
+An optional `optical_pointing[]` contract supplies fixed per-link endpoint
+off-boresight angles and inclusive per-head steering limits in degrees.
+All PAT links must be covered when enabled; malformed angles, duplicate
+links, inconsistent shared-head limits and missing PAT references are
+rejected. The SYS-02 spacecraft model gates SYS-03 acquisition before
+head reservations, emitting `pointing_outside_envelope` for rejected
+geometric contacts. Packet forwarding remains unavailable for rejected
+links; existing unconfigured scenarios retain their prior behavior.
+Rust contract, spacecraft and packet-runtime tests plus a deterministic
+CLI fixture exercise boundary acceptance and rejection. **The angles are
+operator-supplied constants**, not calculated from propagated position,
+attitude, boresight or terminal motion. No time-varying pointing, calibration
+or optical PHY is claimed.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
