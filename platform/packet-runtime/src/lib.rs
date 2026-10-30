@@ -1614,6 +1614,69 @@ mod tests {
     }
 
     #[test]
+    fn native_itrs_los_rate_gate_forces_pat_reacquisition_without_false_recovery() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-itrs-los-rate-gate.json"
+        ))
+        .unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 90_000_000, 140_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000
+                && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        let edges: Vec<_> = report
+            .control_events
+            .iter()
+            .filter(|event| {
+                event.link_id.as_deref() == Some("isl-a-b")
+                    && (event.kind == "link_down" || event.kind == "link_up")
+            })
+            .map(|event| (event.at_ns, event.kind.as_str()))
+            .collect();
+        assert_eq!(
+            edges,
+            vec![(30_000_000, "link_down"), (70_000_000, "link_up")]
+        );
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .all(|hop| !(30_000_000..90_000_000).contains(&hop.transmit_started_ns)));
+        assert!(report.delivered > 0 && report.dropped > 0);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+        // Without the opt-in rate gate every sample remains within its
+        // steering envelope and tracking is uninterrupted until contact end.
+        let mut unbounded = scenario.clone();
+        unbounded.optical_tracking_rates.clear();
+        let baseline = run(&unbounded).unwrap();
+        assert_eq!(
+            baseline
+                .pat_events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>(),
+            vec![20_000_000, 90_000_000, 140_000_000]
+        );
+        assert!(!baseline.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000 && event.state == "lost"
+        }));
+    }
+
+    #[test]
     fn optical_pointing_envelope_rejects_unsteerable_link_without_forwarding() {
         use ntarlink_contracts::OpticalPointing;
         let mut scenario = pat_fixture();

@@ -1174,6 +1174,29 @@ mod tests {
     }
 
     #[test]
+    fn optical_tracking_rate_contract_requires_native_itrs_and_consistent_heads() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-itrs-los-rate-gate.json"
+        ))
+        .unwrap();
+        let encoded = serde_json::to_string(&scenario).unwrap();
+        assert!(encoded.contains("optical_tracking_rates"));
+        scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = f64::NAN;
+        assert!(scenario.validate().unwrap_err().contains("invalid optical tracking rate"));
+        scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = -1.0;
+        assert!(scenario.validate().is_err());
+        scenario.optical_tracking_rates[0].from_max_los_rate_deg_per_s = 1000.0;
+        scenario.optical_tracking_rates.push(scenario.optical_tracking_rates[0].clone());
+        assert!(scenario.validate().is_err());
+        scenario.optical_tracking_rates.pop();
+        scenario.optical_tracking_rates[0].link_id = "missing".into();
+        assert!(scenario.validate().unwrap_err().contains("unknown PAT"));
+        scenario.optical_tracking_rates[0].link_id = "isl-a-b".into();
+        scenario.optical_geometry_samples.clear();
+        assert!(scenario.validate().unwrap_err().contains("require native ITRS"));
+    }
+
+    #[test]
     fn minimal_validates() {
         Scenario::from_json(&fixture()).unwrap();
     }

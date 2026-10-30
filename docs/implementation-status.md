@@ -1,3 +1,21 @@
+## Sampled ITRS LOS angular-rate gate
+
+The optional `optical_tracking_rates[]` scenario contract applies per-head
+finite, nonnegative degrees-per-second bounds to consecutive native
+`optical_geometry_samples[]`. Rust evaluates the sampled ITRS LOS displacement
+and holds the resulting availability state. Exceeding a limit interrupts PAT
+tracking, releases both heads and requires reacquisition after effective
+administrative/pointing recovery. Existing scenarios remain compatible when
+the optional configuration is absent. Synthetic Rust contract, geometry and
+packet-runtime tests and CI verify a 90-degree LOS change, overlapping
+administrative outage, control events and packet accounting.
+
+**Fidelity:** average sampled ITRS LOS angular rate only, not spacecraft
+body-frame gimbal slew, acceleration, tracking servo dynamics or optical PHY.
+Finite samples cannot guarantee continuous pointing feasibility; no
+constellation-scale performance measurement is claimed. See
+[design](design/optical-itrs-los-rate-gate.md).
+
 ## Production SGP4 and attitude to Rust-native ITRS geometry
 
 The optional `--native-itrs-probes-per-contact` mode now compiles real

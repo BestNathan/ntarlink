@@ -235,6 +235,35 @@ mod tests {
     }
 
     #[test]
+    fn sampled_itrs_los_rate_uses_elapsed_time_and_fails_closed() {
+        let initial = OpticalGeometry {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "ITRS".into(),
+            from_position_m: [7_000_000.0, 0.0, 0.0],
+            to_position_m: [7_001_000.0, 0.0, 0.0],
+            from_boresight_itrs: [1.0, 0.0, 0.0],
+            to_boresight_itrs: [-1.0, 0.0, 0.0],
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        let mut rotated = initial.clone();
+        rotated.at_ns = 30_000_000;
+        rotated.to_position_m = [7_000_000.0, 1000.0, 0.0];
+        assert!(!geometry_los_rate_allowed(&initial, &rotated, 1000.0));
+        assert!(geometry_los_rate_allowed(&initial, &rotated, 3000.001));
+        assert!(!geometry_los_rate_allowed(&initial, &rotated, f64::NAN));
+        assert!(!geometry_los_rate_allowed(&initial, &rotated, -1.0));
+        rotated.at_ns = 0;
+        assert!(!geometry_los_rate_allowed(&initial, &rotated, 5000.0));
+        rotated.at_ns = 30_000_000;
+        rotated.to_position_m = initial.to_position_m;
+        assert!(geometry_los_rate_allowed(&initial, &rotated, 0.0));
+        rotated.to_position_m = initial.from_position_m;
+        assert!(!geometry_los_rate_allowed(&initial, &rotated, 5000.0));
+    }
+
+    #[test]
     fn splits_at_either_head_and_reopens_at_exclusive_end() {
         let availability = HeadAvailability::new(&[
             outage("a", 20, 40),
