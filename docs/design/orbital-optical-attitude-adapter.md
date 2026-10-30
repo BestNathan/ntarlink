@@ -237,3 +237,32 @@ contact-state transitions on sampled steering failures, followed by
 independent attitude and frame reference validation. Without the
 opt-in audit, a contact that starts in envelope may drift outside
 it unnoticed; even with the audit, between-probe drift is not bounded.
+
+## Independent administrative and sampled-pointing fault domains
+
+The Rust SYS-03 PAT preparation layer now treats `administrative` and
+`sampled_pointing` fault edges as independent booleans for each optical PAT
+link. The effective link is available only while **both** domains are up,
+the geometric contact is active, both optical heads are available, and
+acquisition has completed. A recovery in either domain does not reopen a
+link while the other remains down. Edges at the same timestamp are applied
+as one deterministic batch before the effective state is evaluated.
+
+Only changes in the combined fault state are forwarded to the packet
+runtime as link up/down events. This prevents misleading intermediate
+`link_up` control events and premature route installation during
+overlapping faults. PAT loss reasons retain the domain that first made
+the effective state unavailable; simultaneous failures use
+`administrative_link_down` precedence. All timestamps remain
+scenario-relative nanoseconds and contact windows remain half-open.
+
+The fixture `scenarios/optical-pat-overlapping-faults.json` covers
+pointing loss at 30 ms, administrative down at 40 ms, pointing recovery
+at 50 ms, and administrative recovery at 70 ms. With 20 ms acquisition,
+tracking resumes at 90 ms rather than 70 ms. Rust tests cover both
+fault orders and simultaneous same-time edges; CI checks the full
+packet/control/PAT trace and packet accounting.
+
+This is still an **offline discrete-event fault plan**, not a native
+attitude solver or continuous optical PHY. Already-admitted transmissions
+retain the existing complete-after-departure convention.
