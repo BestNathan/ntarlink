@@ -2,8 +2,8 @@ use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
 use ntarlink_contracts::{ContactMode, LinkAction, LinkKind, PropagationDelaySample, Scenario};
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
-use ntarlink_spacecraft::HeadAvailability;
 use ntarlink_simulation::Scheduler;
+use ntarlink_spacecraft::HeadAvailability;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -1180,9 +1180,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![20_000_000, 90_000_000, 140_000_000]
         );
-        assert!(report.control_events.iter().any(|event| {
-            event.at_ns == 95_000_000 && event.kind == "routes_installed"
-        }));
+        assert!(report
+            .control_events
+            .iter()
+            .any(|event| { event.at_ns == 95_000_000 && event.kind == "routes_installed" }));
         let hops: Vec<_> = report
             .packets
             .iter()
