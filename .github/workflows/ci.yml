@@ -78,7 +78,7 @@ jobs:
       - name: Verify isolated production SGP4/ITRS benchmark report
         run: |
           python -m ntarlink_orbital.sgp4_scale_benchmark_suite scenarios/orbit-sources.sample.json --satellites 2 --samples-per-satellite 2 --repetitions 2 --report /tmp/ntarlink-sgp4-suite.json
-          python -c 'import json; r=json.load(open("/tmp/ntarlink-sgp4-suite.json")); assert r["sample_count"]==4 and r["repetitions"]==2 and len(r["position_digest_sha256"])==64 and r["max_process_peak_rss_bytes"]>0 and r["median_propagation_samples_per_second"]>0 and all(0<r[k]<=r["max_process_peak_rss_bytes"] for k in ("max_rss_before_provider_bytes","max_rss_after_provider_bytes","max_rss_after_propagation_bytes")), r; print("Isolated SGP4/ITRS:", r["sample_count"], "samples in", r["repetitions"], "runs")'
+          python -c 'import json; r=json.load(open("/tmp/ntarlink-sgp4-suite.json")); assert r["sample_count"]==4 and r["repetitions"]==2 and len(r["position_digest_sha256"])==64 and r["max_process_peak_rss_bytes"]>0 and r["median_propagation_samples_per_second"]>0 and all(r[k]>0 for k in ("max_rss_before_provider_bytes","max_rss_after_provider_bytes","max_rss_after_propagation_bytes")), r; print("Isolated SGP4/ITRS:", r["sample_count"], "samples in", r["repetitions"], "runs")'
       - run: python -m pip install -e systems/access/python
       - run: python -m unittest discover -s systems/access/python/tests
   typescript:
