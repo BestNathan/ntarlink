@@ -398,6 +398,27 @@ synthetic orbit against independent reference data, recalculate geometric
 contact visibility, or model continuous pointing drift during the contact. See
 [adapter design](design/orbital-optical-attitude-adapter.md).
 
+### Time-indexed optical-head attitude input
+
+The offline adapter now accepts an opt-in
+`attitude_model: "sampled_body_to_itrs_quaternion"` with ordered,
+microsecond-aligned body-to-ITRS quaternion samples per optical head.
+It uses shortest-arc spherical interpolation, including sign-equivalent
+quaternions, to calculate contact-start boresights and (when requested)
+recalculate both boresights at every finite steering probe. Samples must
+cover the virtual-time grid and are limited to 100,000 across all heads.
+The legacy fixed-attitude input remains supported. The manifest identifies
+the attitude model and retains exact input and output digests.
+
+Unit tests exercise interpolation, sign equivalence, invalid coverage,
+interior attitude excursions and unchanged outputs on failed compilation.
+A synthetic time-indexed fixture is run through real SGP4, Rust validation,
+PAT acquisition and packet forwarding in CI. These are **operator-supplied
+attitude samples**, not spacecraft attitude propagation or independent
+attitude truth. A passing finite-probe audit cannot guarantee between-probe
+pointing; Rust still uses one snapshot per contact and does not close
+tracking mid-contact when the attitude drifts.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
