@@ -204,6 +204,7 @@ def audit_optical_pointing(scenario: dict, compiled: dict, position,
         raise ValueError("probes_per_contact must be 1, 3 or 7")
     snapshots = {(g["link_id"], g["at_ns"]): g
                  for g in compiled["optical_geometry"]}
+    links = {link["id"]: link for link in scenario["links"]}
     reports = []
     total_samples = 0
     minimum_margin = math.inf
@@ -227,14 +228,11 @@ def audit_optical_pointing(scenario: dict, compiled: dict, position,
             if at_ns == start:
                 vectors = [g["from_position_m"], g["to_position_m"]]
             else:
+                link = links[contact["link_id"]]
                 vectors = [
-                    list(_vector(list(position(satellite, at_ns)),
+                    list(_vector(list(position(link[side], at_ns)),
                                  "ITRS position", 3))
-                    for satellite in (
-                        next(link[side] for link in scenario["links"]
-                             if link["id"] == contact["link_id"])
-                        for side in ("from", "to")
-                    )
+                    for side in ("from", "to")
                 ]
             direction = tuple(b - a for a, b in zip(*vectors))
             if math.hypot(*direction) <= 1.0 or not all(
