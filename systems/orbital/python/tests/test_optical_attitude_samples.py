@@ -1,6 +1,5 @@
 """Bounded time-indexed SYS-02 optical-head attitude contract and probe tests."""
 
-import copy
 import hashlib
 import json
 import math
@@ -81,13 +80,13 @@ class SampledAttitudeTests(unittest.TestCase):
         self.assertEqual(axis, [1.0, 0.0, 0.0])
         changed = attitude()
         changed["heads"][0]["attitude_samples"] = [
-            sample(0, Q0), sample(DURATION, [0, 0, 0, 1])]
+            sample(0, Q0), sample(DURATION, Q90)]
         head = _heads(changed, DURATION)["sat-a/h1"]
         halfway = _boresight_at(head, 100_000_000)
-        self.assertAlmostEqual(halfway[0], 0.0, places=12)
-        self.assertAlmostEqual(halfway[1], 1.0, places=12)
+        self.assertAlmostEqual(halfway[0], math.sqrt(0.5), places=12)
+        self.assertAlmostEqual(halfway[1], math.sqrt(0.5), places=12)
         changed["heads"][0]["attitude_samples"][-1] = sample(
-            DURATION, [0, 0, 0, -1])
+            DURATION, [-v for v in Q90])
         halfway_negative = _boresight_at(
             _heads(changed, DURATION)["sat-a/h1"], 100_000_000)
         for a, b in zip(halfway, halfway_negative):
