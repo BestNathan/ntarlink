@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import struct
+import sys
 import time
 from pathlib import Path
 
@@ -20,6 +21,31 @@ from .ephemeris import MAX_SAMPLES, TIME_RESOLUTION_NS, _validate_request
 STEP_NS = 1_000_000_000
 MAX_SATELLITES = 1_000
 CATALOG_MODES = ("replicated", "unique")
+
+
+def _current_rss_bytes() -> int | None:
+    """Sample current Linux VmRSS, not a phase peak or an allocation delta.
+
+    A missing, malformed or unsupported procfs measurement is reported as
+    unavailable rather than silently substituting a process high-water mark.
+    """
+    if sys.platform != "linux":
+        return None
+    try:
+        status = Path("/proc/self/status").read_text(encoding="ascii")
+    except OSError:
+        return None
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            fields = line.split()
+            if len(fields) != 3 or fields[2] != "kB":
+                return None
+            try:
+                kib = int(fields[1])
+            except ValueError:
+                return None
+            return kib * 1024 if kib > 0 else None
+    return None
 
 
 def _positive_int(value: int, name: str) -> int:
@@ -72,9 +98,11 @@ def benchmark(orbit_config: dict, satellite_count: int, samples_per_satellite: i
                 "nodes": [{"id": identifier, "kind": "satellite"} for identifier in ids]}
     _validate_request(scenario, config, STEP_NS)
 
+    rss_before_provider = _current_rss_bytes()
     build_start = time.perf_counter_ns()
     position = build_sgp4_provider(config, duration_ns, config_dir)
     build_seconds = (time.perf_counter_ns() - build_start) / 1e9
+    rss_after_provider = _current_rss_bytes()
     digest = hashlib.sha256()
     propagation_start = time.perf_counter_ns()
     for identifier in ids:
@@ -88,6 +116,7 @@ def benchmark(orbit_config: dict, satellite_count: int, samples_per_satellite: i
                 raise ValueError(f"nonfinite or invalid ITRS position: {identifier} at {at_ns}")
             digest.update(struct.pack("!qddd", at_ns, *vector))
     propagation_seconds = (time.perf_counter_ns() - propagation_start) / 1e9
+    rss_after_propagation = _current_rss_bytes()
     sample_count = satellite_count * samples_per_satellite
     return {
         "schema_version": 1,
@@ -110,6 +139,10 @@ def benchmark(orbit_config: dict, satellite_count: int, samples_per_satellite: i
             json.dumps(orbit_config, sort_keys=True, allow_nan=False).encode("utf-8")
         ).hexdigest(),
         "position_digest_sha256": digest.hexdigest(),
+        "rss_before_provider_bytes": rss_before_provider,
+        "rss_after_provider_bytes": rss_after_provider,
+        "rss_after_propagation_bytes": rss_after_propagation,
+        "rss_checkpoint_scope": "Linux current VmRSS at phase boundaries; not phase peaks",
         "provider_build_wall_seconds": build_seconds,
         "propagation_wall_seconds": propagation_seconds,
         "propagation_samples_per_second": sample_count / max(propagation_seconds, 1e-9),
