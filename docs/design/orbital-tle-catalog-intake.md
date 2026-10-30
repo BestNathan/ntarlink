@@ -45,6 +45,33 @@ is **operator asserted** and not independently checked. The SHA-256 digest
 detects changes relative to a trusted manifest; it is not a digital signature
 or source authentication.
 
+## Verified consumption by the isolated SGP4 benchmark
+
+The opt-in `--catalog-manifest` argument on
+`ntarlink_orbital.sgp4_scale_benchmark_suite` requires
+`--catalog-mode unique`. The suite validates the exact configuration
+bytes against the importer-generated `orbit_config_sha256`, checks the
+manifest schema and source digest syntax, satellite count, unique NORAD
+identities, TLE checksums, and epoch age before starting any worker.
+Each worker reopens and verifies the manifest and configuration before
+constructing the production Skyfield provider; the suite rejects any
+worker reporting a different manifest digest.
+
+```sh
+python -m ntarlink_orbital.sgp4_scale_benchmark_suite /tmp/orbit-catalog.json \
+  --catalog-manifest /tmp/orbit-catalog.json.tle-manifest.json \
+  --catalog-mode unique --satellites 2 --samples-per-satellite 2 \
+  --repetitions 2 --report /tmp/verified-catalog-benchmark.json
+```
+
+This is **local integrity checking against a caller-trusted manifest**,
+not a cryptographic signature or proof of publisher identity, usage rights,
+orbit accuracy, or an independently sourced multi-orbit fixture. Verification
+reads bounded inputs (2 MB configuration and 64 KiB manifest), rejects
+duplicate JSON keys and nonfinite values, and returns the exact verified
+configuration object to the worker. The existing unpinned benchmark mode
+remains available for synthetic and historical smoke tests.
+
 ## Verification and fidelity
 
 Unit tests cover a historical public ISS TLE, checksums, catalog IDs,
