@@ -850,7 +850,7 @@ pub fn run(scenario: &Scenario) -> Result<SimulationReport, String> {
     scenario.validate()?;
     let (prepared, pat_events) = prepare_pat(scenario)?;
     let mut report = run_inner(&prepared)?;
-    if !pat_events.is_empty() {
+    if !scenario.optical_pat.is_empty() {
         report.fidelity = "l1_scheduled_contact_pat_gate_packet_model".into();
     }
     report.pat_events = pat_events;
@@ -1144,6 +1144,25 @@ mod tests {
             70_000_000
         );
         assert!(run(&scenario).is_ok());
+    }
+
+    #[test]
+    fn permanently_down_pat_link_reports_gate_fidelity_without_tracking() {
+        let mut scenario = pat_fixture();
+        scenario
+            .links
+            .iter_mut()
+            .find(|link| link.id == "isl-a-b")
+            .unwrap()
+            .up = false;
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.delivered, 0);
+        assert_eq!(report.injected, report.dropped);
+        assert!(report.pat_events.is_empty());
+        assert_eq!(
+            report.fidelity,
+            "l1_scheduled_contact_pat_gate_packet_model"
+        );
     }
 
     #[test]
