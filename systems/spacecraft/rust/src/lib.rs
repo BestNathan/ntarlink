@@ -27,13 +27,20 @@ pub fn geometry_pointing_allowed(geometry: &OpticalGeometry) -> bool {
     if geometry.frame != "ITRS" {
         return false;
     }
-    let delta = std::array::from_fn::<_, 3, _>(|i| {
-        geometry.to_position_m[i] - geometry.from_position_m[i]
-    });
+    let delta =
+        std::array::from_fn::<_, 3, _>(|i| geometry.to_position_m[i] - geometry.from_position_m[i]);
     let reverse = delta.map(|v| -v);
     [
-        (delta, geometry.from_boresight_itrs, geometry.from_max_off_axis_deg),
-        (reverse, geometry.to_boresight_itrs, geometry.to_max_off_axis_deg),
+        (
+            delta,
+            geometry.from_boresight_itrs,
+            geometry.from_max_off_axis_deg,
+        ),
+        (
+            reverse,
+            geometry.to_boresight_itrs,
+            geometry.to_max_off_axis_deg,
+        ),
     ]
     .iter()
     .all(|(direction, boresight, limit)| {
