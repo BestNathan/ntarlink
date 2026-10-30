@@ -179,8 +179,9 @@ jobs:
           manifest = json.loads(Path(str(artifact) + ".optical-manifest.json").read_text())
           assert manifest["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
           assert manifest["pointing_tracking_plan"]["sample_count"] == 10
-          assert [(f["at_ns"], f["action"]) for f in compiled["faults"]] == [
-              (30000000, "down"), (90000000, "up")
+          assert [(f["at_ns"], f["action"], f["cause"]) for f in compiled["faults"]] == [
+              (30000000, "down", "sampled_pointing"),
+              (90000000, "up", "sampled_pointing")
           ], compiled["faults"]
           PY
           cargo run -p ntarlink-cli -- validate /tmp/optical-tracking-compiled.json
@@ -191,7 +192,10 @@ jobs:
           tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
           assert tracking == [20000000, 110000000, 140000000], tracking
           assert any(e["state"] == "lost" and e["at_ns"] == 30000000
+                     and e["reason"] == "sampled_pointing_loss"
                      for e in r["pat_events"]), r["pat_events"]
+          assert any(e["kind"] == "link_down" and e["at_ns"] == 30000000
+                     for e in r["control_events"]), r["control_events"]
           hops = [h for p in r["packets"] for h in p["hops"]
                   if h["link_id"] == "isl-a-b"]
           assert all(not 30000000 <= h["transmit_started_ns"] < 110000000
