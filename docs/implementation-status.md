@@ -248,6 +248,18 @@ externally published ITRF vectors for several years, a complete certified
 IERS archive or independently maintained leap-second tables. See
 [frame validation](design/orbital-frame-validation.md).
 
+## Verified offline TLE benchmark consumption
+
+The isolated SYS-01 SGP4 benchmark accepts an optional intake manifest in
+unique-TLE mode. It checks the exact configuration SHA-256, manifest schema,
+catalog cardinality, NORAD identity, TLE checksums and epoch freshness before
+spawning workers; each worker verifies again before propagation and the suite
+compares the manifest digest across repetitions. Unit tests cover tampered
+artifacts, malformed metadata, duplicate JSON keys, worker disagreement and
+a small historical ISS production-provider path. This is a local integrity
+boundary, **not** authenticated publisher provenance, a licensed multi-orbit
+catalog or 100k/500k measured performance.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
