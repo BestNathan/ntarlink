@@ -605,8 +605,7 @@ impl Scenario {
                 return Err("optical geometry must cover every PAT contact".into());
             }
             let mut seen = HashSet::new();
-            let mut limits: std::collections::HashMap<&str, f64> =
-                std::collections::HashMap::new();
+            let mut limits: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
             for geometry in &self.optical_geometry {
                 let key = (geometry.link_id.as_str(), geometry.at_ns);
                 if !pat_contacts.contains(&key) || !seen.insert(key) {
@@ -616,7 +615,10 @@ impl Scenario {
                     ));
                 }
                 if geometry.frame != "ITRS" {
-                    return Err(format!("optical geometry requires ITRS frame: {}", geometry.link_id));
+                    return Err(format!(
+                        "optical geometry requires ITRS frame: {}",
+                        geometry.link_id
+                    ));
                 }
                 let pat = self
                     .optical_pat
@@ -630,7 +632,10 @@ impl Scenario {
                     geometry.to_boresight_itrs,
                 ] {
                     if vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12) {
-                        return Err(format!("invalid optical geometry vector: {}", geometry.link_id));
+                        return Err(format!(
+                            "invalid optical geometry vector: {}",
+                            geometry.link_id
+                        ));
                     }
                 }
                 for boresight in [geometry.from_boresight_itrs, geometry.to_boresight_itrs] {
@@ -639,7 +644,10 @@ impl Scenario {
                     }
                 }
                 if geometry.from_position_m == geometry.to_position_m {
-                    return Err(format!("coincident optical positions: {}", geometry.link_id));
+                    return Err(format!(
+                        "coincident optical positions: {}",
+                        geometry.link_id
+                    ));
                 }
                 for (head, limit) in [
                     (pat.from_head.as_str(), geometry.from_max_off_axis_deg),
@@ -648,7 +656,10 @@ impl Scenario {
                     if !limit.is_finite() || !(0.0..=180.0).contains(&limit) {
                         return Err(format!("invalid optical geometry steering limit: {head}"));
                     }
-                    if limits.insert(head, limit).is_some_and(|previous| previous != limit) {
+                    if limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
                         return Err(format!("inconsistent optical geometry head limit: {head}"));
                     }
                 }
@@ -777,8 +788,14 @@ mod tests {
             to_max_off_axis_deg: 30.0,
         };
         s.optical_geometry.push(sample.clone());
-        assert!(s.validate().unwrap_err().contains("cover every PAT contact"));
-        s.optical_geometry.push(OpticalGeometry { at_ns: 120_000_000, ..sample.clone() });
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("cover every PAT contact"));
+        s.optical_geometry.push(OpticalGeometry {
+            at_ns: 120_000_000,
+            ..sample.clone()
+        });
         s.validate().unwrap();
         s.optical_geometry[1].frame = "TEME".into();
         assert!(s.validate().unwrap_err().contains("ITRS"));
@@ -787,10 +804,16 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("zero optical boresight"));
         s.optical_geometry[1].to_boresight_itrs = [-1.0, 0.0, 0.0];
         s.optical_geometry[1].from_position_m = [f64::NAN, 0.0, 0.0];
-        assert!(s.validate().unwrap_err().contains("invalid optical geometry"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical geometry"));
         s.optical_geometry[1].from_position_m = sample.from_position_m;
         s.optical_geometry[1].at_ns = 0;
-        assert!(s.validate().unwrap_err().contains("duplicate optical geometry"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("duplicate optical geometry"));
         s.optical_geometry[1].at_ns = 120_000_000;
         s.optical_pointing.push(OpticalPointing {
             link_id: "isl-a-b".into(),
