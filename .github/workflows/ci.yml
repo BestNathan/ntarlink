@@ -34,6 +34,11 @@ jobs:
         run: |
           cargo run -p ntarlink-cli -- simulate scenarios/beam-uplink-contention.json --json > /tmp/beam-report.json
           python3 -c 'import json; x=json.load(open("/tmp/beam-report.json")); assert (x["injected"], x["delivered"], x["dropped"]) == (8,8,0), x; assert len(x["beam_grants"])==8 and all(g["wire_bytes"]==1220 for g in x["beam_grants"]); h=sorted((h for p in x["packets"] for h in p["hops"] if h["link_id"].startswith("user-")), key=lambda h:h["transmit_started_ns"]); assert [q["transmit_started_ns"] for q in h]==[i*10000000 for i in range(8)]; assert all(q["transmit_completed_ns"]-q["transmit_started_ns"]==10000000 for q in h); print("Shared uplink beam:", len(h), "grants")'
+      - name: Verify PAT tracking gates optical packet forwarding
+        run: |
+          python3 -m json.tool scenarios/optical-pat-acquisition.json > /dev/null
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-acquisition.json --json > /tmp/ntarlink-pat-report.json
+          python3 -c 'import json; r=json.load(open("/tmp/ntarlink-pat-report.json")); t=[e["at_ns"] for e in r["pat_events"] if e["state"]=="tracking"]; assert t==[20000000,140000000], t; assert r["delivered"]>0 and r["dropped"]>0 and r["injected"]==r["delivered"]+r["dropped"], r; h=[h for p in r["packets"] for h in p["hops"] if h["link_id"]=="isl-a-b"]; assert h and all(20000000<=v["transmit_started_ns"]<120000000 or 140000000<=v["transmit_started_ns"]<200000000 for v in h), h; print("PAT packet gate:",r["delivered"],"delivered,",r["dropped"],"dropped")'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
