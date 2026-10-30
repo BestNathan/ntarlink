@@ -413,7 +413,10 @@ impl Scenario {
                 return Err(format!("invalid fault target or time: {}", fault.link_id));
             }
             if fault.cause == FaultCause::SampledPointing
-                && !self.optical_pat.iter().any(|pat| pat.link_id == fault.link_id)
+                && !self
+                    .optical_pat
+                    .iter()
+                    .any(|pat| pat.link_id == fault.link_id)
             {
                 return Err(format!(
                     "sampled pointing fault requires an optical PAT link: {}",
@@ -993,13 +996,15 @@ mod tests {
         let fault: Fault = serde_json::from_str(legacy).unwrap();
         assert_eq!(fault.cause, FaultCause::Administrative);
         assert_eq!(serde_json::to_string(&fault).unwrap(), legacy);
-        let sampled = r#"{"at_ns":10,"link_id":"isl-a-b","action":"down","cause":"sampled_pointing"}"#;
+        let sampled =
+            r#"{"at_ns":10,"link_id":"isl-a-b","action":"down","cause":"sampled_pointing"}"#;
         let fault: Fault = serde_json::from_str(sampled).unwrap();
         assert_eq!(fault.cause, FaultCause::SampledPointing);
         assert_eq!(serde_json::to_string(&fault).unwrap(), sampled);
         assert!(serde_json::from_str::<Fault>(
             r#"{"at_ns":10,"link_id":"isl-a-b","action":"down","cause":"unknown"}"#
-        ).is_err());
+        )
+        .is_err());
 
         let mut scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-pat-acquisition.json"
