@@ -72,3 +72,27 @@ sample-and-hold geometry**, not continuous pointing certification, a
 physical optical head actuator, a laser link budget, or a validated
 light-time model. Excursions between samples can be missed, and the
 existing packet engine's in-flight completion convention is unchanged.
+
+## Optional spacecraft-body LOS slew-rate audit
+
+The `--native-itrs-max-body-los-rate-deg-per-s` option is available only
+with `--native-itrs-probes-per-contact`. At every adjacent native ITRS
+observation, the compiler computes each endpoint's reciprocal LOS vector,
+rotates it into that head's **spacecraft body frame** using the inverse
+body-to-ITRS quaternion, and divides the shortest angular displacement by
+elapsed scenario virtual time (seconds). Both heads must satisfy the
+nonnegative finite limit in degrees per second. The first observation is
+a baseline; observations are compared across contact gaps as well.
+
+The opt-in fail-closed audit runs before output replacement. Its per-head
+peak sampled rate, threshold, reference frame and limitations are recorded
+under `native_itrs_plan.body_los_rate_audit` in the SHA-256-bound manifest.
+This catches attitude-driven relative target motion missed by an ITRS-only
+LOS rate check. The cap is shared by both endpoints in this first bounded
+version; per-head actuator parameters are future work.
+
+This is a **finite-sample average angular velocity gate**, not a gimbal
+controller, acceleration limit, tracking-error integration or continuous
+feasibility certificate. It does not alter the Rust runtime's native
+geometry or packet forwarding behavior; an excessive input is rejected
+offline rather than converted to a runtime Tracking Loss event.

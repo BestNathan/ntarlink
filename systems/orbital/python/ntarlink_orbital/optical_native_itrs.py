@@ -9,18 +9,51 @@ from __future__ import annotations
 
 import math
 
-from .optical_geometry import _boresight_at, _heads, _vector
+from .optical_geometry import (
+    _boresight_at, _heads, _quaternion_at, _rotate_body_to_itrs, _unit, _vector,
+)
 from .optical_native_steering import _observation_schedule
 
 
+def _body_frame_los(positions: list[list[float]], side: str,
+                    head: dict, at_ns: int) -> tuple[float, ...]:
+    """Transform an ITRS LOS into the spacecraft body frame using q inverse."""
+    ray = tuple(b - a for a, b in zip(*positions))
+    if side == "to":
+        ray = tuple(-value for value in ray)
+    unit_ray = _unit(ray, "ITRS line of sight")
+    q = _quaternion_at(head, at_ns)
+    inverse = (q[0], -q[1], -q[2], -q[3])
+    return tuple(_rotate_body_to_itrs(unit_ray, inverse))
+
+
+def _angular_distance_deg(a: tuple[float, ...],
+                          b: tuple[float, ...]) -> float:
+    """Stable small-angle separation of two body-frame unit vectors."""
+    cross = (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+    dot = sum(x * y for x, y in zip(a, b))
+    return math.degrees(math.atan2(math.hypot(*cross), dot))
+
+
 def compile_native_itrs(scenario: dict, compiled: dict, position,
-                        probes_per_contact: int, attitude: dict) -> tuple[dict, dict]:
+                        probes_per_contact: int, attitude: dict,
+                        max_body_los_rate_deg_per_s: float | None = None) -> tuple[dict, dict]:
     """Emit bounded ITRS geometry observations for every PAT link.
 
     Include a real t=0 observation even if the first contact starts later,
     plus each contact start, finite interior probes and the last representable
     microsecond before its exclusive end. Preserve administrative faults.
     """
+    if max_body_los_rate_deg_per_s is not None:
+        if (type(max_body_los_rate_deg_per_s) not in (int, float)
+                or not math.isfinite(max_body_los_rate_deg_per_s)
+                or max_body_los_rate_deg_per_s < 0):
+            raise ValueError("max_body_los_rate_deg_per_s must be finite and nonnegative")
+        max_body_los_rate_deg_per_s = float(max_body_los_rate_deg_per_s)
     if "optical_geometry_samples" in scenario:
         raise ValueError("existing optical geometry samples cannot be overwritten")
     if any(fault.get("cause") == "sampled_pointing"
@@ -35,9 +68,11 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
     ticks_by_link, reports = _observation_schedule(scenario, probes_per_contact)
 
     samples = []
+    peak_rates = {}
     for link_id in sorted(pats):
         link = links[link_id]
         pat = pats[link_id]
+        previous_los = {}
         for at_ns in sorted(ticks_by_link[link_id]):
             positions = [
                 list(_vector(list(position(link[side], at_ns)), "ITRS position", 3))
@@ -50,6 +85,26 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
                 )
             a = heads[pat["from_head"]]
             b = heads[pat["to_head"]]
+            if max_body_los_rate_deg_per_s is not None:
+                for side, head in (("from", a), ("to", b)):
+                    head_id = pat[f"{side}_head"]
+                    current = _body_frame_los(positions, side, head, at_ns)
+                    if side in previous_los:
+                        previous_at, previous_ray = previous_los[side]
+                        rate = (_angular_distance_deg(previous_ray, current)
+                                * 1_000_000_000.0 / (at_ns - previous_at))
+                        peak_rates[head_id] = max(peak_rates.get(head_id, 0.0), rate)
+                        if (rate > max_body_los_rate_deg_per_s
+                                and not math.isclose(
+                                    rate, max_body_los_rate_deg_per_s,
+                                    rel_tol=1e-12, abs_tol=1e-9)):
+                            raise ValueError(
+                                f"body-frame LOS rate exceeds max_body_los_rate_deg_per_s "
+                                f"for {head_id} at {at_ns} ns"
+                            )
+                    else:
+                        peak_rates.setdefault(head_id, 0.0)
+                    previous_los[side] = (at_ns, current)
             samples.append({
                 "link_id": link_id, "at_ns": at_ns, "frame": "ITRS",
                 "from_position_m": positions[0],
@@ -68,5 +123,17 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
         "contact_count": len(reports),
         "sample_count": len(samples),
         "contacts": reports,
+        "body_los_rate_audit": (
+            {
+                "max_body_los_rate_deg_per_s": max_body_los_rate_deg_per_s,
+                "peak_sampled_rate_by_head_deg_per_s": [
+                    {"head_id": head_id, "peak_rate_deg_per_s": peak_rates[head_id]}
+                    for head_id in sorted(peak_rates)
+                ],
+                "reference_frame": "spacecraft_body",
+                "fidelity": "finite sampled mean LOS rate; not gimbal acceleration or continuous tracking",
+            }
+            if max_body_los_rate_deg_per_s is not None else None
+        ),
         "fidelity": "SGP4/ITRS and supplied body attitude; discrete sample-and-hold, not continuous tracking",
     }

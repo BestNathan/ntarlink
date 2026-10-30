@@ -114,9 +114,10 @@ def _shortest_arc_rate_deg_per_s(a: tuple[float, ...],
     return angle_deg * (1_000_000_000.0 / delta_ns)
 
 
-def _boresight_at(head: dict, at_ns: int) -> list[float]:
+def _quaternion_at(head: dict, at_ns: int) -> tuple[float, ...]:
+    """Return the body-to-ITRS rotation at a discrete virtual-time instant."""
     if head["samples"] is None:
-        return head["boresight"]
+        return head["fixed_quaternion"]
     times = head["times"]
     if at_ns < times[0] or at_ns > times[-1]:
         raise ValueError("attitude samples do not cover requested time")
@@ -127,7 +128,13 @@ def _boresight_at(head: dict, at_ns: int) -> list[float]:
         fraction = (at_ns - times[index]) / (times[index + 1] - times[index])
         quaternion = _slerp(head["samples"][index], head["samples"][index + 1],
                             fraction)
-    return _rotate_body_to_itrs(head["axis"], quaternion)
+    return quaternion
+
+
+def _boresight_at(head: dict, at_ns: int) -> list[float]:
+    if head["samples"] is None:
+        return head["boresight"]
+    return _rotate_body_to_itrs(head["axis"], _quaternion_at(head, at_ns))
 
 
 def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
@@ -170,13 +177,14 @@ def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
         samples = None
         times = None
         boresight = None
+        fixed_quaternion = None
         if fixed:
             quaternion = _vector(head["body_to_itrs_quaternion_wxyz"],
                                  "quaternion", 4)
             if abs(math.hypot(*quaternion) - 1.0) > 1e-6:
                 raise ValueError("body-to-ITRS quaternion must be unit length")
-            boresight = _rotate_body_to_itrs(
-                axis, _unit(quaternion, "quaternion"))
+            fixed_quaternion = _unit(quaternion, "quaternion")
+            boresight = _rotate_body_to_itrs(axis, fixed_quaternion)
         else:
             records = head["attitude_samples"]
             if (not isinstance(records, list) or len(records) < 2
@@ -220,6 +228,7 @@ def _heads(config: dict, duration_ns: int) -> dict[str, dict]:
         heads[identifier] = {
             "axis": axis, "boresight": boresight, "limit": float(limit),
             "times": times, "samples": samples,
+            "fixed_quaternion": fixed_quaternion,
             "max_attitude_rate_deg_per_s": rate_limit,
             "peak_attitude_rate_deg_per_s": peak_rate,
         }
@@ -425,7 +434,12 @@ def main(argv=None):
     probe_options.add_argument("--native-itrs-probes-per-contact", type=int,
                                choices=(1, 3, 7),
                                help="Compile SGP4 ITRS positions and attitude into Rust-native geometry observations")
+    parser.add_argument("--native-itrs-max-body-los-rate-deg-per-s", type=float,
+                        help="Fail closed on sampled spacecraft-body LOS slew rate (deg/s); requires native ITRS")
     args = parser.parse_args(argv)
+    if (args.native_itrs_max_body_los_rate_deg_per_s is not None
+            and args.native_itrs_probes_per_contact is None):
+        raise ValueError("body LOS rate limit requires --native-itrs-probes-per-contact")
     inputs = [args.scenario, args.orbit_config, args.attitude_config]
     manifest_path = Path(str(args.out) + ".optical-manifest.json")
     if len({p.resolve() for p in [*inputs, args.out, manifest_path]}) != 5:
@@ -457,7 +471,7 @@ def main(argv=None):
         from .optical_native_itrs import compile_native_itrs
         compiled, native_itrs_plan = compile_native_itrs(
             scenario, compiled, provider, args.native_itrs_probes_per_contact,
-            attitude,
+            attitude, args.native_itrs_max_body_los_rate_deg_per_s,
         )
     output = (json.dumps(compiled, indent=2, allow_nan=False) + "\n").encode()
     head_rates = _heads(attitude, scenario["duration_ns"])
