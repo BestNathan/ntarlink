@@ -56,6 +56,33 @@ runners are not capacity guarantees. Future work should collect repeated
 measurements on pinned hardware, distinguish build/propagation RSS, and
 benchmark independently sourced, validated multi-orbit catalogs.
 
+## Opt-in distinct supplied-TLE catalog mode
+
+Both the single-process benchmark and the isolated repeated suite accept
+`--catalog-mode unique`. Unlike the default `replicated` mode, `unique`
+requires the input JSON to contain **exactly** `--satellites` source records
+with pairwise-distinct `(tle_line1, tle_line2)` strings. It uses each supplied
+record once, preserving the input order and the original source-config SHA-256.
+Duplicate TLE pairs or a count mismatch fail before constructing the provider.
+Synthetic identifiers are still assigned for consistent digest ordering.
+
+```sh
+# A one-TLE smoke test of the unique-catalog execution path:
+python -m ntarlink_orbital.sgp4_scale_benchmark scenarios/orbit-sources.sample.json --satellites 1 --samples-per-satellite 2 --catalog-mode unique
+python -m ntarlink_orbital.sgp4_scale_benchmark_suite scenarios/orbit-sources.sample.json --satellites 1 --samples-per-satellite 2 --repetitions 2 --catalog-mode unique
+```
+
+For an actual multi-orbit comparison, supply a **separately obtained,
+licensed, provenance-pinned** JSON catalog containing the desired distinct
+TLE records and use `--satellites` equal to that catalog's length. The repository
+currently bundles only a historical ISS source, so the CI unique-mode smoke
+tests the production code path with one satellite; it is **not** evidence
+of constellation diversity. Distinct TLE text alone does not establish
+independent source provenance, orbital accuracy or a physically representative
+constellation. Reports label `catalog_mode`, `source_tle_count`,
+`unique_source_tle_count`, and the selected workload/fidelity explicitly.
+The 1,000 satellite and 500,000 position limits apply in both modes.
+
 ## Isolated repeated measurement protocol
 
 The optional `ntarlink_orbital.sgp4_scale_benchmark_suite` wraps the same
@@ -81,7 +108,8 @@ delta. Timed provider-build and propagation sections exclude interpreter
 startup, while RSS includes it. The suite stores no position ephemeris file
 and does not measure peak disk or CPU usage.
 
-The CI smoke repeats only a four-position historical ISS workload; 100k/500k
+The CI smoke repeats a four-position replicated historical ISS workload and
+exercises the unique-mode provider with one ISS TLE; 100k/500k
 examples are explicitly manual and have not been executed as part of CI.
 Replicated TLEs are not an independently sourced constellation catalog,
 and no timing or memory result constitutes a hardware-independent SLA.
