@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in spacecraft-body-frame LOS angular-rate audit on compiled native ITRS observations, with inverse attitude rotation, per-head peak provenance and fail-closed Python tests (finite sampled mean velocity, not a gimbal servo or Rust runtime tracking gate). See [design](design/optical-native-itrs-compiler.md).
+
 - [x] Opt-in sampled ITRS LOS angular-rate proxy gates Rust PAT tracking with independent administrative fault state, bounded per-head limits, synthetic recovery and packet CI (not body-frame gimbal dynamics, acceleration or continuous tracking). See [design](design/optical-itrs-los-rate-gate.md).
 
 - [x] Opt-in production SGP4/ITRS and fixed/sampled body attitude compiler emits bounded `optical_geometry_samples[]` for Rust-native reciprocal pointing evaluation, with shared deterministic probe grid, SHA-256 provenance, contract tests and PAT/packet CI (finite sample-and-hold; not live Rust SGP4 or continuous pointing). See [design](design/optical-native-itrs-compiler.md).

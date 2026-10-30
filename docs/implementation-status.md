@@ -1,3 +1,18 @@
+## Optional spacecraft-body LOS slew-rate audit
+
+The SGP4-to-native-ITRS compiler can now reject supplied orbit/attitude
+observations whose sampled line-of-sight direction moves too rapidly in
+either endpoint's spacecraft body frame. The opt-in global degrees-per-second
+threshold uses inverse body-to-ITRS quaternion rotation, a stable atan2
+angular displacement and elapsed virtual seconds. Its SHA-256-bound manifest
+records each head's peak sampled mean rate. Tests cover static-body motion,
+co-rotating attitude, invalid limits, deterministic provenance and failed
+artifact replacement. The existing Rust PAT/packet path is unchanged.
+
+**Fidelity:** finite sampled body-frame LOS rate only, not actuator dynamics,
+acceleration, continuous tracking or an online PAT loss mechanism. See
+[design](design/optical-native-itrs-compiler.md).
+
 ## Sampled ITRS LOS angular-rate gate
 
 The optional `optical_tracking_rates[]` scenario contract applies per-head
