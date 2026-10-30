@@ -31,7 +31,7 @@ cargo clippy -p ntarlink-optical-pat --all-targets -- -D warnings
 resource per optical head, with nonpreemptive earliest-start/link-ID priority.
 This is not physical pointing-angle validation, optical power or detector
 budget, spacecraft attitude/thermal constraints, probabilistic acquisition,
-tracking degradation, recovery from mid-contact faults, or measured Starlink
+tracking degradation, autonomous recovery from unmodeled faults, or measured Starlink
 laser behavior. The planner now has an **opt-in** bridge to the Rust packet runtime:
 `optical_pat[]` in a scheduled-contact scenario declares directed optical
 links, endpoint-owned head identifiers, and dwell assumptions. The runtime
@@ -47,7 +47,15 @@ cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-acquisition.json --j
 ```
 
 The bridge is deterministic **offline planning**, not a live optical PHY,
-actual optical bearer, attitude/pointing model, or fault-driven reacquisition.
+actual optical bearer or attitude/pointing model. Existing scenario
+`faults[]` down/up events on PAT-enabled optical links now split geometric
+contacts into administrative-up segments before planning: down releases both
+heads, up requires a fresh slew/acquisition dwell, and any competing contact
+may reserve the released heads. Planned loss at a down transition carries
+`administrative_link_down`; actual packet/control events remain distinct.
+This is preplanned deterministic fault/recovery behavior, not detection of
+unmodeled tracking loss or a calibrated optical PHY. Run
+`scenarios/optical-pat-link-fault.json` to exercise a mid-contact outage.
 The existing completion-after-departure packet policy applies at contact
 expiry. `AcquiredWindow` gates modeled packet forwarding only; SYS-02
 availability and physical laser constraints remain future work. Sorting costs O(N log N), with

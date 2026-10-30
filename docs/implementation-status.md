@@ -292,6 +292,33 @@ admitted before contact expiry finish under the existing P0 completion policy.
 Unconfigured scenarios retain legacy behavior. See
 [SYS-03 crate documentation](../systems/space-network/README.md).
 
+## SYS-03 optical PAT reacquisition after link faults
+
+For PAT-enabled directed optical ISLs, the existing scenario `faults[]`
+administrative down/up events now partition each geometric visibility contact
+into half-open availability intervals before offline PAT planning. A down event
+ends any tracking interval and releases both optical-head reservations; an up
+event creates a new acquisition candidate that must complete the configured
+slew and acquisition dwell before packets can enter the link. Other optical
+links may acquire a released head during the outage. At equal timestamps,
+faults retain the packet scheduler's original scenario ordering.
+
+The packet runtime still executes the original administrative fault events,
+so the resulting acquired windows and the link administrative gate must both
+permit forwarding. The report distinguishes planned PAT loss with reason
+`administrative_link_down` from actual `link_down` and `contact_close`
+control events. Route updates continue to use the configured controller delay.
+Split contacts reanchor both endpoints of any sampled geometric delay series.
+The reproducible `scenarios/optical-pat-link-fault.json` fixture and Rust
+contract tests cover reacquisition, forwarding suppression, delay samples and
+deterministic packet accounting.
+
+This is deterministic **preplanned fault handling**, not detection of
+unmodeled tracking degradation, autonomous recovery policy, optical power
+or pointing physics. The P0 completion-after-departure policy still applies
+to packets already admitted when a fault occurs. PAT-disabled links retain
+their existing administrative fault behavior.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
