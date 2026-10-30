@@ -48,7 +48,12 @@ class VerifiedCatalogTests(unittest.TestCase):
             with self.subTest(target=target):
                 path = self.config_path if target == "config" else self.manifest_path
                 original = path.read_bytes()
-                path.write_bytes(original + b" ")
+                if target == "config":
+                    path.write_bytes(original + b" ")
+                else:
+                    altered = json.loads(original)
+                    altered["orbit_config_sha256"] = "0" * 64
+                    path.write_text(json.dumps(altered))
                 with patch("ntarlink_orbital.sgp4_scale_benchmark_suite._run_worker") as worker:
                     with self.assertRaises(ValueError):
                         run_suite(self.config_path, 1, 2, 1, "unique", self.manifest_path)
