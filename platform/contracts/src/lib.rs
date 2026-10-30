@@ -876,13 +876,17 @@ impl Scenario {
                     (pat.to_head.as_str(), sample.to_max_off_axis_deg),
                 ] {
                     if !limit.is_finite() || !(0.0..=180.0).contains(&limit) {
-                        return Err(format!("invalid optical ITRS sample steering limit: {head}"));
+                        return Err(format!(
+                            "invalid optical ITRS sample steering limit: {head}"
+                        ));
                     }
                     if limits
                         .insert(head, limit)
                         .is_some_and(|previous| previous != limit)
                     {
-                        return Err(format!("inconsistent optical ITRS sample head limit: {head}"));
+                        return Err(format!(
+                            "inconsistent optical ITRS sample head limit: {head}"
+                        ));
                     }
                 }
             }
