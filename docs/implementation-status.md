@@ -1,5 +1,21 @@
 # Implementation status and current fidelity
 
+## Optional sampled body-attitude angular-rate guard
+
+SYS-02 sampled body-to-ITRS head attitude inputs now accept an opt-in,
+nonnegative `max_body_attitude_rate_deg_per_s` per head. The offline adapter
+rejects adjacent shortest-arc quaternion SLERP segments whose implied
+constant angular rate exceeds the configured limit, including when compiling
+SGP4 observations for Rust-native optical steering. The SHA-256-bound
+manifest reports per-head peak modeled angular rate and the optional cap.
+Python contract tests cover boundaries, quaternion hemisphere equivalence,
+tiny rotations, invalid limits, deterministic output and failed-compile
+atomicity. Existing Rust SGP4-to-PAT acceptance remains enabled.
+
+This is a **modeled body-attitude input guard**, not an actuator or
+continuous dynamics model. It does not limit optical head gimbal motion,
+change PAT acquisition time or guarantee physical tracking between samples.
+
 ## SGP4/ITRS and sampled attitude to Rust-native steering
 
 The optional `--native-steering-probes-per-contact` mode compiles real
