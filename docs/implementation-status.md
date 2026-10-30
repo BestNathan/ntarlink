@@ -319,6 +319,24 @@ or pointing physics. The P0 completion-after-departure policy still applies
 to packets already admitted when a fault occurs. PAT-disabled links retain
 their existing administrative fault behavior.
 
+## SYS-02 optical-head availability gating
+
+The new `ntarlink-spacecraft` Rust crate indexes per-head half-open outage
+intervals, supplied as optional `optical_head_outages[]` in a scheduled PAT
+scenario. Validation rejects unknown spacecraft-owned PAT heads, invalid or
+overlapping intervals, and excessive input. Before SYS-03 acquisition, the
+packet runtime intersects both endpoint heads' availability with geometric
+and administrative-up windows. A head outage releases tracking and requires
+fresh acquisition after recovery, even while geometric visibility persists.
+PAT loss is labeled `optical_head_unavailable`; delayed route convergence,
+packet gating, deterministic reports and sampled-delay clipping are preserved.
+
+`scenarios/optical-head-outage.json` provides a cross-subsystem test with
+a 50-70 ms head outage, 90 ms reacquisition, and forwarding suppression
+during the outage. The model is **preplanned availability**, not a pointing
+envelope, spacecraft power/thermal budget, measured head health or a laser
+PHY. Existing in-flight packet completion semantics remain unchanged.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
