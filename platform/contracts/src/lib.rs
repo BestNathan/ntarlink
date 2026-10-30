@@ -442,7 +442,10 @@ impl Scenario {
                 || pat.slew_ns.checked_add(pat.acquisition_ns).is_none()
                 || !pat_links.insert(&pat.link_id)
             {
-                return Err(format!("invalid or duplicate optical PAT link: {}", pat.link_id));
+                return Err(format!(
+                    "invalid or duplicate optical PAT link: {}",
+                    pat.link_id
+                ));
             }
             let link = self
                 .links
@@ -450,7 +453,10 @@ impl Scenario {
                 .find(|link| link.id == pat.link_id)
                 .ok_or_else(|| format!("unknown optical PAT link: {}", pat.link_id))?;
             if link.kind != LinkKind::OpticalIsl || !windows.contains_key(link.id.as_str()) {
-                return Err(format!("optical PAT requires geometric ISL contacts: {}", link.id));
+                return Err(format!(
+                    "optical PAT requires geometric ISL contacts: {}",
+                    link.id
+                ));
             }
             for (head, satellite) in [(&pat.from_head, &link.from), (&pat.to_head, &link.to)] {
                 if let Some(owner) = head_owners.insert(head.as_str(), satellite.as_str()) {
