@@ -191,7 +191,8 @@ def compile_optical_geometry(scenario: dict, orbit: dict, attitude: dict, positi
     """Compile one immutable ITRS pointing snapshot per PAT geometric contact."""
     if scenario.get("schema_version") != 1 or scenario.get("contact_mode") != "scheduled":
         raise ValueError("requires schema_version 1 scheduled-contact scenario")
-    if scenario.get("optical_geometry") or scenario.get("optical_pointing"):
+    if (scenario.get("optical_geometry") or scenario.get("optical_pointing")
+            or scenario.get("optical_steering_samples")):
         raise ValueError("existing optical pointing inputs cannot be overwritten")
     duration = scenario.get("duration_ns")
     if type(duration) is not int or duration <= 0:
@@ -378,6 +379,9 @@ def main(argv=None):
     probe_options.add_argument("--runtime-pointing-probes-per-contact", type=int,
                                choices=(1, 3, 7),
                                help="Compile sampled steering loss/recovery into PAT link faults")
+    probe_options.add_argument("--native-steering-probes-per-contact", type=int,
+                               choices=(1, 3, 7),
+                               help="Compile SGP4/ITRS and sampled attitude into Rust-native steering observations")
     args = parser.parse_args(argv)
     inputs = [args.scenario, args.orbit_config, args.attitude_config]
     manifest_path = Path(str(args.out) + ".optical-manifest.json")
@@ -398,6 +402,13 @@ def main(argv=None):
             scenario, compiled, provider, args.runtime_pointing_probes_per_contact,
             attitude,
         )
+    native_plan = None
+    if args.native_steering_probes_per_contact is not None:
+        from .optical_native_steering import compile_native_steering
+        compiled, native_plan = compile_native_steering(
+            scenario, compiled, provider, args.native_steering_probes_per_contact,
+            attitude,
+        )
     output = (json.dumps(compiled, indent=2, allow_nan=False) + "\n").encode()
     manifest = {
         "schema_version": 1,
@@ -408,16 +419,19 @@ def main(argv=None):
         "orbit_input_sha256": hashlib.sha256(orbit_bytes).hexdigest(),
         "attitude_input_sha256": hashlib.sha256(attitude_bytes).hexdigest(),
         "frame": "ITRS", "time_scale": "UTC", "epoch_utc": orbit["epoch_utc"],
-        "snapshot_count": len(compiled["optical_geometry"]),
+        "snapshot_count": len(compiled.get("optical_geometry", [])),
+        "steering_sample_count": len(compiled.get("optical_steering_samples", [])),
+        "native_steering_plan": native_plan,
         "attitude_model": attitude["attitude_model"],
         "pointing_probe_audit": audit,
         "pointing_tracking_plan": tracking_plan,
         "earth_orientation": getattr(provider, "earth_orientation", {"mode": "external_provider"}),
-        "limitations": "operator-supplied body-to-ITRS attitude; finite sampled fault edges are administrative PAT transitions, not continuous tracking, physical steering or optical PHY",
+        "limitations": "operator-supplied body-to-ITRS attitude and finite ITRS samples; no continuous tracking, physical steering or optical PHY",
     }
     _atomic_write(args.out, output)
     _atomic_write(manifest_path, (json.dumps(manifest, indent=2, allow_nan=False) + "\n").encode())
-    print(f"compiled {manifest['snapshot_count']} SGP4 ITRS optical snapshots to {args.out}")
+    print(f"compiled {manifest['snapshot_count']} ITRS snapshots and "
+          f"{manifest['steering_sample_count']} steering samples to {args.out}")
 
 
 if __name__ == "__main__":
