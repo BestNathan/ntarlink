@@ -210,8 +210,6 @@ def main(argv=None) -> None:
         from .sgp4_scale_benchmark import benchmark
 
         source = args.orbit_config.resolve()
-        _validate_workload(source, args.satellites, args.samples_per_satellite, 1,
-                           args.catalog_mode)
         if args.catalog_manifest is not None:
             if args.catalog_mode != "unique":
                 raise ValueError("catalog manifest requires unique catalog mode")
@@ -219,6 +217,8 @@ def main(argv=None) -> None:
         else:
             config = json.loads(source.read_text(encoding="utf-8"))
             manifest_digest = None
+        _validate_workload(source, args.satellites, args.samples_per_satellite, 1,
+                           args.catalog_mode)
         output = benchmark(config, args.satellites, args.samples_per_satellite,
                            source.parent, args.catalog_mode)
         output["catalog_manifest_sha256"] = manifest_digest
