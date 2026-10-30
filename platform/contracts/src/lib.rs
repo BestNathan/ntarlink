@@ -126,6 +126,18 @@ pub struct AccessBeam {
     pub bearers: Vec<BeamBearer>,
 }
 
+/// Opt-in deterministic PAT acquisition assumptions for a directed optical ISL.
+/// Optical head identifiers are exclusive resources owned by their endpoint satellite.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalPatLink {
+    pub link_id: String,
+    pub from_head: String,
+    pub to_head: String,
+    pub slew_ns: u64,
+    pub acquisition_ns: u64,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContactMode {
@@ -154,6 +166,9 @@ pub struct Scenario {
     /// Optional uplink beam-frame MAC; links not listed retain legacy packet transport.
     #[serde(default)]
     pub access_beams: Vec<AccessBeam>,
+    /// Opt-in PAT gating for geometric optical contacts; absent means legacy behavior.
+    #[serde(default)]
+    pub optical_pat: Vec<OpticalPatLink>,
 }
 
 impl Scenario {
@@ -409,6 +424,42 @@ impl Scenario {
                 }
             }
         }
+        if self.optical_pat.len() > 10_000 {
+            return Err("optical PAT link limit exceeded".into());
+        }
+        if !self.optical_pat.is_empty() && self.contact_mode != ContactMode::Scheduled {
+            return Err("optical PAT requires scheduled contact mode".into());
+        }
+        let mut pat_links = HashSet::new();
+        let mut head_owners: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        for pat in &self.optical_pat {
+            if pat.link_id.trim().is_empty()
+                || pat.from_head.trim().is_empty()
+                || pat.to_head.trim().is_empty()
+                || pat.from_head == pat.to_head
+                || pat.acquisition_ns == 0
+                || pat.slew_ns.checked_add(pat.acquisition_ns).is_none()
+                || !pat_links.insert(&pat.link_id)
+            {
+                return Err(format!("invalid or duplicate optical PAT link: {}", pat.link_id));
+            }
+            let link = self
+                .links
+                .iter()
+                .find(|link| link.id == pat.link_id)
+                .ok_or_else(|| format!("unknown optical PAT link: {}", pat.link_id))?;
+            if link.kind != LinkKind::OpticalIsl || !windows.contains_key(link.id.as_str()) {
+                return Err(format!("optical PAT requires geometric ISL contacts: {}", link.id));
+            }
+            for (head, satellite) in [(&pat.from_head, &link.from), (&pat.to_head, &link.to)] {
+                if let Some(owner) = head_owners.insert(head.as_str(), satellite.as_str()) {
+                    if owner != satellite {
+                        return Err(format!("optical head shared across satellites: {head}"));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -419,6 +470,34 @@ mod tests {
 
     fn fixture() -> String {
         include_str!("../../../scenarios/minimal.json").to_string()
+    }
+
+    #[test]
+    fn optical_pat_requires_scheduled_geometric_isl_and_valid_heads() {
+        let mut s = Scenario::from_json(&fixture()).unwrap();
+        s.optical_pat.push(OpticalPatLink {
+            link_id: "isl-a-b".into(),
+            from_head: "sat-a/head-1".into(),
+            to_head: "sat-b/head-1".into(),
+            slew_ns: 10,
+            acquisition_ns: 20,
+        });
+        assert!(s.validate().unwrap_err().contains("scheduled"));
+        s.contact_mode = ContactMode::Scheduled;
+        assert!(s.validate().unwrap_err().contains("geometric"));
+        s.contacts.push(ContactWindow {
+            link_id: "isl-a-b".into(),
+            start_ns: 0,
+            end_ns: 100,
+            propagation_delay_ns: None,
+            propagation_delay_samples: vec![],
+        });
+        s.validate().unwrap();
+        s.optical_pat[0].acquisition_ns = 0;
+        assert!(s.validate().is_err());
+        s.optical_pat[0].acquisition_ns = 20;
+        s.optical_pat.push(s.optical_pat[0].clone());
+        assert!(s.validate().unwrap_err().contains("duplicate"));
     }
 
     #[test]
