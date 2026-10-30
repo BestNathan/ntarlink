@@ -101,7 +101,7 @@ class Sgp4ScaleBenchmarkTests(unittest.TestCase):
     def test_linux_current_rss_parser_fails_closed(self):
         with patch("ntarlink_orbital.sgp4_scale_benchmark.sys.platform", "linux"):
             with patch("ntarlink_orbital.sgp4_scale_benchmark.Path.read_text",
-                       return_value="Name:\\tpython\\nVmRSS:\\t42 kB\\n"):
+                       return_value="Name: python" + chr(10) + "VmRSS: 42 kB"):
                 self.assertEqual(_current_rss_bytes(), 42 * 1024)
             for content in ("VmRSS: 42 MB", "VmRSS: nonsense kB",
                             "VmRSS: -1 kB", "Name: python"):
