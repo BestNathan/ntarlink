@@ -710,16 +710,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
-    steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| Fault {
-        at_ns: sample.at_ns,
-        link_id: sample.link_id.clone(),
-        action: if geometry_pointing_allowed(sample) {
-            LinkAction::Up
-        } else {
-            LinkAction::Down
-        },
-        cause: FaultCause::SampledPointing,
-    }));
+    steering_faults.extend(
+        scenario
+            .optical_geometry_samples
+            .iter()
+            .map(|sample| Fault {
+                at_ns: sample.at_ns,
+                link_id: sample.link_id.clone(),
+                action: if geometry_pointing_allowed(sample) {
+                    LinkAction::Up
+                } else {
+                    LinkAction::Down
+                },
+                cause: FaultCause::SampledPointing,
+            }),
+    );
 
     // Administrative and sampled-pointing faults are independent state domains.
     // Fold all edges at the same timestamp before evaluating effective availability:
