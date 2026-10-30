@@ -1,3 +1,29 @@
+## Rust-native time-indexed ITRS optical pointing observations
+
+SYS-02 now accepts opt-in `optical_geometry_samples[]` with frame-tagged
+ITRS Cartesian satellite positions (meters) and optical boresight vectors
+(dimensionless), sampled in scenario-relative nanoseconds. Rust evaluates
+reciprocal line-of-sight steering feasibility at each supplied timestamp and
+holds that boolean state until the next sample on the same link. SYS-03
+consumes the resulting typed sampled-pointing state transitions, independently
+of administrative faults, releasing exclusive optical heads on loss and
+requiring fresh PAT acquisition after effective recovery. The packet runtime
+and delayed control-plane routing consume the resulting acquired windows.
+
+Validation requires one initial t=0 observation per PAT link, strictly
+increasing in-horizon timestamps, finite and nondegenerate ITRS geometry,
+consistent per-head limits, and at most 10,000 observations. It rejects
+mixing other pointing modes or preplanned sampled-pointing faults. The
+`scenarios/optical-native-itrs-samples.json` fixture and CI acceptance
+cover pointing loss, overlapping administrative outages, reacquisition,
+deterministic packet traces and packet conservation.
+
+**Fidelity:** these are operator-supplied discrete ITRS observations, not
+Rust-native SGP4 propagation, body-to-ITRS attitude dynamics, continuous
+line-of-sight certification or calibrated optical PHY. Existing angle-sample
+and fixed-contact geometry modes remain backward compatible. The sample
+budget is bounded; no constellation-scale benchmark is claimed.
+
 # Implementation status and current fidelity
 
 ## Optional sampled body-attitude angular-rate guard
