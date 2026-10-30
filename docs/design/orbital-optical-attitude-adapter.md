@@ -65,6 +65,61 @@ to the orbital `epoch_utc` (UTC), and the Skyfield provider resolves
 positions only at microsecond-aligned timestamps. TEME is never treated
 as ITRS.
 
+## Optional time-indexed body-to-ITRS attitude
+
+The adapter also accepts
+`"attitude_model": "sampled_body_to_itrs_quaternion"` instead of
+`fixed_body_to_itrs_quaternion`. Each head then supplies
+`attitude_samples` instead of the single fixed quaternion:
+
+```json
+{
+  "frame": "ITRS",
+  "attitude_model": "sampled_body_to_itrs_quaternion",
+  "heads": [{
+    "head_id": "sat-a/head-1",
+    "boresight_body": [1, 0, 0],
+    "max_off_axis_deg": 30,
+    "attitude_samples": [
+      {"at_ns": 0, "body_to_itrs_quaternion_wxyz": [1, 0, 0, 0]},
+      {"at_ns": 100000000, "body_to_itrs_quaternion_wxyz": [0.9961946980917455, 0, 0, 0.08715574274765817]},
+      {"at_ns": 200000000, "body_to_itrs_quaternion_wxyz": [1, 0, 0, 0]}
+    ]
+  }]
+}
+```
+
+Each sample is a unit quaternion in scalar-first `[w,x,y,z]` order,
+representing body-to-ITRS orientation at integer virtual `at_ns`.
+Timestamps are strictly increasing and microsecond-aligned, begin at
+zero, and cover the final representable microsecond of the scenario.
+The final keyframe may equal the exclusive scenario duration. At least
+two samples are required per head and no more than 100,000 across all
+heads. Duplicate timestamps, malformed sample keys, nonfinite or
+non-unit quaternions, missing coverage and mixing fixed/sampled fields
+fail closed.
+
+Between keyframes the adapter uses normalized shortest-arc quaternion
+SLERP, treating `q` and `-q` as equivalent rotations and using
+normalized linear interpolation for nearly identical orientations.
+The interpolated body-to-ITRS rotation is applied to the fixed
+body-frame head boresight. The output retains one ITRS boresight
+snapshot per contact start. With `--pointing-probes-per-contact`, the
+audit also evaluates the interpolated head attitude **at each probe
+time**, alongside freshly propagated SGP4 positions. A sampled attitude
+excursion can therefore fail the audit even if the contact-start
+snapshot passes. The manifest records the chosen `attitude_model`.
+
+This is a deterministic interpolation of **operator-supplied**
+orientation samples, not an attitude dynamics solution, gyro/actuator
+model or certified spacecraft frame. Finite probes cannot establish
+continuous steering feasibility, and the Rust runtime does not consume
+the time-indexed samples or generate mid-contact tracking-loss events.
+For a reproducible integration smoke, use
+`scenarios/optical-sgp4-attitude-sampled.synthetic.json` with the
+existing synthetic two-orbit scenario. No physical steering-rate or
+angular-acceleration constraint is enforced.
+
 ## Optional finite steering-probe gate
 
 With `--pointing-probes-per-contact 1`, `3` or `7`, the compiler
