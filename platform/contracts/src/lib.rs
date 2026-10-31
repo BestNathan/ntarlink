@@ -1439,6 +1439,54 @@ mod tests {
     }
 
     #[test]
+    fn body_frame_tracking_samples_require_valid_vectors_and_contact_coverage() {
+        let baseline = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-tracking-error.json"
+        ))
+        .unwrap();
+        assert!(serde_json::to_string(&baseline)
+            .unwrap()
+            .contains("optical_body_tracking_samples"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_body_tracking_samples[1].frame = "ITRS".into();
+        assert!(invalid.validate().unwrap_err().contains("frame or time"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_body_tracking_samples[1].from_boresight_body = [0.0; 3];
+        assert!(invalid.validate().unwrap_err().contains("tracking vector"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_body_tracking_samples[1].from_max_error_deg = f64::NAN;
+        assert!(invalid.validate().unwrap_err().contains("error limit"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_body_tracking_samples[1].at_ns = 0;
+        assert!(invalid.validate().unwrap_err().contains("must increase"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_body_tracking_samples.pop();
+        assert!(invalid.validate().unwrap_err().contains("cover every PAT"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_body_tracking_samples[3].from_target_body = [1.0, 0.0, 0.0];
+        assert!(invalid.validate().unwrap_err().contains("differs from PAT target"));
+
+        let mut invalid = baseline.clone();
+        invalid.optical_head_slew_actuators.clear();
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = baseline.clone();
+        invalid.faults.push(Fault {
+            at_ns: 50_000_000,
+            link_id: "isl-a-b".into(),
+            action: LinkAction::Down,
+            cause: FaultCause::SampledPointing,
+        });
+        assert!(invalid.validate().unwrap_err().contains("cannot mix"));
+    }
+
+    #[test]
     fn body_frame_gimbal_contract_requires_explicit_head_and_contact_coverage() {
         let mut scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-pat-acquisition.json"
