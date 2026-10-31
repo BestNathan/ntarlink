@@ -1,3 +1,20 @@
+## Optional sampled BODY-frame optical tracking error
+
+SYS-02/03 now supports `optical_body_tracking_samples[]` for external
+per-head BODY-frame target and actual boresight observations. Rust computes
+reciprocal angular tracking errors and gates PAT at sample instants.
+The contract requires gimbal actuators, consistent per-head limits and
+sampled targets matching each geometric contact's slew target. A pointing
+loss interrupts Tracking and releases heads; an administrative fault cannot
+independently reopen the link. The synthetic fixture verifies loss at 30 ms,
+recovery at 90 ms, reacquisition at 110 ms, second-contact tracking at
+190 ms, deterministic packet traces and conservation. See
+[design](design/optical-body-frame-tracking-error.md).
+
+**Fidelity:** externally supplied finite samples held between observations,
+not a closed-loop servo, inferred gimbal boresight or continuous pointing
+bound. No physical calibration or constellation-scale benchmark is claimed.
+
 ## Optional post-slew optical-head settling dwell
 
 SYS-02/03 now supports an opt-in `settling_ns` per exclusive body-frame
