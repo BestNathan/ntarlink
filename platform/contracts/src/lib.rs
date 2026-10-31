@@ -167,6 +167,9 @@ pub struct OpticalHeadSlewActuator {
     /// Optional rest-to-rest acceleration cap, in degrees per second squared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_slew_acceleration_deg_per_s2: Option<f64>,
+    /// Optional deterministic settling dwell after a nonzero retarget, in nanoseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settling_ns: Option<u64>,
 }
 
 /// Fixed body-frame gimbal target for a geometric optical contact.
@@ -1341,12 +1344,14 @@ mod tests {
                 initial_direction_body: [1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
                 max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
             },
             OpticalHeadSlewActuator {
                 head_id: "sat-b/head-1".into(),
                 initial_direction_body: [-1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
                 max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
             },
         ];
         scenario.optical_pat_slew_targets = vec![
@@ -1400,6 +1405,19 @@ mod tests {
             .unwrap_err()
             .contains("invalid body-frame gimbal actuator"));
         scenario.optical_head_slew_actuators[0].max_slew_acceleration_deg_per_s2 = Some(200_000.0);
+        scenario.optical_head_slew_actuators[0].settling_ns = Some(15_000_000);
+        scenario.validate().unwrap();
+        assert!(serde_json::to_string(&scenario)
+            .unwrap()
+            .contains("\"settling_ns\":15000000"));
+        scenario.optical_head_slew_actuators[0].settling_ns = None;
+        assert!(!serde_json::to_string(&scenario)
+            .unwrap()
+            .contains("\"settling_ns\""));
+        assert!(serde_json::from_str::<OpticalHeadSlewActuator>(
+            r#"{"head_id":"x","initial_direction_body":[1,0,0],"max_slew_rate_deg_per_s":1,"settling_ns":-1}"#
+        )
+        .is_err());
         scenario.validate().unwrap();
         scenario.optical_head_slew_actuators[0].head_id = "missing".into();
         assert!(scenario.validate().is_err());

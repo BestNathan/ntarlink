@@ -707,6 +707,11 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "description": "Optional rest-to-rest angular acceleration bound in degrees per second squared."
+        },
+        "settling_ns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional post-motion settling dwell in virtual nanoseconds, applied only to nonzero body-frame retargeting before PAT acquisition."
         }
       }
     },

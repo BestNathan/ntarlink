@@ -70,6 +70,25 @@ jobs:
           assert report["injected"] == report["delivered"] + report["dropped"], report
           print("Acceleration-limited PAT:", tracking, report["delivered"], "delivered")
           PY
+      - name: Verify body-frame gimbal settling gates PAT and packet forwarding
+        run: |
+          python3 -m json.tool scenarios/optical-body-frame-gimbal-settling.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-body-frame-gimbal-settling.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-gimbal-settling.json --json > /tmp/ntarlink-gimbal-settling.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-gimbal-settling.json --json > /tmp/ntarlink-gimbal-settling-repeat.json
+          cmp /tmp/ntarlink-gimbal-settling.json /tmp/ntarlink-gimbal-settling-repeat.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/ntarlink-gimbal-settling.json"))
+          tracking = [event["at_ns"] for event in report["pat_events"] if event["state"] == "tracking"]
+          assert tracking == [20_000_000, 190_000_000], tracking
+          hops = [hop for packet in report["packets"] for hop in packet["hops"] if hop["link_id"] == "isl-a-b"]
+          assert hops and all(20_000_000 <= hop["transmit_started_ns"] < 120_000_000 or 190_000_000 <= hop["transmit_started_ns"] < 260_000_000 for hop in hops), hops
+          assert any(hop["transmit_started_ns"] >= 190_000_000 for hop in hops), hops
+          assert report["delivered"] > 0 and report["dropped"] > 0, report
+          assert report["injected"] == report["delivered"] + report["dropped"], report
+          print("Settling-aware PAT:", tracking, report["delivered"], "delivered")
+          PY
       - name: Verify optical PAT fault releases and reacquires tracking
         run: |
           python3 -m json.tool scenarios/optical-pat-link-fault.json > /dev/null
