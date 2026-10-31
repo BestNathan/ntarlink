@@ -39,6 +39,22 @@ jobs:
           python3 -m json.tool scenarios/optical-pat-acquisition.json > /dev/null
           cargo run -p ntarlink-cli -- simulate scenarios/optical-pat-acquisition.json --json > /tmp/ntarlink-pat-report.json
           python3 -c 'import json; r=json.load(open("/tmp/ntarlink-pat-report.json")); t=[e["at_ns"] for e in r["pat_events"] if e["state"]=="tracking"]; assert t==[20000000,140000000], t; assert r["delivered"]>0 and r["dropped"]>0 and r["injected"]==r["delivered"]+r["dropped"], r; h=[h for p in r["packets"] for h in p["hops"] if h["link_id"]=="isl-a-b"]; assert h and all(20000000<=v["transmit_started_ns"]<120000000 or 140000000<=v["transmit_started_ns"]<200000000 for v in h), h; print("PAT packet gate:",r["delivered"],"delivered,",r["dropped"],"dropped")'
+      - name: Verify body-frame gimbal slew delays PAT and packet forwarding
+        run: |
+          python3 -m json.tool scenarios/optical-body-frame-gimbal-slew.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-body-frame-gimbal-slew.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-gimbal-slew.json --json > /tmp/ntarlink-gimbal-slew.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/ntarlink-gimbal-slew.json"))
+          tracking = [event["at_ns"] for event in report["pat_events"] if event["state"] == "tracking"]
+          assert tracking == [20_000_000, 160_000_000], tracking
+          hops = [hop for packet in report["packets"] for hop in packet["hops"] if hop["link_id"] == "isl-a-b"]
+          assert hops and all(20_000_000 <= hop["transmit_started_ns"] < 120_000_000 or 160_000_000 <= hop["transmit_started_ns"] < 200_000_000 for hop in hops), hops
+          assert report["delivered"] > 0 and report["dropped"] > 0, report
+          assert report["injected"] == report["delivered"] + report["dropped"], report
+          print("Body-frame gimbal PAT:", tracking, report["delivered"], "delivered")
+          PY
       - name: Verify optical PAT fault releases and reacquires tracking
         run: |
           python3 -m json.tool scenarios/optical-pat-link-fault.json > /dev/null

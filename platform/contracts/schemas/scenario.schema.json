@@ -141,6 +141,22 @@
         "$ref": "#/$defs/optical_tracking_acceleration"
       },
       "description": "Optional per-PAT-link sampled ITRS LOS angular-acceleration limits (degrees per second squared). Three observations are required; not a spacecraft-body gimbal actuator."
+    },
+    "optical_head_slew_actuators": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_head_slew_actuator"
+      },
+      "description": "Optional complete set of exclusive PAT-head constant-rate body-frame slew actuators with explicit initial pointing. Requires a target for every PAT contact; not an acceleration/servo model."
+    },
+    "optical_pat_slew_targets": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_pat_slew_target"
+      },
+      "description": "Optional fixed body-frame target directions at each geometric PAT contact start. Reused through fault-split recovery; not ephemeris-derived."
     }
   },
   "$defs": {
@@ -664,6 +680,58 @@
           "type": "number",
           "minimum": 0,
           "maximum": 180
+        }
+      }
+    },
+    "optical_head_slew_actuator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head_id",
+        "initial_direction_body",
+        "max_slew_rate_deg_per_s"
+      ],
+      "properties": {
+        "head_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "initial_direction_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "max_slew_rate_deg_per_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "optical_pat_slew_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "at_ns",
+        "frame",
+        "from_target_body",
+        "to_target_body"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame": {
+          "const": "BODY"
+        },
+        "from_target_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "to_target_body": {
+          "$ref": "#/$defs/vector3"
         }
       }
     }

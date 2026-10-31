@@ -1,3 +1,21 @@
+## Optional body-frame optical-head slew actuator scheduling
+
+SYS-02/03 now supports opt-in `optical_head_slew_actuators[]` and
+`optical_pat_slew_targets[]` for every exclusive PAT head and geometric
+contact. The Rust planner computes per-head shortest-arc body-frame target
+travel at a configured constant angular rate, waits for shared-head
+availability, and uses the greater of dynamic travel and existing fixed
+slew dwell before acquisition. Fault-split segments inherit the contact
+target; rejected contacts do not move actuator state. The synthetic
+packet scenario demonstrates a 90-degree retarget delaying the second
+contact's tracking to 160 ms, with suppressed pre-acquisition forwarding
+and deterministic packet accounting.
+
+**Fidelity:** supplied constant body-frame targets and a zero-ramp
+kinematic travel-time assumption, not continuous attitude dynamics,
+acceleration-limited motor control, tracking-error feedback or optical PHY.
+See [design](design/optical-body-frame-gimbal-slew.md).
+
 ## Optional Rust-native sampled ITRS LOS angular-acceleration gate
 
 SYS-02 now accepts independent `optical_tracking_accelerations[]` limits
