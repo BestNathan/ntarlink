@@ -465,7 +465,7 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"]
           print("Native ITRS PAT:", tracking, r["delivered"], "delivered")
           PY
-          python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json scenarios/optical-sgp4-attitude-tracking.synthetic.json --native-itrs-probes-per-contact 3 --native-itrs-max-body-los-rate-deg-per-s 1000000 --out /tmp/real-sgp4-native-itrs.json
+          python -m ntarlink_orbital.optical_geometry scenarios/optical-sgp4-attitude.json scenarios/optical-sgp4-orbits.synthetic.json scenarios/optical-sgp4-attitude-tracking.synthetic.json --native-itrs-probes-per-contact 3 --native-itrs-max-body-los-rate-deg-per-s 1000000 --native-itrs-max-body-los-accel-deg-per-s2 1000000000000 --out /tmp/real-sgp4-native-itrs.json
           cargo run -p ntarlink-cli -- validate /tmp/real-sgp4-native-itrs.json
           cargo run -p ntarlink-cli -- simulate /tmp/real-sgp4-native-itrs.json --json > /tmp/real-sgp4-native-itrs-report.json
           python3 - <<'PY'
@@ -483,6 +483,12 @@ jobs:
           assert audit["reference_frame"] == "spacecraft_body"
           assert audit["max_body_los_rate_deg_per_s"] == 1000000
           assert len(audit["peak_sampled_rate_by_head_deg_per_s"]) == 2
+          acceleration = manifest["native_itrs_plan"]["body_los_acceleration_audit"]
+          assert acceleration["reference_frame"] == "spacecraft_body"
+          assert acceleration["max_body_los_accel_deg_per_s2"] == 1000000000000
+          assert len(acceleration["peak_sampled_acceleration_by_head_deg_per_s2"]) == 2
+          assert all(0 <= head["peak_acceleration_deg_per_s2"] < 1000000000000
+                     for head in acceleration["peak_sampled_acceleration_by_head_deg_per_s2"])
           assert report["injected"] == report["delivered"] + report["dropped"]
           print("Production SGP4 native ITRS:", manifest["geometry_sample_count"], "observations")
           PY
