@@ -5,6 +5,23 @@ previous actuator state and target commands instead of trusting externally
 supplied boresight. It is a sampled rest-to-rest target follower, not a
 closed-loop servo, calibrated torque model or continuous pointing proof.
 
+## Shared virtual-time command execution
+
+Both the provisional follower pass and the later lease-checked replay now use
+one packet-adapter executor over SYS-03's canonical Release, Reserve and Sample
+event sequence. The provisional pass has no reservations and yields sampled
+success/error observations plus immutable per-head boundary projections for
+PAT planning. After planning, the same executor replays the accepted half-open
+reservations, compares full observation results, and rejects endpoint or lease
+mismatches. All configured reservation and sampled-link identities are
+preflighted before SYS-02 state mutation. Equal-time ordering remains
+Release, Reserve, Sample, including fault-gap target updates and exact handoff.
+
+This unifies command application, **not** actuator state across the two passes.
+PAT still requires provisional future observations before it can plan its
+reservations. No live feedback, shared-head predicted arbitration or continuous
+servo model is implied.
+
 ## Contract and reference frame
 
 `optical_body_following_samples[]` supplies ordered target commands for each

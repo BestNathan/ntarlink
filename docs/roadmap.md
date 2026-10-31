@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Consolidate provisional and leased SYS-02 head-command application into one canonical SYS-03 event executor with fail-closed endpoint preflight and result parity regression; still two offline executions, not single-pass arbitration. See [status](implementation-status.md).
+
 - [x] Preflight every accepted PAT reservation against the configured link and ordered head pair, even without sampled commands; reject unknown links and swapped endpoints before offline lease replay. See [status](implementation-status.md).
 
 - [x] Project active half-open PAT lease ownership onto each canonical sampled command, remove the packet adapter's duplicate active-link tracker, and reject mismatched link/head pairing during replay; still offline two-pass execution, not live arbitration. See [status](implementation-status.md).
