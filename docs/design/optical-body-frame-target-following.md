@@ -82,8 +82,9 @@ reacquisition, forwarding windows and packet conservation.
 
 The per-head runtime now supports an atomic link-scoped pair lease. The
 packet adapter supplies the PAT link ID when committing each predicted sample.
-A different link cannot command a leased head, and unscoped single/pair
-commands cannot bypass an active lease. Invalid commands, partial releases
+A different link cannot command a leased head, a link cannot silently swap
+its leased endpoint pair, and unscoped single/pair commands cannot bypass an
+active lease. Invalid commands, partial releases
 and wrong-owner releases leave both actuator histories and leases intact.
 An explicit paired release preserves boresight and target state for later
 retargeting by another link. Standalone unleased APIs remain supported.
