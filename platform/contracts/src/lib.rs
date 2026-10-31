@@ -1407,9 +1407,13 @@ mod tests {
         scenario.optical_head_slew_actuators[0].max_slew_acceleration_deg_per_s2 = Some(200_000.0);
         scenario.optical_head_slew_actuators[0].settling_ns = Some(15_000_000);
         scenario.validate().unwrap();
-        assert!(serde_json::to_string(&scenario).unwrap().contains("\"settling_ns\":15000000"));
+        assert!(serde_json::to_string(&scenario)
+            .unwrap()
+            .contains("\"settling_ns\":15000000"));
         scenario.optical_head_slew_actuators[0].settling_ns = None;
-        assert!(!serde_json::to_string(&scenario).unwrap().contains("\"settling_ns\""));
+        assert!(!serde_json::to_string(&scenario)
+            .unwrap()
+            .contains("\"settling_ns\""));
         assert!(serde_json::from_str::<OpticalHeadSlewActuator>(
             r#"{"head_id":"x","initial_direction_body":[1,0,0],"max_slew_rate_deg_per_s":1,"settling_ns":-1}"#
         )
