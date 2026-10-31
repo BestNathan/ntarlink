@@ -1571,7 +1571,10 @@ mod tests {
         third["id"] = serde_json::json!("isl-c-d");
         third["from"] = serde_json::json!("sat-c");
         third["to"] = serde_json::json!("sat-d");
-        fixture["links"].as_array_mut().unwrap().extend([second, third]);
+        fixture["links"]
+            .as_array_mut()
+            .unwrap()
+            .extend([second, third]);
         let contacts = fixture["contacts"].as_array_mut().unwrap();
         contacts.retain(|contact| contact["link_id"] != "isl-a-b");
         contacts.extend([
@@ -1613,9 +1616,7 @@ mod tests {
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert!(report.pat_events.iter().any(|event| {
-            event.link_id == "isl-c-d"
-                && event.state == "tracking"
-                && event.at_ns == 40_000_000
+            event.link_id == "isl-c-d" && event.state == "tracking" && event.at_ns == 40_000_000
         }));
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
