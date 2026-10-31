@@ -1,3 +1,24 @@
+## Explicit SYS-03 optical-head reservation timeline
+
+SYS-03 now returns a typed `PatReservation` for every successfully
+acquired candidate, recording the link, both exclusive head IDs, and the
+half-open interval from actual head availability through geometric contact
+end. Reservations include slew, settling and acquisition dwell; they are
+distinct from the later packet-forwarding `AcquiredWindow`. A rejected
+candidate produces no reservation. Deterministic planner regressions cover
+shared-head waits, rejection without resource leakage, simultaneous
+independent heads and same-time release/reacquisition. A packet-runtime
+regression compares reservations and admitted forwarding windows for a
+two-contact PAT fixture, including packet conservation.
+
+**Boundary and cost:** The reservation vector adds O(A) storage and
+O(A log A) ordering for A accepted candidates. This exposes the exact
+SYS-03 ownership intervals needed for a later SYS-02 lease bridge; the
+packet adapter does not yet consume these intervals to release
+`BodyHeadRuntime` command leases. Predicted shared-head streams remain
+disallowed. No continuous servo, calibrated PHY or new packet admission
+behavior is claimed. See [design](design/optical-body-frame-target-following.md).
+
 ## Virtual-time optical-head lease handoff barrier
 
 SYS-02 now provides an atomic `release_pair_at(..., at_ns)` operation that

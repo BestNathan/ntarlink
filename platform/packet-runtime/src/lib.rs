@@ -1375,6 +1375,54 @@ mod tests {
     }
 
     #[test]
+    fn pat_head_reservations_cover_pretracking_dwell_and_match_packet_windows() {
+        let scenario = pat_fixture();
+        let config = &scenario.optical_pat[0];
+        let candidates: Vec<_> = scenario
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id == config.link_id)
+            .map(|contact| PatCandidate {
+                link_id: contact.link_id.clone(),
+                from_head: config.from_head.clone(),
+                to_head: config.to_head.clone(),
+                start_ns: contact.start_ns,
+                end_ns: contact.end_ns,
+                slew_ns: config.slew_ns,
+                acquisition_ns: config.acquisition_ns,
+            })
+            .collect();
+        let plan = plan_contacts(&candidates).unwrap();
+        assert_eq!(
+            plan.reservations
+                .iter()
+                .map(|reservation| (reservation.start_ns, reservation.end_ns))
+                .collect::<Vec<_>>(),
+            vec![(0, 120_000_000), (120_000_000, 200_000_000)]
+        );
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        let admitted: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id == config.link_id)
+            .map(|contact| (contact.start_ns, contact.end_ns))
+            .collect();
+        assert_eq!(
+            admitted,
+            plan.windows
+                .iter()
+                .map(|window| (window.start_ns, window.end_ns))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            admitted,
+            vec![(20_000_000, 120_000_000), (140_000_000, 200_000_000)]
+        );
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, report.delivered + report.dropped);
+    }
+
+    #[test]
     fn pat_tracking_gates_packets_and_reacquires_after_contact_boundary() {
         let scenario = pat_fixture();
         let report = run(&scenario).unwrap();
