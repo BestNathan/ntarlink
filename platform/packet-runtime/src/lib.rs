@@ -1014,6 +1014,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.optical_steering_samples.clear();
     prepared.optical_geometry_samples.clear();
     prepared.optical_tracking_rates.clear();
+    prepared.optical_tracking_accelerations.clear();
     prepared.optical_geometry.clear();
     let mut events: Vec<PatEventTrace> = plan
         .events
