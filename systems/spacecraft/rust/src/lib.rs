@@ -338,13 +338,19 @@ impl BodyHeadRuntime {
         if link_id.trim().is_empty() {
             return Err("BODY-frame runtime link ID must be nonempty".into());
         }
-        if self.link_heads.get(link_id).is_some_and(|(from, to)| {
-            from != from_head_id || to != to_head_id
-        }) {
+        if self
+            .link_heads
+            .get(link_id)
+            .is_some_and(|(from, to)| from != from_head_id || to != to_head_id)
+        {
             return Err("BODY-frame runtime link cannot change leased endpoints".into());
         }
         for head_id in [from_head_id, to_head_id] {
-            if self.owners.get(head_id).is_some_and(|owner| owner != link_id) {
+            if self
+                .owners
+                .get(head_id)
+                .is_some_and(|owner| owner != link_id)
+            {
                 return Err("BODY-frame runtime head owned by another link".into());
             }
         }
@@ -355,8 +361,10 @@ impl BodyHeadRuntime {
             from_target_body,
             to_target_body,
         )?;
-        self.owners.insert(from_head_id.to_owned(), link_id.to_owned());
-        self.owners.insert(to_head_id.to_owned(), link_id.to_owned());
+        self.owners
+            .insert(from_head_id.to_owned(), link_id.to_owned());
+        self.owners
+            .insert(to_head_id.to_owned(), link_id.to_owned());
         self.link_heads.insert(
             link_id.to_owned(),
             (from_head_id.to_owned(), to_head_id.to_owned()),
@@ -374,9 +382,10 @@ impl BodyHeadRuntime {
     ) -> Result<(), String> {
         if link_id.trim().is_empty()
             || from_head_id == to_head_id
-            || self.link_heads.get(link_id).is_none_or(|(from, to)| {
-                from != from_head_id || to != to_head_id
-            })
+            || self
+                .link_heads
+                .get(link_id)
+                .is_none_or(|(from, to)| from != from_head_id || to != to_head_id)
             || self.owners.get(from_head_id).map(String::as_str) != Some(link_id)
             || self.owners.get(to_head_id).map(String::as_str) != Some(link_id)
         {
@@ -947,9 +956,7 @@ mod tests {
             .observe_pair_for_link("isl-a-b", "a", "c", 1, initial, initial)
             .is_err());
         assert!(runtime.observe("a", 1, initial).is_err());
-        assert!(runtime
-            .observe_pair("a", "b", 1, initial, initial)
-            .is_err());
+        assert!(runtime.observe_pair("a", "b", 1, initial, initial).is_err());
         assert!(runtime.release_pair("isl-a-c", "a", "b").is_err());
         assert!(runtime.release_pair("isl-a-b", "a", "c").is_err());
         assert!(runtime
