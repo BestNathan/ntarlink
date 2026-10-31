@@ -161,11 +161,7 @@ impl BodyHeadFollower {
 
     /// Integrate the previous held command, then latch the new target.
     /// Returns the predicted boresight at the current sample instant.
-    pub fn observe(
-        &mut self,
-        at_ns: u64,
-        target_body: [f64; 3],
-    ) -> Result<[f64; 3], String> {
+    pub fn observe(&mut self, at_ns: u64, target_body: [f64; 3]) -> Result<[f64; 3], String> {
         if at_ns < self.last_at_ns {
             return Err("BODY-frame follower timestamps must increase".into());
         }
@@ -186,7 +182,12 @@ impl BodyHeadFollower {
         }
         let from = self.boresight_body;
         let to = self.held_target_body;
-        let dot = from.iter().zip(to).map(|(a, b)| a * b).sum::<f64>().clamp(-1.0, 1.0);
+        let dot = from
+            .iter()
+            .zip(to)
+            .map(|(a, b)| a * b)
+            .sum::<f64>()
+            .clamp(-1.0, 1.0);
         let tangent = std::array::from_fn::<_, 3, _>(|i| to[i] - from[i] * dot);
         let sine = tangent.iter().map(|v| v * v).sum::<f64>().sqrt();
         let angle_deg = sine.atan2(dot).to_degrees();
@@ -554,7 +555,10 @@ mod tests {
     fn sampled_follower_predicts_lag_and_acceleration_limited_recovery() {
         let mut head = BodyHeadFollower::new([1.0, 0.0, 0.0], 3000.0, Some(200000.0)).unwrap();
         assert_eq!(head.observe(0, [1.0, 0.0, 0.0]).unwrap(), [1.0, 0.0, 0.0]);
-        assert_eq!(head.observe(30_000_000, [0.0, 1.0, 0.0]).unwrap(), [1.0, 0.0, 0.0]);
+        assert_eq!(
+            head.observe(30_000_000, [0.0, 1.0, 0.0]).unwrap(),
+            [1.0, 0.0, 0.0]
+        );
         let halfway = head.observe(60_000_000, [0.0, 1.0, 0.0]).unwrap();
         assert!((halfway[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
         assert!((halfway[1] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
