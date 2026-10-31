@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in sampled BODY-frame per-head predicted target following with rate/acceleration-limited rest-to-rest travel, derived boresight error, PAT reacquisition and synthetic packet CI (not a continuous servo). See [design](design/optical-body-frame-target-following.md).
+
 - [x] Opt-in per-head sampled BODY-frame target angular-rate feasibility gate for observed tracking samples, with independent endpoint slew limits, PAT loss/reacquisition and synthetic packet CI (not inferred boresight or continuous servo tracking). See [design](design/optical-body-frame-tracking-error.md).
 
 - [x] Opt-in sampled BODY-frame target-versus-observed-boresight tracking-error gate for exclusive optical heads, with per-head limits, contact-target consistency, independent administrative faults, PAT reacquisition and synthetic packet CI (external observations, not a servo or continuous tracking guarantee). See [design](design/optical-body-frame-tracking-error.md).

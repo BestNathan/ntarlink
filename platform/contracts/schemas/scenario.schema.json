@@ -165,6 +165,14 @@
         "$ref": "#/$defs/optical_body_tracking_sample"
       },
       "description": "Optional time-indexed BODY-frame target and observed boresight vectors for each PAT link. Requires exclusive-head gimbal actuators and a sample at every contact start; finite sample-and-hold tracking error plus a per-head sampled target angular-rate feasibility gate, not a servo."
+    },
+    "optical_body_following_samples": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_body_following_sample"
+      },
+      "description": "Optional sampled BODY-frame target commands; Rust predicts per-head boresight with bounded rest-to-rest travel. Exclusive with observed tracking and other pointing modes; not a continuous servo."
     }
   },
   "$defs": {
@@ -789,6 +797,48 @@
           "$ref": "#/$defs/vector3"
         },
         "to_boresight_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "from_max_error_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_max_error_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        }
+      }
+    },
+    "optical_body_following_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "at_ns",
+        "frame",
+        "from_target_body",
+        "to_target_body",
+        "from_max_error_deg",
+        "to_max_error_deg"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame": {
+          "const": "BODY"
+        },
+        "from_target_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "to_target_body": {
           "$ref": "#/$defs/vector3"
         },
         "from_max_error_deg": {

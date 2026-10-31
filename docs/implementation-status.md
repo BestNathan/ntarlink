@@ -1,3 +1,21 @@
+## Opt-in sampled BODY-frame predicted target following
+
+SYS-02 accepts `optical_body_following_samples[]` as an alternative to
+externally measured boresight samples. Each exclusive head maintains
+predicted BODY-frame pointing and a held target. At each sample Rust
+advances the head toward the previous target using a rate- and optional
+acceleration-limited rest-to-rest travel budget, latches the new target,
+and evaluates tracking error. Failed samples interrupt PAT; recovery
+requires new slew, settling and acquisition and cannot override an
+administrative outage. The synthetic two-contact fixture checks lag,
+recovery, deterministic traces and packet conservation.
+
+**Fidelity:** sampled zero-velocity-at-boundary approximation, not a
+continuous servo or calibrated motor model. Predicted mode currently
+disallows shared-head command streams. PAT contact-target scheduling and
+follower state remain separate. See
+[design](design/optical-body-frame-target-following.md).
+
 ## Sampled BODY-frame tracking target angular-rate feasibility
 
 SYS-02 now checks consecutive commanded target directions from
