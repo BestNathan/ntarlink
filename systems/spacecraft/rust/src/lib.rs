@@ -1148,7 +1148,9 @@ mod tests {
         let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
         let target = [1.0, 0.0, 0.0];
 
-        runtime.reserve_pair_for_link("first", "a", "b", 100).unwrap();
+        runtime
+            .reserve_pair_for_link("first", "a", "b", 100)
+            .unwrap();
         assert!(runtime
             .observe_pair_for_link("first", "a", "b", 99, target, target)
             .is_err());
