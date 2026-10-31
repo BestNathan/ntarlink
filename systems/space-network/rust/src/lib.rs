@@ -54,6 +54,53 @@ pub struct PatPlan {
     pub events: Vec<PatEvent>,
 }
 
+/// Constant-rate body-frame gimbal slew assumption for one exclusive head.
+/// This is a sampled actuator travel-time model, not a servo or torque model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeadSlewActuator {
+    pub head_id: String,
+    pub initial_direction_body: [f64; 3],
+    pub max_slew_rate_deg_per_s: f64,
+}
+
+/// Fixed body-frame target for one geometric contact or recovered segment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PatSlewTarget {
+    pub link_id: String,
+    pub start_ns: u64,
+    pub from_target_body: [f64; 3],
+    pub to_target_body: [f64; 3],
+}
+
+fn unit_direction(vector: [f64; 3]) -> Option<[f64; 3]> {
+    if vector.iter().any(|value| !value.is_finite() || value.abs() > 1.0e12) {
+        return None;
+    }
+    let norm = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
+    (norm.is_finite() && norm > 0.0).then(|| vector.map(|value| value / norm))
+}
+
+fn slew_time_ns(from: [f64; 3], to: [f64; 3], rate_deg_per_s: f64) -> Result<u64, String> {
+    let from = unit_direction(from).ok_or("invalid initial body-frame gimbal direction")?;
+    let to = unit_direction(to).ok_or("invalid body-frame gimbal target")?;
+    if !rate_deg_per_s.is_finite() || rate_deg_per_s <= 0.0 {
+        return Err("gimbal slew rate must be finite and positive".into());
+    }
+    let cross = [
+        from[1] * to[2] - from[2] * to[1],
+        from[2] * to[0] - from[0] * to[2],
+        from[0] * to[1] - from[1] * to[0],
+    ];
+    let sine = cross.iter().map(|v| v * v).sum::<f64>().sqrt();
+    let cosine = from.iter().zip(to).map(|(a, b)| a * b).sum::<f64>();
+    let angle_deg = sine.atan2(cosine).to_degrees();
+    let time_ns = (angle_deg / rate_deg_per_s * 1.0e9).ceil();
+    if !time_ns.is_finite() || time_ns >= u64::MAX as f64 {
+        return Err("gimbal slew time exceeds virtual-time range".into());
+    }
+    Ok(time_ns as u64)
+}
+
 fn state_order(state: PatState) -> u8 {
     match state {
         PatState::Lost => 0,
@@ -73,6 +120,58 @@ fn state_order(state: PatState) -> u8 {
 /// candidates with insufficient remaining dwell time are rejected. This
 /// models fixed delays, not pointing dynamics, tracking loss or link budget.
 pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
+    plan_contacts_with_slew(candidates, &[], &[])
+}
+
+/// Plan contacts with optional per-head constant-rate body-frame slew.
+/// Target observations are tied to the *candidate* start, including segments
+/// created after a fault. Rejected contacts do not move either actuator.
+pub fn plan_contacts_with_slew(
+    candidates: &[PatCandidate],
+    actuators: &[HeadSlewActuator],
+    targets: &[PatSlewTarget],
+) -> Result<PatPlan, String> {
+    if actuators.is_empty() != targets.is_empty() {
+        return Err("gimbal actuators and contact targets must be configured together".into());
+    }
+    let mut head_rates = HashMap::new();
+    let mut head_directions = HashMap::new();
+    for actuator in actuators {
+        if actuator.head_id.trim().is_empty()
+            || head_rates
+                .insert(actuator.head_id.clone(), actuator.max_slew_rate_deg_per_s)
+                .is_some()
+            || !actuator.max_slew_rate_deg_per_s.is_finite()
+            || actuator.max_slew_rate_deg_per_s <= 0.0
+            || unit_direction(actuator.initial_direction_body).is_none()
+        {
+            return Err("invalid or duplicate body-frame gimbal actuator".into());
+        }
+        head_directions.insert(actuator.head_id.clone(), actuator.initial_direction_body);
+    }
+    let mut target_by_candidate = HashMap::new();
+    for target in targets {
+        if target.link_id.trim().is_empty()
+            || unit_direction(target.from_target_body).is_none()
+            || unit_direction(target.to_target_body).is_none()
+            || target_by_candidate
+                .insert((target.link_id.as_str(), target.start_ns), target)
+                .is_some()
+        {
+            return Err("invalid or duplicate body-frame PAT target".into());
+        }
+    }
+    if !actuators.is_empty()
+        && (targets.len() != candidates.len()
+            || candidates.iter().any(|candidate| {
+                !head_rates.contains_key(&candidate.from_head)
+                    || !head_rates.contains_key(&candidate.to_head)
+                    || !target_by_candidate
+                        .contains_key(&(candidate.link_id.as_str(), candidate.start_ns))
+            }))
+    {
+        return Err("body-frame gimbal configuration must cover all PAT candidates".into());
+    }
     if candidates.len() > MAX_CANDIDATES {
         return Err("PAT candidate budget exceeded".into());
     }
@@ -126,8 +225,30 @@ pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
             .start_ns
             .max(*busy_until.get(candidate.from_head.as_str()).unwrap_or(&0))
             .max(*busy_until.get(candidate.to_head.as_str()).unwrap_or(&0));
+        let target = target_by_candidate
+            .get(&(candidate.link_id.as_str(), candidate.start_ns))
+            .copied();
+        let slew_ns = if let Some(target) = target {
+            let from_ns = slew_time_ns(
+                *head_directions
+                    .get(&candidate.from_head)
+                    .ok_or("missing from-head gimbal state")?,
+                target.from_target_body,
+                head_rates[&candidate.from_head],
+            )?;
+            let to_ns = slew_time_ns(
+                *head_directions
+                    .get(&candidate.to_head)
+                    .ok_or("missing to-head gimbal state")?,
+                target.to_target_body,
+                head_rates[&candidate.to_head],
+            )?;
+            candidate.slew_ns.max(from_ns).max(to_ns)
+        } else {
+            candidate.slew_ns
+        };
         let acquiring_ns = available_ns
-            .checked_add(candidate.slew_ns)
+            .checked_add(slew_ns)
             .ok_or("PAT slew timestamp overflow")?;
         let tracking_ns = acquiring_ns
             .checked_add(candidate.acquisition_ns)
@@ -141,7 +262,7 @@ pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
             });
             continue;
         }
-        if candidate.slew_ns > 0 {
+        if slew_ns > 0 {
             events.push(PatEvent {
                 link_id: candidate.link_id.clone(),
                 at_ns: available_ns,
@@ -163,6 +284,10 @@ pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
         }
         busy_until.insert(candidate.from_head.as_str(), candidate.end_ns);
         busy_until.insert(candidate.to_head.as_str(), candidate.end_ns);
+        if let Some(target) = target {
+            head_directions.insert(candidate.from_head.clone(), target.from_target_body);
+            head_directions.insert(candidate.to_head.clone(), target.to_target_body);
+        }
         windows.push(AcquiredWindow {
             link_id: candidate.link_id.clone(),
             start_ns: tracking_ns,
@@ -290,6 +415,94 @@ mod tests {
         let boundary: Vec<_> = plan.events.iter().filter(|e| e.at_ns == 20).collect();
         assert_eq!(boundary[0].state, PatState::Lost);
         assert_eq!(boundary[1].state, PatState::Candidate);
+    }
+
+    #[test]
+    fn body_frame_actuator_rate_delays_retargeted_contact() {
+        let candidates = [
+            contact("link", "a", "b", 0, 120_000_000),
+            contact("link", "a", "b", 120_000_000, 200_000_000),
+        ];
+        let actuators = [
+            HeadSlewActuator {
+                head_id: "a".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+            },
+            HeadSlewActuator {
+                head_id: "b".into(),
+                initial_direction_body: [-1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+            },
+        ];
+        let targets = [
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 0,
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [-1.0, 0.0, 0.0],
+            },
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 120_000_000,
+                from_target_body: [0.0, 1.0, 0.0],
+                to_target_body: [0.0, -1.0, 0.0],
+            },
+        ];
+        let first = plan_contacts_with_slew(&candidates, &actuators, &targets).unwrap();
+        let reversed = plan_contacts_with_slew(
+            &[candidates[1].clone(), candidates[0].clone()],
+            &actuators,
+            &[targets[1].clone(), targets[0].clone()],
+        )
+        .unwrap();
+        assert_eq!(first, reversed);
+        assert_eq!(
+            first.windows.iter().map(|w| w.start_ns).collect::<Vec<_>>(),
+            vec![5, 150_000_003]
+        );
+        // A very slow actuator cannot acquire within the second contact.
+        let slow = actuators.map(|mut a| {
+            a.max_slew_rate_deg_per_s = 100.0;
+            a
+        });
+        let slow_plan = plan_contacts_with_slew(&candidates, &slow, &targets).unwrap();
+        assert_eq!(slow_plan.windows.len(), 1);
+        assert!(slow_plan.events.iter().any(|event| {
+            event.at_ns == 120_000_000
+                && event.state == PatState::Rejected
+                && event.reason == Some("contact_expires_before_acquisition")
+        }));
+    }
+
+    #[test]
+    fn body_frame_actuators_reject_missing_targets_and_invalid_vectors() {
+        let candidates = [contact("link", "a", "b", 0, 20)];
+        let actuators = [
+            HeadSlewActuator {
+                head_id: "a".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+            },
+            HeadSlewActuator {
+                head_id: "b".into(),
+                initial_direction_body: [-1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+            },
+        ];
+        let target = PatSlewTarget {
+            link_id: "link".into(),
+            start_ns: 0,
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [-1.0, 0.0, 0.0],
+        };
+        assert!(plan_contacts_with_slew(&candidates, &actuators, &[]).is_err());
+        assert!(plan_contacts_with_slew(&candidates, &actuators, &[PatSlewTarget {
+            from_target_body: [0.0; 3],
+            ..target.clone()
+        }])
+        .is_err());
+        assert!(plan_contacts_with_slew(&candidates, &actuators, &[target]).is_ok());
     }
 
     #[test]
