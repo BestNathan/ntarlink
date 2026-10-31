@@ -230,6 +230,8 @@ pub struct BodyHeadRuntime {
     /// Link-scoped command leases. PAT scheduling still owns its own reservations.
     owners: HashMap<String, String>,
     link_heads: HashMap<String, (String, String)>,
+    /// Virtual-time acquisition boundary for each active link lease.
+    lease_start_ns: HashMap<String, u64>,
     /// Earliest allowed time for a new command after a timed lease release.
     release_floor_ns: HashMap<String, u64>,
 }
@@ -253,6 +255,7 @@ impl BodyHeadRuntime {
             history: HashMap::new(),
             owners: HashMap::new(),
             link_heads: HashMap::new(),
+            lease_start_ns: HashMap::new(),
             release_floor_ns: HashMap::new(),
         })
     }
@@ -364,6 +367,13 @@ impl BodyHeadRuntime {
                 return Err("BODY-frame runtime head owned by another link".into());
             }
         }
+        if self
+            .lease_start_ns
+            .get(link_id)
+            .is_some_and(|start_ns| at_ns < *start_ns)
+        {
+            return Err("BODY-frame runtime command precedes lease acquisition".into());
+        }
         let observed = self.observe_pair_unchecked(
             from_head_id,
             to_head_id,
@@ -371,6 +381,9 @@ impl BodyHeadRuntime {
             from_target_body,
             to_target_body,
         )?;
+        self.lease_start_ns
+            .entry(link_id.to_owned())
+            .or_insert(at_ns);
         self.owners
             .insert(from_head_id.to_owned(), link_id.to_owned());
         self.owners
@@ -423,6 +436,7 @@ impl BodyHeadRuntime {
             link_id.to_owned(),
             (from_head_id.to_owned(), to_head_id.to_owned()),
         );
+        self.lease_start_ns.insert(link_id.to_owned(), at_ns);
         Ok(())
     }
 
@@ -443,7 +457,8 @@ impl BodyHeadRuntime {
                     .map(|(at_ns, _)| *at_ns)
             })
             .max()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max(self.lease_start_ns.get(link_id).copied().unwrap_or(0));
         self.release_pair_at(link_id, from_head_id, to_head_id, at_ns)
     }
 
@@ -469,6 +484,13 @@ impl BodyHeadRuntime {
         {
             return Err("BODY-frame runtime pair lease ownership mismatch".into());
         }
+        if self
+            .lease_start_ns
+            .get(link_id)
+            .is_none_or(|start_ns| at_ns < *start_ns)
+        {
+            return Err("BODY-frame runtime release precedes lease acquisition".into());
+        }
         for head_id in [from_head_id, to_head_id] {
             if self
                 .history
@@ -488,6 +510,7 @@ impl BodyHeadRuntime {
             self.release_floor_ns.insert(head_id.to_owned(), at_ns);
         }
         self.link_heads.remove(link_id);
+        self.lease_start_ns.remove(link_id);
         Ok(())
     }
 
@@ -1111,6 +1134,53 @@ mod tests {
         runtime.release_pair_at("second", "a", "c", 40).unwrap();
         assert!(runtime.observe("a", 39, [1.0, 0.0, 0.0]).is_err());
         assert!(runtime.observe("a", 40, [1.0, 0.0, 0.0]).is_ok());
+    }
+
+    #[test]
+    fn pat_pair_lease_start_rejects_backdated_commands_and_releases() {
+        let actuators = ["a", "b", "c"].map(|id| OpticalHeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+
+        runtime.reserve_pair_for_link("first", "a", "b", 100).unwrap();
+        assert!(runtime
+            .observe_pair_for_link("first", "a", "b", 99, target, target)
+            .is_err());
+        assert!(runtime.release_pair_at("first", "a", "b", 99).is_err());
+        assert!(runtime
+            .reserve_pair_for_link("second", "a", "c", 100)
+            .is_err());
+        assert!(runtime.predicted_at("a", 100).is_err());
+
+        runtime
+            .observe_pair_for_link("first", "a", "b", 100, target, target)
+            .unwrap();
+        runtime.release_pair_at("first", "a", "b", 101).unwrap();
+        runtime
+            .reserve_pair_for_link("second", "a", "c", 101)
+            .unwrap();
+        assert!(runtime
+            .observe_pair_for_link("second", "a", "c", 100, target, target)
+            .is_err());
+        assert!(runtime.release_pair_at("second", "a", "c", 100).is_err());
+
+        // Legacy release of an unsampled reservation must use its start time.
+        runtime.release_pair("second", "a", "c").unwrap();
+        assert!(runtime
+            .reserve_pair_for_link("third", "a", "c", 100)
+            .is_err());
+        runtime
+            .reserve_pair_for_link("third", "a", "c", 101)
+            .unwrap();
+        runtime.release_pair_at("third", "a", "c", 101).unwrap();
+        assert_eq!(runtime.predicted_at("a", 101).unwrap().1, target);
+        assert!(runtime.predicted_at("c", 101).is_err());
     }
 
     #[test]
