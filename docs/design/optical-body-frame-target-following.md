@@ -48,6 +48,26 @@ instant via atan2(cross-product magnitude, dot product). Both endpoints must
 meet their own error limits. SYS-03 combines these pointing edges with
 independent administrative faults. Recovery requires fresh PAT acquisition.
 
+## Per-head runtime state ownership
+
+The SYS-02 `BodyHeadRuntime` now owns the mutable follower for each
+configured head and its ordered successful-command snapshots. The packet
+adapter sends sampled commands to this runtime and requests immutable
+`predicted_at(head, virtual_ns)` projections for SYS-03 PAT boundaries.
+The runtime rejects duplicate/unknown heads and out-of-order per-head
+commands. A failed head update is not recorded as a successful snapshot;
+the other head remains independently observable. Projection never advances
+the live follower or inserts a synthetic sample into the command timeline.
+
+This consolidates state ownership and removes packet-runtime's duplicate
+per-head history bookkeeping. It does **not** unify PAT reservations with
+the follower, implement shared-head command arbitration, or introduce
+velocity-continuous servo dynamics. A historical projection uses binary
+search over that head's successful samples: O(log S) lookup plus constant
+kinematic work, with O(S + H) stored snapshots for S commands and H heads.
+The preexisting packet scenario is a cross-subsystem regression for PAT
+reacquisition, forwarding windows and packet conservation.
+
 ## Acceptance and fidelity
 
 `scenarios/optical-body-frame-target-following.json` commands a 90-degree

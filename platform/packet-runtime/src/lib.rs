@@ -12,7 +12,7 @@ use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
-    pointing_allowed, BodyHeadFollower, HeadAvailability,
+    pointing_allowed, BodyHeadRuntime, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -755,46 +755,18 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         }
     }));
-    let mut follower_history: HashMap<&str, Vec<(u64, BodyHeadFollower)>> = HashMap::new();
-    // Predicted mode keeps per-head actuator state instead of trusting a
-    // supplied measured boresight. Commands are held between samples.
-    if !scenario.optical_body_following_samples.is_empty() {
-        let mut followers: HashMap<&str, BodyHeadFollower> = scenario
-            .optical_head_slew_actuators
-            .iter()
-            .map(|head| {
-                BodyHeadFollower::new(
-                    head.initial_direction_body,
-                    head.max_slew_rate_deg_per_s,
-                    head.max_slew_acceleration_deg_per_s2,
-                )
-                .map(|follower| (head.head_id.as_str(), follower))
-            })
-            .collect::<Result<_, _>>()?;
+    // SYS-02 owns the mutable per-head follower state and sample history.
+    // PAT receives only immutable projections at candidate boundaries.
+    let mut follower_runtime = (!scenario.optical_body_following_samples.is_empty())
+        .then(|| BodyHeadRuntime::new(&scenario.optical_head_slew_actuators))
+        .transpose()?;
+    if let Some(runtime) = follower_runtime.as_mut() {
         let mut commands: Vec<_> = scenario.optical_body_following_samples.iter().collect();
         commands.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
         for command in commands {
             let pat = body_pat_links[command.link_id.as_str()];
-            let from = followers
-                .get_mut(pat.from_head.as_str())
-                .expect("validated from-head follower")
-                .observe(command.at_ns, command.from_target_body);
-            let to = followers
-                .get_mut(pat.to_head.as_str())
-                .expect("validated to-head follower")
-                .observe(command.at_ns, command.to_target_body);
-            if from.is_ok() {
-                follower_history
-                    .entry(pat.from_head.as_str())
-                    .or_default()
-                    .push((command.at_ns, followers[pat.from_head.as_str()].clone()));
-            }
-            if to.is_ok() {
-                follower_history
-                    .entry(pat.to_head.as_str())
-                    .or_default()
-                    .push((command.at_ns, followers[pat.to_head.as_str()].clone()));
-            }
+            let from = runtime.observe(&pat.from_head, command.at_ns, command.from_target_body);
+            let to = runtime.observe(&pat.to_head, command.at_ns, command.to_target_body);
             let allowed = match (from, to) {
                 (Ok(from_boresight_body), Ok(to_boresight_body)) => {
                     body_tracking_error_allowed(&OpticalBodyTrackingSample {
@@ -1060,18 +1032,13 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 if !scenario.optical_body_following_samples.is_empty() {
                     // Query an immutable follower snapshot at this candidate boundary.
                     // This does not introduce a new rest-to-rest sample into its history.
-                    let snapshot = |head: &str| -> Result<([f64; 3], [f64; 3]), String> {
-                        let history = follower_history
-                            .get(head)
-                            .ok_or("missing predicted optical head history")?;
-                        let count = history.partition_point(|(at_ns, _)| *at_ns <= admitted_start);
-                        if count == 0 {
-                            return Err("missing predicted head state at PAT boundary".into());
-                        }
-                        history[count - 1].1.predicted_at(admitted_start)
-                    };
-                    let (from_direction, from_target) = snapshot(&config.from_head)?;
-                    let (to_direction, to_target) = snapshot(&config.to_head)?;
+                    let runtime = follower_runtime
+                        .as_ref()
+                        .ok_or("missing predicted optical head runtime")?;
+                    let (from_direction, from_target) =
+                        runtime.predicted_at(&config.from_head, admitted_start)?;
+                    let (to_direction, to_target) =
+                        runtime.predicted_at(&config.to_head, admitted_start)?;
                     candidate_slew_starts.push(PatSlewStart {
                         link_id: contact.link_id.clone(),
                         start_ns: admitted_start,
