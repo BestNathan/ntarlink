@@ -1,3 +1,21 @@
+## Optional sampled spacecraft-body LOS angular-acceleration audit
+
+The SYS-01/02 native ITRS compiler now accepts an opt-in, finite nonnegative
+`--native-itrs-max-body-los-accel-deg-per-s2` threshold. It derives sampled
+angular-velocity vectors from successive body-frame LOS directions and
+finite-differences them over the time between adjacent interval midpoints.
+The signed vector formulation detects direction reversals even when scalar
+angular speeds match. The first two observations establish the velocity
+baseline; antiparallel rotation axes are ambiguous and fail closed.
+The SHA-256-bound manifest records per-head peak sampled acceleration.
+Python regression tests cover bounds, reversals, provenance and atomic
+failure behavior. The rate cap remains independently optional.
+
+**Fidelity:** a finite-sample angular-acceleration proxy only, not a physical
+gimbal servo, motor torque model, tracking error, continuous motion guarantee
+or runtime optical loss mechanism. See
+[design](design/optical-native-itrs-compiler.md).
+
 ## Optional spacecraft-body LOS slew-rate audit
 
 The SGP4-to-native-ITRS compiler can now reject supplied orbit/attitude

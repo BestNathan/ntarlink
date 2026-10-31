@@ -39,9 +39,34 @@ def _angular_distance_deg(a: tuple[float, ...],
     return math.degrees(math.atan2(math.hypot(*cross), dot))
 
 
+
+def _angular_velocity_deg_per_s(a: tuple[float, ...],
+                                b: tuple[float, ...], delta_ns: int) -> tuple[float, ...]:
+    """Sampled body-frame LOS rotation vector in degrees per virtual second.
+
+    A 180-degree flip has no unique rotation axis and fails closed when the
+    optional acceleration audit is enabled.
+    """
+    cross = (
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    )
+    sine = math.hypot(*cross)
+    dot = sum(x * y for x, y in zip(a, b))
+    if dot < 0.0 and sine < 1e-12:
+        raise ValueError("ambiguous 180-degree body-frame LOS rotation axis")
+    if sine == 0.0:
+        return (0.0, 0.0, 0.0)
+    angle_deg = math.degrees(math.atan2(sine, dot))
+    scale = angle_deg * (1_000_000_000.0 / delta_ns) / sine
+    return tuple(value * scale for value in cross)
+
+
 def compile_native_itrs(scenario: dict, compiled: dict, position,
                         probes_per_contact: int, attitude: dict,
-                        max_body_los_rate_deg_per_s: float | None = None) -> tuple[dict, dict]:
+                        max_body_los_rate_deg_per_s: float | None = None,
+                        max_body_los_accel_deg_per_s2: float | None = None) -> tuple[dict, dict]:
     """Emit bounded ITRS geometry observations for every PAT link.
 
     Include a real t=0 observation even if the first contact starts later,
@@ -54,6 +79,12 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
                 or max_body_los_rate_deg_per_s < 0):
             raise ValueError("max_body_los_rate_deg_per_s must be finite and nonnegative")
         max_body_los_rate_deg_per_s = float(max_body_los_rate_deg_per_s)
+    if max_body_los_accel_deg_per_s2 is not None:
+        if (type(max_body_los_accel_deg_per_s2) not in (int, float)
+                or not math.isfinite(max_body_los_accel_deg_per_s2)
+                or max_body_los_accel_deg_per_s2 < 0):
+            raise ValueError("max_body_los_accel_deg_per_s2 must be finite and nonnegative")
+        max_body_los_accel_deg_per_s2 = float(max_body_los_accel_deg_per_s2)
     if "optical_geometry_samples" in scenario:
         raise ValueError("existing optical geometry samples cannot be overwritten")
     if any(fault.get("cause") == "sampled_pointing"
@@ -69,10 +100,12 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
 
     samples = []
     peak_rates = {}
+    peak_accelerations = {}
     for link_id in sorted(pats):
         link = links[link_id]
         pat = pats[link_id]
         previous_los = {}
+        previous_velocity = {}
         for at_ns in sorted(ticks_by_link[link_id]):
             positions = [
                 list(_vector(list(position(link[side], at_ns)), "ITRS position", 3))
@@ -85,7 +118,8 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
                 )
             a = heads[pat["from_head"]]
             b = heads[pat["to_head"]]
-            if max_body_los_rate_deg_per_s is not None:
+            if (max_body_los_rate_deg_per_s is not None
+                    or max_body_los_accel_deg_per_s2 is not None):
                 for side, head in (("from", a), ("to", b)):
                     head_id = pat[f"{side}_head"]
                     current = _body_frame_los(positions, side, head, at_ns)
@@ -93,17 +127,41 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
                         previous_at, previous_ray = previous_los[side]
                         rate = (_angular_distance_deg(previous_ray, current)
                                 * 1_000_000_000.0 / (at_ns - previous_at))
-                        peak_rates[head_id] = max(peak_rates.get(head_id, 0.0), rate)
-                        if (rate > max_body_los_rate_deg_per_s
-                                and not math.isclose(
-                                    rate, max_body_los_rate_deg_per_s,
-                                    rel_tol=1e-12, abs_tol=1e-9)):
-                            raise ValueError(
-                                f"body-frame LOS rate exceeds max_body_los_rate_deg_per_s "
-                                f"for {head_id} at {at_ns} ns"
-                            )
+                        if max_body_los_rate_deg_per_s is not None:
+                            peak_rates[head_id] = max(peak_rates.get(head_id, 0.0), rate)
+                            if (rate > max_body_los_rate_deg_per_s
+                                    and not math.isclose(
+                                        rate, max_body_los_rate_deg_per_s,
+                                        rel_tol=1e-12, abs_tol=1e-9)):
+                                raise ValueError(
+                                    f"body-frame LOS rate exceeds max_body_los_rate_deg_per_s "
+                                    f"for {head_id} at {at_ns} ns"
+                                )
+                        if max_body_los_accel_deg_per_s2 is not None:
+                            span_ns = at_ns - previous_at
+                            velocity = _angular_velocity_deg_per_s(
+                                previous_ray, current, span_ns)
+                            if side in previous_velocity:
+                                prior_velocity, prior_span_ns = previous_velocity[side]
+                                midpoint_interval_s = (span_ns + prior_span_ns) * 0.5e-9
+                                acceleration = (math.dist(velocity, prior_velocity)
+                                                / midpoint_interval_s)
+                                peak_accelerations[head_id] = max(
+                                    peak_accelerations[head_id], acceleration)
+                                if (acceleration > max_body_los_accel_deg_per_s2
+                                        and not math.isclose(
+                                            acceleration, max_body_los_accel_deg_per_s2,
+                                            rel_tol=1e-12, abs_tol=1e-6)):
+                                    raise ValueError(
+                                        "body-frame LOS acceleration exceeds "
+                                        f"max_body_los_accel_deg_per_s2 for {head_id} "
+                                        f"at {at_ns} ns"
+                                    )
+                            previous_velocity[side] = (velocity, span_ns)
                     else:
                         peak_rates.setdefault(head_id, 0.0)
+                    if max_body_los_accel_deg_per_s2 is not None:
+                        peak_accelerations.setdefault(head_id, 0.0)
                     previous_los[side] = (at_ns, current)
             samples.append({
                 "link_id": link_id, "at_ns": at_ns, "frame": "ITRS",
@@ -134,6 +192,19 @@ def compile_native_itrs(scenario: dict, compiled: dict, position,
                 "fidelity": "finite sampled mean LOS rate; not gimbal acceleration or continuous tracking",
             }
             if max_body_los_rate_deg_per_s is not None else None
+        ),
+        "body_los_acceleration_audit": (
+            {
+                "max_body_los_accel_deg_per_s2": max_body_los_accel_deg_per_s2,
+                "peak_sampled_acceleration_by_head_deg_per_s2": [
+                    {"head_id": head_id,
+                     "peak_acceleration_deg_per_s2": peak_accelerations[head_id]}
+                    for head_id in sorted(peak_accelerations)
+                ],
+                "reference_frame": "spacecraft_body",
+                "fidelity": "finite difference of sampled LOS rotation vectors at interval midpoints; not actuator dynamics or continuous tracking",
+            }
+            if max_body_los_accel_deg_per_s2 is not None else None
         ),
         "fidelity": "SGP4/ITRS and supplied body attitude; discrete sample-and-hold, not continuous tracking",
     }

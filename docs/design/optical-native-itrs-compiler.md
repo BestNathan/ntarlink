@@ -96,3 +96,32 @@ controller, acceleration limit, tracking-error integration or continuous
 feasibility certificate. It does not alter the Rust runtime's native
 geometry or packet forwarding behavior; an excessive input is rejected
 offline rather than converted to a runtime Tracking Loss event.
+
+## Optional sampled body-frame LOS angular-acceleration audit
+
+The opt-in `--native-itrs-max-body-los-accel-deg-per-s2` option is valid only
+with `--native-itrs-probes-per-contact`. For each optical head, the compiler
+rotates consecutive ITRS LOS observations into the spacecraft body frame,
+computes a shortest-arc **angular velocity vector** (degrees per virtual
+second), and differences consecutive vectors over the elapsed time between
+their interval midpoints. The magnitude is a finite-difference angular
+acceleration proxy in degrees per second squared. A direction reversal is
+therefore detected even if adjacent scalar angular speeds are equal.
+
+The first observation establishes the LOS baseline; two intervals (three
+observations) are required before acceleration is defined. Exact antiparallel
+LOS vectors have no uniquely determined rotation axis and are rejected when
+the acceleration audit is enabled. A nonnegative finite threshold is required.
+The optional acceleration cap is independent of the existing rate cap; both
+may be enabled. Per-head peak sampled acceleration, the configured threshold,
+reference frame and fidelity warning are recorded in the SHA-256-bound
+`native_itrs_plan.body_los_acceleration_audit` manifest field. Invalid
+inputs and exceeded limits fail before artifact replacement.
+
+This is **not** an optical gimbal actuator simulation: it does not integrate
+torque, motor motion, settling, tracking error or continuous feasibility.
+Unequal sample spacing is handled by interval-midpoint separation, but
+unobserved motion between samples remains invisible. Complexity is O(S)
+time and O(L) previous-vector state for at most 10,000 observations across L
+PAT links. Unit tests cover rate steps, direction reversal, invalid/ambiguous
+inputs, reproducible provenance and failed-output preservation.
