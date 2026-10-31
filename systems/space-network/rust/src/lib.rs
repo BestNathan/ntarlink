@@ -176,9 +176,9 @@ pub fn plan_contacts_with_slew(
                 .is_some()
             || !actuator.max_slew_rate_deg_per_s.is_finite()
             || actuator.max_slew_rate_deg_per_s <= 0.0
-            || actuator.max_slew_acceleration_deg_per_s2.is_some_and(|accel| {
-                !accel.is_finite() || accel <= 0.0
-            })
+            || actuator
+                .max_slew_acceleration_deg_per_s2
+                .is_some_and(|accel| !accel.is_finite() || accel <= 0.0)
             || unit_direction(actuator.initial_direction_body).is_none()
         {
             return Err("invalid or duplicate body-frame gimbal actuator".into());
@@ -558,33 +558,17 @@ mod tests {
             30_000_000
         );
         assert_eq!(
-            slew_time_ns(
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                3000.0,
-                Some(200_000.0),
-            )
-            .unwrap(),
+            slew_time_ns([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 3000.0, Some(200_000.0),).unwrap(),
             45_000_000
         );
         assert_eq!(
-            slew_time_ns(
-                [1.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                3000.0,
-                Some(200_000.0),
-            )
-            .unwrap(),
+            slew_time_ns([1.0, 0.0, 0.0], [1.0, 0.0, 0.0], 3000.0, Some(200_000.0),).unwrap(),
             0
         );
         for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            assert!(slew_time_ns(
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                3000.0,
-                Some(invalid),
-            )
-            .is_err());
+            assert!(
+                slew_time_ns([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 3000.0, Some(invalid),).is_err()
+            );
         }
 
         let actuators = [
