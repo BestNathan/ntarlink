@@ -1354,10 +1354,11 @@ mod tests {
         assert!(serde_json::to_string(&scenario).unwrap().contains("optical_pat_slew_targets"));
         scenario.optical_pat_slew_targets.pop();
         assert!(scenario.validate().unwrap_err().contains("cover every PAT contact"));
-        scenario.optical_pat_slew_targets.push(OpticalPatSlewTarget {
+        let second = OpticalPatSlewTarget {
             at_ns: 120_000_000,
             ..scenario.optical_pat_slew_targets[0].clone()
-        });
+        };
+        scenario.optical_pat_slew_targets.push(second);
         scenario.optical_pat_slew_targets[1].frame = "ITRS".into();
         assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal target"));
         scenario.optical_pat_slew_targets[1].frame = "BODY".into();
