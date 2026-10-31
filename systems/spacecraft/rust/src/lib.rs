@@ -382,6 +382,48 @@ impl BodyHeadRuntime {
         Ok(observed)
     }
 
+    /// Reserve both heads at a PAT reservation start without inventing a
+    /// sampled actuator command. This transition is atomic and enforces the
+    /// previous owner's release barrier on both heads.
+    pub fn reserve_pair_for_link(
+        &mut self,
+        link_id: &str,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+    ) -> Result<(), String> {
+        if link_id.trim().is_empty()
+            || from_head_id == to_head_id
+            || self.link_heads.contains_key(link_id)
+        {
+            return Err("invalid or already active BODY-frame pair reservation".into());
+        }
+        for head_id in [from_head_id, to_head_id] {
+            if !self.heads.contains_key(head_id)
+                || self.owners.contains_key(head_id)
+                || self
+                    .release_floor_ns
+                    .get(head_id)
+                    .is_some_and(|floor| at_ns < *floor)
+                || self
+                    .history
+                    .get(head_id)
+                    .and_then(|samples| samples.last())
+                    .is_some_and(|(sample_ns, _)| at_ns < *sample_ns)
+            {
+                return Err("BODY-frame pair reservation conflicts with head history or owner".into());
+            }
+        }
+        for head_id in [from_head_id, to_head_id] {
+            self.owners.insert(head_id.to_owned(), link_id.to_owned());
+        }
+        self.link_heads.insert(
+            link_id.to_owned(),
+            (from_head_id.to_owned(), to_head_id.to_owned()),
+        );
+        Ok(())
+    }
+
     /// Legacy release at the last committed sample time. Call release_pair_at
     /// when a PAT reservation has a later, explicit virtual-time end boundary.
     pub fn release_pair(
@@ -1027,6 +1069,45 @@ mod tests {
         assert!(runtime
             .observe_pair_for_link("isl-a-b", "a", "b", 3, initial, initial)
             .is_err());
+    }
+
+    #[test]
+    fn explicit_pat_pair_reservation_is_atomic_and_time_safe() {
+        let actuator = |id: &str| OpticalHeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        };
+        let mut runtime = BodyHeadRuntime::new(&[
+            actuator("a"),
+            actuator("b"),
+            actuator("c"),
+        ])
+        .unwrap();
+        runtime.reserve_pair_for_link("first", "a", "b", 10).unwrap();
+        assert!(runtime.reserve_pair_for_link("second", "a", "c", 11).is_err());
+        assert!(runtime.reserve_pair_for_link("first", "a", "b", 11).is_err());
+        assert!(runtime.reserve_pair_for_link("other", "a", "unknown", 11).is_err());
+        assert!(runtime.observe("a", 11, [1.0, 0.0, 0.0]).is_err());
+        runtime
+            .observe_pair_for_link(
+                "first",
+                "a",
+                "b",
+                10,
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            )
+            .unwrap();
+        runtime.release_pair_at("first", "a", "b", 30).unwrap();
+        assert!(runtime.reserve_pair_for_link("second", "a", "c", 29).is_err());
+        runtime.reserve_pair_for_link("second", "a", "c", 30).unwrap();
+        assert!(runtime.release_pair_at("second", "a", "c", 29).is_err());
+        runtime.release_pair_at("second", "a", "c", 40).unwrap();
+        assert!(runtime.observe("a", 39, [1.0, 0.0, 0.0]).is_err());
+        assert!(runtime.observe("a", 40, [1.0, 0.0, 0.0]).is_ok());
     }
 
     #[test]
