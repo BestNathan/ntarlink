@@ -87,7 +87,13 @@ its leased endpoint pair, and unscoped single/pair commands cannot bypass an
 active lease. Invalid commands, partial releases
 and wrong-owner releases leave both actuator histories and leases intact.
 An explicit paired release preserves boresight and target state for later
-retargeting by another link. Standalone unleased APIs remain supported.
+retargeting by another link. `release_pair_at(link, from, to, at_ns)` also
+records a virtual-time release barrier on both heads: a later owner cannot
+retroactively issue a command before that boundary. A release preceding either
+head's last successful sample or prior release barrier is rejected atomically.
+The legacy `release_pair()` releases at the latest committed sample timestamp
+for compatibility; a PAT lifecycle bridge must use the time-aware API with
+the actual reservation end time. Standalone unleased APIs remain supported.
 
 **Boundary:** This is command ownership only, not PAT resource arbitration.
 The current scenario contract still rejects shared-head predicted command
