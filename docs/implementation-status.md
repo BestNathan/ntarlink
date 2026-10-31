@@ -1,3 +1,32 @@
+## Offline PAT reservation to optical-head command-lease lifecycle bridge
+
+The packet adapter now performs a provisional unleased SYS-02 sampled follower
+pass for PAT boundary projections, then replays the same commands against
+the accepted SYS-03 `PatPlan.reservations[]` timeline. Reservation starts
+atomically claim both head command leases without inserting artificial
+actuator samples. Exclusive ends call `release_pair_at` with the exact
+virtual-time boundary. At a shared timestamp, releases precede acquisitions
+and then sampled commands. During fault gaps with no PAT reservation,
+exclusive-head commands remain unleased so they can update the held target
+for later reacquisition. The replay verifies each result matches the
+provisional follower history; conflicts, retroactive ownership and
+inconsistent replay fail the simulation rather than silently diverge.
+
+Rust regressions cover atomic reserve, owner conflict, failed reserve,
+same-time handoff, release barriers, fault-split lease replay, overlapping
+reservation rejection, predicted PAT reacquisition, deterministic packet
+traces and packet conservation. The existing synthetic scenario and CI
+continue to exercise the cross-subsystem acceptance path.
+
+**Scope and cost:** This is an offline two-pass lifecycle verification,
+not a single mutable event-driven actuator owner. Shared-head predicted
+command streams remain forbidden by the scenario contract; unleased
+fault-gap commands are only safe under that exclusivity assumption.
+The extra pass sorts O(A + S) transitions in O((A + S) log(A + S)) time
+for A accepted reservations and S samples, with O(A + S + H) memory.
+No continuous servo, physical calibration or optical PHY is claimed.
+See [design](design/optical-body-frame-target-following.md).
+
 ## Explicit SYS-03 optical-head reservation timeline
 
 SYS-03 now returns a typed `PatReservation` for every successfully
@@ -12,10 +41,9 @@ regression compares reservations and admitted forwarding windows for a
 two-contact PAT fixture, including packet conservation.
 
 **Boundary and cost:** The reservation vector adds O(A) storage and
-O(A log A) ordering for A accepted candidates. This exposes the exact
-SYS-03 ownership intervals needed for a later SYS-02 lease bridge; the
-packet adapter does not yet consume these intervals to release
-`BodyHeadRuntime` command leases. Predicted shared-head streams remain
+O(A log A) ordering for A accepted candidates. The packet adapter now
+consumes these intervals in a second, offline SYS-02 command-lease replay
+pass, including timed releases. Predicted shared-head streams remain
 disallowed. No continuous servo, calibrated PHY or new packet admission
 behavior is claimed. See [design](design/optical-body-frame-target-following.md).
 
@@ -29,10 +57,11 @@ including an unscoped caller, cannot submit a command retroactively before
 the release. A Rust regression covers wrong-owner release, rollback, early
 handoff rejection, same-time handoff, repeated handoff and history retention.
 
-**Scope:** This is a virtual-time-safe lease primitive, not automatic PAT
-reservation release or shared-head predicted scenario admission. The existing
-`release_pair()` remains compatible and uses the latest committed sample
-time; future PAT integration must pass its actual reservation end timestamp.
+**Scope:** This virtual-time-safe lease primitive is now used by the offline
+PAT reservation replay, not shared-head predicted scenario admission.
+The existing `release_pair()` remains compatible and uses the latest
+committed sample time; the offline PAT replay passes the actual reservation
+end timestamp.
 The extra barrier map requires O(H) memory and O(1) expected checks.
 
 ## Link-scoped sampled optical-head command ownership
@@ -47,9 +76,10 @@ predicted follower packet/PAT scenario remains the cross-subsystem regression.
 
 **Scope and cost:** O(1) expected owner checks and O(H) owner state. The
 scenario contract still forbids shared-head predicted streams, and the packet
-adapter does not yet release leases on PAT events. These command leases do
-not replace SYS-03's exclusive contact reservations, model continuous servo
-velocity or establish shared-head PAT arbitration. See
+adapter now replays PAT reservation starts and ends to manage leases offline.
+These command leases are checked against SYS-03's exclusive reservations,
+but do not model continuous servo velocity or establish shared-head PAT
+arbitration. See
 [design](design/optical-body-frame-target-following.md).
 
 ## Atomic sampled optical-head pair transitions

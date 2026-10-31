@@ -6,7 +6,7 @@ use ntarlink_contracts::{
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
     plan_contacts, plan_contacts_with_slew, plan_contacts_with_slew_starts, HeadSlewActuator,
-    PatCandidate, PatSlewStart, PatSlewTarget, PatState,
+    PatCandidate, PatReservation, PatSlewStart, PatSlewTarget, PatState,
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
@@ -18,6 +18,9 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
+
+type PredictedPair = ([f64; 3], [f64; 3]);
+type PredictedObservations = HashMap<(String, u64), Option<PredictedPair>>;
 
 /// Piecewise-linear delay at the completion of packet serialization.
 /// Integer arithmetic and nearest-nanosecond rounding preserve reproducibility.
@@ -673,6 +676,120 @@ impl<'a> Runtime<'a> {
 /// Only opted-in optical links are gated; other contacts are unchanged.
 /// Administrative down/up transitions interrupt tracking, release optical
 /// heads and require a fresh acquisition before forwarding can resume.
+/// Replay sampled commands against the accepted SYS-03 reservation timeline.
+/// PAT planning uses a provisional unleased follower pass to compute boundary
+/// projections; this second pass verifies the identical actuator history while
+/// acquiring and releasing link-scoped command leases at virtual-time edges.
+/// End, start and sample transitions at the same instant run in that order.
+fn replay_pat_head_leases(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: &PredictedObservations,
+) -> Result<BodyHeadRuntime, String> {
+    enum Transition {
+        Release(usize),
+        Reserve(usize),
+        Sample(usize),
+    }
+
+    let mut timeline = Vec::new();
+    for (index, reservation) in reservations.iter().enumerate() {
+        timeline.push((
+            reservation.end_ns,
+            0_u8,
+            reservation.link_id.as_str(),
+            Transition::Release(index),
+        ));
+        timeline.push((
+            reservation.start_ns,
+            1_u8,
+            reservation.link_id.as_str(),
+            Transition::Reserve(index),
+        ));
+    }
+    for (index, sample) in scenario.optical_body_following_samples.iter().enumerate() {
+        timeline.push((
+            sample.at_ns,
+            2_u8,
+            sample.link_id.as_str(),
+            Transition::Sample(index),
+        ));
+    }
+    timeline.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+
+    let pat_links: HashMap<_, _> = scenario
+        .optical_pat
+        .iter()
+        .map(|pat| (pat.link_id.as_str(), pat))
+        .collect();
+    let mut runtime = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators)?;
+    let mut active_links = HashSet::new();
+    for (_, _, _, transition) in timeline {
+        match transition {
+            Transition::Release(index) => {
+                let reservation = &reservations[index];
+                if !active_links.remove(&reservation.link_id) {
+                    return Err("PAT head reservation ended without an active lease".into());
+                }
+                runtime.release_pair_at(
+                    &reservation.link_id,
+                    &reservation.from_head,
+                    &reservation.to_head,
+                    reservation.end_ns,
+                )?;
+            }
+            Transition::Reserve(index) => {
+                let reservation = &reservations[index];
+                if reservation.start_ns >= reservation.end_ns
+                    || !active_links.insert(reservation.link_id.clone())
+                {
+                    return Err("invalid or overlapping PAT head reservation".into());
+                }
+                runtime.reserve_pair_for_link(
+                    &reservation.link_id,
+                    &reservation.from_head,
+                    &reservation.to_head,
+                    reservation.start_ns,
+                )?;
+            }
+            Transition::Sample(index) => {
+                let sample = &scenario.optical_body_following_samples[index];
+                let pat = pat_links
+                    .get(sample.link_id.as_str())
+                    .ok_or("unknown predicted PAT link")?;
+                let observed = if active_links.contains(&sample.link_id) {
+                    runtime.observe_pair_for_link(
+                        &sample.link_id,
+                        &pat.from_head,
+                        &pat.to_head,
+                        sample.at_ns,
+                        sample.from_target_body,
+                        sample.to_target_body,
+                    )
+                } else {
+                    // A sample during pointing/admin loss still updates the
+                    // exclusive head's held target for later reacquisition.
+                    // Shared-head predicted streams remain contract-rejected.
+                    runtime.observe_pair(
+                        &pat.from_head,
+                        &pat.to_head,
+                        sample.at_ns,
+                        sample.from_target_body,
+                        sample.to_target_body,
+                    )
+                };
+                let provisional = expected
+                    .get(&(sample.link_id.clone(), sample.at_ns))
+                    .ok_or("missing provisional BODY-frame observation")?;
+                if observed.ok().as_ref() != provisional.as_ref() {
+                    return Err("PAT lease replay diverged from predicted head history".into());
+                }
+            }
+        }
+    }
+    Ok(runtime)
+}
+
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
     let mut prepared = scenario.clone();
     if scenario.optical_pat.is_empty() {
@@ -760,18 +877,22 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     let mut follower_runtime = (!scenario.optical_body_following_samples.is_empty())
         .then(|| BodyHeadRuntime::new(&scenario.optical_head_slew_actuators))
         .transpose()?;
+    let mut predicted_observations = HashMap::new();
     if let Some(runtime) = follower_runtime.as_mut() {
         let mut commands: Vec<_> = scenario.optical_body_following_samples.iter().collect();
         commands.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
         for command in commands {
             let pat = body_pat_links[command.link_id.as_str()];
-            let observed = runtime.observe_pair_for_link(
-                &command.link_id,
+            let observed = runtime.observe_pair(
                 &pat.from_head,
                 &pat.to_head,
                 command.at_ns,
                 command.from_target_body,
                 command.to_target_body,
+            );
+            predicted_observations.insert(
+                (command.link_id.clone(), command.at_ns),
+                observed.as_ref().ok().copied(),
             );
             let allowed = match observed {
                 Ok((from_boresight_body, to_boresight_body)) => {
@@ -1097,6 +1218,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             )?
         }
     };
+    if follower_runtime.is_some() {
+        // Verify lease acquisition/release against the actual PAT reservations.
+        // The provisional pass remains the source of immutable PAT projections.
+        replay_pat_head_leases(scenario, &plan.reservations, &predicted_observations)?;
+    }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
         let source = source_by_end
@@ -1540,6 +1666,71 @@ mod tests {
         assert!(hops
             .iter()
             .any(|hop| hop.transmit_started_ns >= 200_000_000));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn predicted_pat_leases_release_at_fault_and_contact_boundaries() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let mut provisional = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators).unwrap();
+        let mut expected = HashMap::new();
+        for sample in &scenario.optical_body_following_samples {
+            let pat = &scenario.optical_pat[0];
+            let observed = provisional.observe_pair(
+                &pat.from_head,
+                &pat.to_head,
+                sample.at_ns,
+                sample.from_target_body,
+                sample.to_target_body,
+            );
+            expected.insert((sample.link_id.clone(), sample.at_ns), observed.ok());
+        }
+        let reservation = |start_ns, end_ns| PatReservation {
+            link_id: "isl-a-b".into(),
+            from_head: "sat-a/head-1".into(),
+            to_head: "sat-b/head-1".into(),
+            start_ns,
+            end_ns,
+        };
+        let reservations = vec![
+            reservation(0, 30_000_000),
+            reservation(90_000_000, 120_000_000),
+            reservation(120_000_000, 350_000_000),
+        ];
+        let mut replayed = replay_pat_head_leases(&scenario, &reservations, &expected).unwrap();
+        for sample in &scenario.optical_body_following_samples {
+            for head in ["sat-a/head-1", "sat-b/head-1"] {
+                assert_eq!(
+                    replayed.predicted_at(head, sample.at_ns).unwrap(),
+                    provisional.predicted_at(head, sample.at_ns).unwrap()
+                );
+            }
+        }
+        assert!(replayed
+            .observe("sat-a/head-1", 349_000_000, [1.0, 0.0, 0.0])
+            .is_err());
+        assert!(replayed
+            .observe("sat-a/head-1", 350_000_000, [1.0, 0.0, 0.0])
+            .is_ok());
+
+        let mut conflicting = reservations.clone();
+        conflicting.push(PatReservation {
+            link_id: "other-link".into(),
+            from_head: "sat-a/head-1".into(),
+            to_head: "sat-b/head-1".into(),
+            start_ns: 100_000_000,
+            end_ns: 110_000_000,
+        });
+        assert!(replay_pat_head_leases(&scenario, &conflicting, &expected).is_err());
+
+        let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
