@@ -68,6 +68,100 @@ pub struct PatPlan {
     pub events: Vec<PatEvent>,
 }
 
+/// Canonical half-open PAT lease boundary, ordered by virtual time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatLeaseTransitionKind {
+    Release,
+    Reserve,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatLeaseTransition {
+    pub at_ns: u64,
+    pub kind: PatLeaseTransitionKind,
+    /// Index into the caller's reservation slice.
+    pub reservation_index: usize,
+}
+
+/// Preflight all accepted reservations before mutating SYS-02 command leases.
+/// Releases precede reservations at equal times, permitting exact handoff.
+/// Invalid intervals, duplicate active links and overlapping heads fail closed.
+/// This is offline O(A log A) validation, not live arbitration.
+pub fn reservation_transitions(
+    reservations: &[PatReservation],
+) -> Result<Vec<PatLeaseTransition>, String> {
+    if reservations.len() > MAX_CANDIDATES {
+        return Err("PAT reservation budget exceeded".into());
+    }
+    let mut timeline = Vec::with_capacity(reservations.len() * 2);
+    for (index, reservation) in reservations.iter().enumerate() {
+        if reservation.link_id.trim().is_empty()
+            || reservation.from_head.trim().is_empty()
+            || reservation.to_head.trim().is_empty()
+            || reservation.from_head == reservation.to_head
+            || reservation.start_ns >= reservation.end_ns
+        {
+            return Err("invalid PAT head reservation interval or identifiers".into());
+        }
+        timeline.push(PatLeaseTransition {
+            at_ns: reservation.start_ns,
+            kind: PatLeaseTransitionKind::Reserve,
+            reservation_index: index,
+        });
+        timeline.push(PatLeaseTransition {
+            at_ns: reservation.end_ns,
+            kind: PatLeaseTransitionKind::Release,
+            reservation_index: index,
+        });
+    }
+    let order = |event: &PatLeaseTransition| {
+        (
+            event.at_ns,
+            match event.kind {
+                PatLeaseTransitionKind::Release => 0_u8,
+                PatLeaseTransitionKind::Reserve => 1_u8,
+            },
+            reservations[event.reservation_index].link_id.as_str(),
+            event.reservation_index,
+        )
+    };
+    timeline.sort_by(|a, b| order(a).cmp(&order(b)));
+
+    let mut active_links: HashMap<&str, (&str, &str)> = HashMap::new();
+    let mut head_owners: HashMap<&str, &str> = HashMap::new();
+    for event in &timeline {
+        let reservation = &reservations[event.reservation_index];
+        let link = reservation.link_id.as_str();
+        let from = reservation.from_head.as_str();
+        let to = reservation.to_head.as_str();
+        match event.kind {
+            PatLeaseTransitionKind::Reserve => {
+                if active_links.contains_key(link)
+                    || head_owners.contains_key(from)
+                    || head_owners.contains_key(to)
+                {
+                    return Err("overlapping PAT head reservations".into());
+                }
+                active_links.insert(link, (from, to));
+                head_owners.insert(from, link);
+                head_owners.insert(to, link);
+            }
+            PatLeaseTransitionKind::Release => {
+                if active_links.get(link).copied() != Some((from, to))
+                    || head_owners.get(from).copied() != Some(link)
+                    || head_owners.get(to).copied() != Some(link)
+                {
+                    return Err("PAT reservation release ownership mismatch".into());
+                }
+                active_links.remove(link);
+                head_owners.remove(from);
+                head_owners.remove(to);
+            }
+        }
+    }
+    Ok(timeline)
+}
+
 /// Constant-rate body-frame gimbal slew assumption for one exclusive head.
 /// This is a sampled actuator travel-time model, not a servo or torque model.
 #[derive(Clone, Debug, PartialEq)]
@@ -453,6 +547,83 @@ mod tests {
             slew_ns: 2,
             acquisition_ns: 3,
         }
+    }
+
+    #[test]
+    fn lease_transitions_are_deterministic_and_release_before_reacquire() {
+        let reservation = |link: &str, from: &str, to: &str, start, end| PatReservation {
+            link_id: link.into(),
+            from_head: from.into(),
+            to_head: to.into(),
+            start_ns: start,
+            end_ns: end,
+        };
+        let reservations = vec![
+            reservation("z-second", "a", "c", 20, 40),
+            reservation("a-first", "a", "b", 0, 20),
+            reservation("m-independent", "d", "e", 20, 30),
+        ];
+        let labels = |input: &[PatReservation]| {
+            reservation_transitions(input)
+                .unwrap()
+                .iter()
+                .map(|event| {
+                    (
+                        event.at_ns,
+                        event.kind,
+                        input[event.reservation_index].link_id.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        use PatLeaseTransitionKind::{Release, Reserve};
+        let expected = vec![
+            (0, Reserve, "a-first".into()),
+            (20, Release, "a-first".into()),
+            (20, Reserve, "m-independent".into()),
+            (20, Reserve, "z-second".into()),
+            (30, Release, "m-independent".into()),
+            (40, Release, "z-second".into()),
+        ];
+        assert_eq!(labels(&reservations), expected);
+        let mut reversed = reservations.clone();
+        reversed.reverse();
+        assert_eq!(labels(&reversed), expected);
+    }
+
+    #[test]
+    fn lease_transitions_reject_invalid_and_overlapping_reservations() {
+        let valid = PatReservation {
+            link_id: "first".into(),
+            from_head: "a".into(),
+            to_head: "b".into(),
+            start_ns: 10,
+            end_ns: 30,
+        };
+        let mut conflict = valid.clone();
+        conflict.link_id = "second".into();
+        conflict.to_head = "c".into();
+        conflict.start_ns = 20;
+        conflict.end_ns = 40;
+        assert!(reservation_transitions(&[valid.clone(), conflict.clone()]).is_err());
+
+        conflict.from_head = "c".into();
+        conflict.to_head = "d".into();
+        conflict.link_id = "first".into();
+        assert!(reservation_transitions(&[valid.clone(), conflict]).is_err());
+
+        let mut invalid = valid.clone();
+        invalid.end_ns = invalid.start_ns;
+        assert!(reservation_transitions(&[invalid]).is_err());
+        let mut invalid = valid.clone();
+        invalid.to_head = invalid.from_head.clone();
+        assert!(reservation_transitions(&[invalid]).is_err());
+        let mut invalid = valid.clone();
+        invalid.link_id = " ".into();
+        assert!(reservation_transitions(&[invalid]).is_err());
+
+        assert_eq!(reservation_transitions(&[]).unwrap(), vec![]);
+        assert_eq!(reservation_transitions(&[valid]).unwrap().len(), 2);
     }
 
     #[test]

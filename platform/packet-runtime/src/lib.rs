@@ -5,8 +5,9 @@ use ntarlink_contracts::{
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
-    plan_contacts, plan_contacts_with_slew, plan_contacts_with_slew_starts, HeadSlewActuator,
-    PatCandidate, PatReservation, PatSlewStart, PatSlewTarget, PatState,
+    plan_contacts, plan_contacts_with_slew, plan_contacts_with_slew_starts,
+    reservation_transitions, HeadSlewActuator, PatCandidate, PatLeaseTransitionKind,
+    PatReservation, PatSlewStart, PatSlewTarget, PatState,
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
@@ -692,20 +693,16 @@ fn replay_pat_head_leases(
         Sample(usize),
     }
 
+    // Validate the full SYS-03 reservation schedule before lease mutation.
+    // Its canonical edges also define future single-runtime PAT ordering.
     let mut timeline = Vec::new();
-    for (index, reservation) in reservations.iter().enumerate() {
-        timeline.push((
-            reservation.end_ns,
-            0_u8,
-            reservation.link_id.as_str(),
-            Transition::Release(index),
-        ));
-        timeline.push((
-            reservation.start_ns,
-            1_u8,
-            reservation.link_id.as_str(),
-            Transition::Reserve(index),
-        ));
+    for event in reservation_transitions(reservations)? {
+        let reservation = &reservations[event.reservation_index];
+        let (priority, transition) = match event.kind {
+            PatLeaseTransitionKind::Release => (0_u8, Transition::Release(event.reservation_index)),
+            PatLeaseTransitionKind::Reserve => (1_u8, Transition::Reserve(event.reservation_index)),
+        };
+        timeline.push((event.at_ns, priority, reservation.link_id.as_str(), transition));
     }
     for (index, sample) in scenario.optical_body_following_samples.iter().enumerate() {
         timeline.push((
@@ -1705,10 +1702,17 @@ mod tests {
             reservation(120_000_000, 350_000_000),
         ];
         let mut replayed = replay_pat_head_leases(&scenario, &reservations, &expected).unwrap();
+        let mut reversed = reservations.clone();
+        reversed.reverse();
+        let replayed_reversed = replay_pat_head_leases(&scenario, &reversed, &expected).unwrap();
         for sample in &scenario.optical_body_following_samples {
             for head in ["sat-a/head-1", "sat-b/head-1"] {
                 assert_eq!(
                     replayed.predicted_at(head, sample.at_ns).unwrap(),
+                    provisional.predicted_at(head, sample.at_ns).unwrap()
+                );
+                assert_eq!(
+                    replayed_reversed.predicted_at(head, sample.at_ns).unwrap(),
                     provisional.predicted_at(head, sample.at_ns).unwrap()
                 );
             }
