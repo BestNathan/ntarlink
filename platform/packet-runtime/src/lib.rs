@@ -1811,7 +1811,7 @@ mod tests {
             end_ns: 10_000_000,
         };
         let expected = HashMap::new();
-        assert!(replay_pat_head_leases(&scenario, &[valid.clone()], &expected).is_ok());
+        assert!(replay_pat_head_leases(&scenario, std::slice::from_ref(&valid), &expected).is_ok());
 
         let mut swapped = valid.clone();
         std::mem::swap(&mut swapped.from_head, &mut swapped.to_head);
