@@ -259,3 +259,14 @@ offline lease-verification pass. Fault-gap commands remain unleased
 under the existing exclusive-head scenario contract. This change is not
 a live single-pass actuator scheduler or shared-head command arbiter.
 
+
+## Reservation endpoint preflight
+
+The packet adapter verifies every accepted SYS-03 reservation against its
+configured PAT link and ordered optical-head endpoints before starting the
+SYS-02 lease replay. The check also covers intervals without sampled
+commands, which previously bypassed the sample-time endpoint guard.
+Unknown links and mismatched head pairs fail closed without modifying
+actuator state. The sample-time endpoint check remains as defense in depth.
+This is O(A) expected-time validation for A accepted reservations and does
+not change the offline two-pass model or admit shared-head predicted streams.
