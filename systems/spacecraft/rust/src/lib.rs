@@ -1,5 +1,7 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
-use ntarlink_contracts::{OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalPointing};
+use ntarlink_contracts::{
+    OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalPointing,
+};
 use std::collections::HashMap;
 
 /// Conservative static steering-envelope gate for an operator-supplied
