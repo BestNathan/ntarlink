@@ -436,10 +436,15 @@ def main(argv=None):
                                help="Compile SGP4 ITRS positions and attitude into Rust-native geometry observations")
     parser.add_argument("--native-itrs-max-body-los-rate-deg-per-s", type=float,
                         help="Fail closed on sampled spacecraft-body LOS slew rate (deg/s); requires native ITRS")
+    parser.add_argument("--native-itrs-max-body-los-accel-deg-per-s2", type=float,
+                        help="Fail closed on sampled body-frame LOS angular acceleration (deg/s^2); requires native ITRS")
     args = parser.parse_args(argv)
     if (args.native_itrs_max_body_los_rate_deg_per_s is not None
             and args.native_itrs_probes_per_contact is None):
         raise ValueError("body LOS rate limit requires --native-itrs-probes-per-contact")
+    if (args.native_itrs_max_body_los_accel_deg_per_s2 is not None
+            and args.native_itrs_probes_per_contact is None):
+        raise ValueError("body LOS acceleration limit requires --native-itrs-probes-per-contact")
     inputs = [args.scenario, args.orbit_config, args.attitude_config]
     manifest_path = Path(str(args.out) + ".optical-manifest.json")
     if len({p.resolve() for p in [*inputs, args.out, manifest_path]}) != 5:
@@ -472,6 +477,7 @@ def main(argv=None):
         compiled, native_itrs_plan = compile_native_itrs(
             scenario, compiled, provider, args.native_itrs_probes_per_contact,
             attitude, args.native_itrs_max_body_los_rate_deg_per_s,
+            args.native_itrs_max_body_los_accel_deg_per_s2,
         )
     output = (json.dumps(compiled, indent=2, allow_nan=False) + "\n").encode()
     head_rates = _heads(attitude, scenario["duration_ns"])
