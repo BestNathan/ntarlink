@@ -784,16 +784,16 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 .expect("validated to-head follower")
                 .observe(command.at_ns, command.to_target_body);
             if from.is_ok() {
-                follower_history.entry(pat.from_head.as_str()).or_default().push((
-                    command.at_ns,
-                    followers[pat.from_head.as_str()].clone(),
-                ));
+                follower_history
+                    .entry(pat.from_head.as_str())
+                    .or_default()
+                    .push((command.at_ns, followers[pat.from_head.as_str()].clone()));
             }
             if to.is_ok() {
-                follower_history.entry(pat.to_head.as_str()).or_default().push((
-                    command.at_ns,
-                    followers[pat.to_head.as_str()].clone(),
-                ));
+                follower_history
+                    .entry(pat.to_head.as_str())
+                    .or_default()
+                    .push((command.at_ns, followers[pat.to_head.as_str()].clone()));
             }
             let allowed = match (from, to) {
                 (Ok(from_boresight_body), Ok(to_boresight_body)) => {
