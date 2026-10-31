@@ -128,9 +128,7 @@ pub fn geometry_los_acceleration_allowed(
             return None;
         }
         let los = |sample: &OpticalGeometry| {
-            std::array::from_fn::<_, 3, _>(|i| {
-                sample.to_position_m[i] - sample.from_position_m[i]
-            })
+            std::array::from_fn::<_, 3, _>(|i| sample.to_position_m[i] - sample.from_position_m[i])
         };
         let norm = |v: [f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
         let elapsed_s = (b.at_ns - a.at_ns) as f64 * 1.0e-9;
@@ -158,7 +156,10 @@ pub fn geometry_los_acceleration_allowed(
         }
         let scale = sine.atan2(dot).to_degrees() / (sine * elapsed_s);
         let velocity = cross.map(|component| component * scale);
-        velocity.iter().all(|value| value.is_finite()).then_some(velocity)
+        velocity
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(velocity)
     }
 
     let (Some(before), Some(after)) = (
@@ -167,9 +168,8 @@ pub fn geometry_los_acceleration_allowed(
     ) else {
         return false;
     };
-    let midpoint_seconds = ((second.at_ns - first.at_ns) as f64
-        + (third.at_ns - second.at_ns) as f64)
-        * 0.5e-9;
+    let midpoint_seconds =
+        ((second.at_ns - first.at_ns) as f64 + (third.at_ns - second.at_ns) as f64) * 0.5e-9;
     let acceleration = before
         .iter()
         .zip(after)
@@ -363,7 +363,10 @@ mod tests {
             &initial, &second, &third, 120_001.0
         ));
         assert!(!geometry_los_acceleration_allowed(
-            &initial, &second, &third, f64::NAN
+            &initial,
+            &second,
+            &third,
+            f64::NAN
         ));
         assert!(!geometry_los_acceleration_allowed(
             &initial, &second, &third, -1.0

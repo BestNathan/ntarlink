@@ -725,7 +725,10 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .collect();
     let mut previous_geometry: HashMap<
         &str,
-        (&ntarlink_contracts::OpticalGeometry, Option<&ntarlink_contracts::OpticalGeometry>),
+        (
+            &ntarlink_contracts::OpticalGeometry,
+            Option<&ntarlink_contracts::OpticalGeometry>,
+        ),
     > = HashMap::new();
     steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
         let previous = previous_geometry.get(sample.link_id.as_str()).copied();
@@ -1757,9 +1760,10 @@ mod tests {
         let mut unbounded = scenario.clone();
         unbounded.optical_tracking_accelerations.clear();
         let baseline = run(&unbounded).unwrap();
-        assert!(!baseline.pat_events.iter().any(|event| {
-            event.at_ns == 50_000_000 && event.state == "lost"
-        }));
+        assert!(!baseline
+            .pat_events
+            .iter()
+            .any(|event| { event.at_ns == 50_000_000 && event.state == "lost" }));
         assert!(baseline.pat_events.iter().any(|event| {
             event.at_ns == 55_000_000
                 && event.state == "lost"

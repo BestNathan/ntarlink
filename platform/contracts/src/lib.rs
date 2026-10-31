@@ -995,8 +995,14 @@ impl Scenario {
                     ));
                 }
                 for (head, limit) in [
-                    (pat.from_head.as_str(), acceleration.from_max_los_accel_deg_per_s2),
-                    (pat.to_head.as_str(), acceleration.to_max_los_accel_deg_per_s2),
+                    (
+                        pat.from_head.as_str(),
+                        acceleration.from_max_los_accel_deg_per_s2,
+                    ),
+                    (
+                        pat.to_head.as_str(),
+                        acceleration.to_max_los_accel_deg_per_s2,
+                    ),
                 ] {
                     if !limit.is_finite() || limit < 0.0 {
                         return Err(format!("invalid optical tracking acceleration for {head}"));
