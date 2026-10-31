@@ -103,6 +103,83 @@ pub fn geometry_los_rate_allowed(
     angle_deg.is_finite() && angle_deg <= max_rate_deg_per_s * elapsed_s + 1.0e-9
 }
 
+/// Finite-difference ITRS LOS angular acceleration at the third observation.
+/// The signed rotation vectors detect direction reversals that scalar angular
+/// speed differences miss. An exact antiparallel LOS has no unique rotation
+/// axis and fails closed. This is not body-frame actuator acceleration.
+pub fn geometry_los_acceleration_allowed(
+    first: &OpticalGeometry,
+    second: &OpticalGeometry,
+    third: &OpticalGeometry,
+    max_acceleration_deg_per_s2: f64,
+) -> bool {
+    if !max_acceleration_deg_per_s2.is_finite()
+        || max_acceleration_deg_per_s2 < 0.0
+        || first.link_id != second.link_id
+        || second.link_id != third.link_id
+        || first.at_ns >= second.at_ns
+        || second.at_ns >= third.at_ns
+    {
+        return false;
+    }
+
+    fn angular_velocity(a: &OpticalGeometry, b: &OpticalGeometry) -> Option<[f64; 3]> {
+        if a.frame != "ITRS" || b.frame != "ITRS" {
+            return None;
+        }
+        let los = |sample: &OpticalGeometry| {
+            std::array::from_fn::<_, 3, _>(|i| sample.to_position_m[i] - sample.from_position_m[i])
+        };
+        let norm = |v: [f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let elapsed_s = (b.at_ns - a.at_ns) as f64 * 1.0e-9;
+        let a = los(a);
+        let b = los(b);
+        let a_norm = norm(a);
+        let b_norm = norm(b);
+        if !a_norm.is_finite() || !b_norm.is_finite() || a_norm <= 0.0 || b_norm <= 0.0 {
+            return None;
+        }
+        let a = a.map(|v| v / a_norm);
+        let b = b.map(|v| v / b_norm);
+        let cross = [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ];
+        let sine = norm(cross);
+        let dot = a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+        if !sine.is_finite() || !dot.is_finite() || (dot < 0.0 && sine < 1.0e-12) {
+            return None;
+        }
+        if sine == 0.0 {
+            return Some([0.0; 3]);
+        }
+        let scale = sine.atan2(dot).to_degrees() / (sine * elapsed_s);
+        let velocity = cross.map(|component| component * scale);
+        velocity
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(velocity)
+    }
+
+    let (Some(before), Some(after)) = (
+        angular_velocity(first, second),
+        angular_velocity(second, third),
+    ) else {
+        return false;
+    };
+    let midpoint_seconds =
+        ((second.at_ns - first.at_ns) as f64 + (third.at_ns - second.at_ns) as f64) * 0.5e-9;
+    let acceleration = before
+        .iter()
+        .zip(after)
+        .map(|(a, b)| (b - a) * (b - a))
+        .sum::<f64>()
+        .sqrt()
+        / midpoint_seconds;
+    acceleration.is_finite() && acceleration <= max_acceleration_deg_per_s2 + 1.0e-6
+}
+
 /// Indexed half-open outage windows for spacecraft-owned optical heads.
 /// Scenario validation rejects overlaps and unknown head ownership.
 #[derive(Default)]
@@ -259,6 +336,62 @@ mod tests {
         assert!(geometry_los_rate_allowed(&initial, &rotated, 0.0));
         rotated.to_position_m = initial.from_position_m;
         assert!(!geometry_los_rate_allowed(&initial, &rotated, 5000.0));
+    }
+
+    #[test]
+    fn sampled_itrs_los_acceleration_detects_steps_reversal_and_ambiguity() {
+        let initial = OpticalGeometry {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "ITRS".into(),
+            from_position_m: [7_000_000.0, 0.0, 0.0],
+            to_position_m: [7_001_000.0, 0.0, 0.0],
+            from_boresight_itrs: [1.0, 0.0, 0.0],
+            to_boresight_itrs: [-1.0, 0.0, 0.0],
+            from_max_off_axis_deg: 30.0,
+            to_max_off_axis_deg: 30.0,
+        };
+        let mut second = initial.clone();
+        second.at_ns = 30_000_000;
+        second.to_position_m = [7_000_000.0, 1000.0, 0.0];
+        let mut third = second.clone();
+        third.at_ns = 50_000_000;
+        assert!(!geometry_los_acceleration_allowed(
+            &initial, &second, &third, 100_000.0
+        ));
+        assert!(geometry_los_acceleration_allowed(
+            &initial, &second, &third, 120_001.0
+        ));
+        assert!(!geometry_los_acceleration_allowed(
+            &initial,
+            &second,
+            &third,
+            f64::NAN
+        ));
+        assert!(!geometry_los_acceleration_allowed(
+            &initial, &second, &third, -1.0
+        ));
+        third.at_ns = 60_000_000;
+        third.to_position_m = initial.to_position_m;
+        assert!(!geometry_los_acceleration_allowed(
+            &initial, &second, &third, 150_000.0
+        ));
+        assert!(geometry_los_acceleration_allowed(
+            &initial, &second, &third, 200_001.0
+        ));
+        second.to_position_m = [6_999_000.0, 0.0, 0.0];
+        assert!(!geometry_los_acceleration_allowed(
+            &initial, &second, &third, 1.0e9
+        ));
+        second.to_position_m = initial.to_position_m;
+        third.to_position_m = initial.to_position_m;
+        assert!(geometry_los_acceleration_allowed(
+            &initial, &second, &third, 0.0
+        ));
+        third.to_position_m = third.from_position_m;
+        assert!(!geometry_los_acceleration_allowed(
+            &initial, &second, &third, 1.0e9
+        ));
     }
 
     #[test]

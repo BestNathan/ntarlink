@@ -202,6 +202,16 @@ pub struct OpticalTrackingRate {
     pub to_max_los_rate_deg_per_s: f64,
 }
 
+/// Optional per-head bound on the sampled ITRS LOS angular acceleration.
+/// A finite-difference motion proxy, not a spacecraft-body gimbal controller.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalTrackingAcceleration {
+    pub link_id: String,
+    pub from_max_los_accel_deg_per_s2: f64,
+    pub to_max_los_accel_deg_per_s2: f64,
+}
+
 /// One frame-tagged SYS-02 pointing snapshot at the start of a geometric ISL contact.
 /// All vectors are ITRS Earth-fixed Cartesian coordinates; positions are meters.
 /// Boresight directions are unitless and fixed over the entire contact window.
@@ -267,6 +277,9 @@ pub struct Scenario {
     /// Optional per-PAT-link rate limits for consecutive native ITRS LOS samples.
     #[serde(default)]
     pub optical_tracking_rates: Vec<OpticalTrackingRate>,
+    /// Optional per-PAT-link angular acceleration limits for three ITRS samples.
+    #[serde(default)]
+    pub optical_tracking_accelerations: Vec<OpticalTrackingAcceleration>,
     /// Optional ITRS position/boresight snapshots at each PAT contact start.
     #[serde(default)]
     pub optical_geometry: Vec<OpticalGeometry>,
@@ -954,6 +967,57 @@ impl Scenario {
                 }
             }
         }
+        if self.optical_tracking_accelerations.len() > self.optical_pat.len() {
+            return Err("optical tracking acceleration configuration limit exceeded".into());
+        }
+        if !self.optical_tracking_accelerations.is_empty() {
+            if self.optical_geometry_samples.is_empty() {
+                return Err("optical tracking accelerations require native ITRS samples".into());
+            }
+            let mut configured_links = HashSet::new();
+            let mut head_limits: std::collections::HashMap<&str, f64> =
+                std::collections::HashMap::new();
+            for acceleration in &self.optical_tracking_accelerations {
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == acceleration.link_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "unknown PAT optical tracking acceleration link: {}",
+                            acceleration.link_id
+                        )
+                    })?;
+                if !configured_links.insert(acceleration.link_id.as_str()) {
+                    return Err(format!(
+                        "duplicate optical tracking acceleration link: {}",
+                        acceleration.link_id
+                    ));
+                }
+                for (head, limit) in [
+                    (
+                        pat.from_head.as_str(),
+                        acceleration.from_max_los_accel_deg_per_s2,
+                    ),
+                    (
+                        pat.to_head.as_str(),
+                        acceleration.to_max_los_accel_deg_per_s2,
+                    ),
+                ] {
+                    if !limit.is_finite() || limit < 0.0 {
+                        return Err(format!("invalid optical tracking acceleration for {head}"));
+                    }
+                    if head_limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
+                        return Err(format!(
+                            "inconsistent optical head tracking acceleration: {head}"
+                        ));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -1202,6 +1266,37 @@ mod tests {
         scenario.optical_tracking_rates[0].link_id = "missing".into();
         assert!(scenario.validate().unwrap_err().contains("unknown PAT"));
         scenario.optical_tracking_rates[0].link_id = "isl-a-b".into();
+        scenario.optical_geometry_samples.clear();
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("require native ITRS"));
+    }
+
+    #[test]
+    fn optical_tracking_acceleration_contract_requires_native_itrs_and_consistent_heads() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-itrs-los-acceleration-gate.json"
+        ))
+        .unwrap();
+        let encoded = serde_json::to_string(&scenario).unwrap();
+        assert!(encoded.contains("optical_tracking_accelerations"));
+        scenario.optical_tracking_accelerations[0].from_max_los_accel_deg_per_s2 = f64::NAN;
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("invalid optical tracking acceleration"));
+        scenario.optical_tracking_accelerations[0].from_max_los_accel_deg_per_s2 = -1.0;
+        assert!(scenario.validate().is_err());
+        scenario.optical_tracking_accelerations[0].from_max_los_accel_deg_per_s2 = 100_000.0;
+        scenario
+            .optical_tracking_accelerations
+            .push(scenario.optical_tracking_accelerations[0].clone());
+        assert!(scenario.validate().is_err());
+        scenario.optical_tracking_accelerations.pop();
+        scenario.optical_tracking_accelerations[0].link_id = "missing".into();
+        assert!(scenario.validate().unwrap_err().contains("unknown PAT"));
+        scenario.optical_tracking_accelerations[0].link_id = "isl-a-b".into();
         scenario.optical_geometry_samples.clear();
         assert!(scenario
             .validate()

@@ -204,6 +204,27 @@ jobs:
           assert r["injected"] == r["delivered"] + r["dropped"], r
           print("Sampled pointing tracking:", tracking, "delivered", r["delivered"])
           PY
+      - name: Verify sampled ITRS LOS acceleration gates PAT and packet forwarding
+        run: |
+          python3 -m json.tool scenarios/optical-itrs-los-acceleration-gate.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-itrs-los-acceleration-gate.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-itrs-los-acceleration-gate.json --json > /tmp/itrs-los-acceleration-report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/itrs-los-acceleration-report.json"))
+          tracking = [e["at_ns"] for e in report["pat_events"] if e["state"] == "tracking"]
+          assert tracking == [20000000, 95000000, 140000000], tracking
+          assert any(e["at_ns"] == 50000000 and e["state"] == "lost"
+                     and e["reason"] == "sampled_pointing_loss" for e in report["pat_events"])
+          edges = [(e["at_ns"], e["kind"]) for e in report["control_events"]
+                   if e["link_id"] == "isl-a-b" and e["kind"] in ("link_down", "link_up")]
+          assert edges == [(50000000, "link_down"), (75000000, "link_up")], edges
+          hops = [h for p in report["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          assert all(not 50000000 <= h["transmit_started_ns"] < 95000000 for h in hops), hops
+          assert report["delivered"] > 0 and report["dropped"] > 0
+          assert report["injected"] == report["delivered"] + report["dropped"]
+          print("ITRS LOS acceleration gate:", tracking, report["delivered"], "delivered")
+          PY
       - name: Verify SGP4/ITRS sampled attitude feeds Rust-native PAT steering
         run: |
           python3 - <<'PY'
