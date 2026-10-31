@@ -76,6 +76,15 @@ pub struct PatSlewTarget {
     pub to_target_body: [f64; 3],
 }
 
+/// Predicted head pointing at a PAT candidate boundary, in each head's BODY frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PatSlewStart {
+    pub link_id: String,
+    pub start_ns: u64,
+    pub from_direction_body: [f64; 3],
+    pub to_direction_body: [f64; 3],
+}
+
 fn unit_direction(vector: [f64; 3]) -> Option<[f64; 3]> {
     if vector
         .iter()
@@ -174,6 +183,18 @@ pub fn plan_contacts_with_slew(
     actuators: &[HeadSlewActuator],
     targets: &[PatSlewTarget],
 ) -> Result<PatPlan, String> {
+    plan_contacts_with_slew_starts(candidates, actuators, targets, &[])
+}
+
+/// Accept predicted per-candidate pointing from SYS-02 rather than inferring
+/// the start direction from a previous PAT contact's static target.
+/// The snapshot set must cover all candidates when supplied.
+pub fn plan_contacts_with_slew_starts(
+    candidates: &[PatCandidate],
+    actuators: &[HeadSlewActuator],
+    targets: &[PatSlewTarget],
+    starts: &[PatSlewStart],
+) -> Result<PatPlan, String> {
     if (actuators.is_empty() && !targets.is_empty())
         || (!actuators.is_empty() && targets.is_empty() && !candidates.is_empty())
     {
@@ -215,6 +236,26 @@ pub fn plan_contacts_with_slew(
         {
             return Err("invalid or duplicate body-frame PAT target".into());
         }
+    }
+    let mut start_by_candidate = HashMap::new();
+    for start in starts {
+        if unit_direction(start.from_direction_body).is_none()
+            || unit_direction(start.to_direction_body).is_none()
+            || start_by_candidate
+                .insert((start.link_id.as_str(), start.start_ns), start)
+                .is_some()
+        {
+            return Err("invalid or duplicate predicted PAT start pointing".into());
+        }
+    }
+    if !starts.is_empty()
+        && (actuators.is_empty()
+            || starts.len() != candidates.len()
+            || candidates.iter().any(|candidate| {
+                !start_by_candidate.contains_key(&(candidate.link_id.as_str(), candidate.start_ns))
+            }))
+    {
+        return Err("predicted PAT start pointing must cover every candidate".into());
     }
     if !actuators.is_empty()
         && (targets.len() != candidates.len()
@@ -284,19 +325,27 @@ pub fn plan_contacts_with_slew(
             .get(&(candidate.link_id.as_str(), candidate.start_ns))
             .copied();
         let slew_ns = if let Some(target) = target {
-            let from_ns = slew_and_settle_ns(
+            let start = start_by_candidate
+                .get(&(candidate.link_id.as_str(), candidate.start_ns));
+            let from_direction = start.map(|s| s.from_direction_body).unwrap_or(
                 *head_directions
                     .get(&candidate.from_head)
                     .ok_or("missing from-head gimbal state")?,
+            );
+            let to_direction = start.map(|s| s.to_direction_body).unwrap_or(
+                *head_directions
+                    .get(&candidate.to_head)
+                    .ok_or("missing to-head gimbal state")?,
+            );
+            let from_ns = slew_and_settle_ns(
+                from_direction,
                 target.from_target_body,
                 head_rates[&candidate.from_head].0,
                 head_rates[&candidate.from_head].1,
                 head_rates[&candidate.from_head].2.unwrap_or(0),
             )?;
             let to_ns = slew_and_settle_ns(
-                *head_directions
-                    .get(&candidate.to_head)
-                    .ok_or("missing to-head gimbal state")?,
+                to_direction,
                 target.to_target_body,
                 head_rates[&candidate.to_head].0,
                 head_rates[&candidate.to_head].1,
@@ -536,6 +585,41 @@ mod tests {
                 && event.state == PatState::Rejected
                 && event.reason == Some("contact_expires_before_acquisition")
         }));
+    }
+
+    #[test]
+    fn predicted_pat_start_pointing_reuses_follower_state() {
+        let candidates = [contact("link", "a", "b", 0, 120_000_000),
+            contact("link", "a", "b", 120_000_000, 200_000_000)];
+        let actuators = ["a", "b"].map(|id| HeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 3000.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let targets = [PatSlewTarget {
+            link_id: "link".into(), start_ns: 0,
+            from_target_body: [1.0, 0.0, 0.0], to_target_body: [1.0, 0.0, 0.0],
+        }, PatSlewTarget {
+            link_id: "link".into(), start_ns: 120_000_000,
+            from_target_body: [0.0, 1.0, 0.0], to_target_body: [1.0, 0.0, 0.0],
+        }];
+        let starts = [PatSlewStart {
+            link_id: "link".into(), start_ns: 0,
+            from_direction_body: [1.0, 0.0, 0.0], to_direction_body: [1.0, 0.0, 0.0],
+        }, PatSlewStart {
+            link_id: "link".into(), start_ns: 120_000_000,
+            from_direction_body: [0.0, 1.0, 0.0], to_direction_body: [1.0, 0.0, 0.0],
+        }];
+        let old = plan_contacts_with_slew(&candidates, &actuators, &targets).unwrap();
+        let handoff = plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &starts).unwrap();
+        assert!(handoff.windows[1].start_ns < old.windows[1].start_ns);
+        assert_eq!(handoff.windows[1].start_ns, 120_000_005);
+        assert!(plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &starts[..1]).is_err());
+        let mut invalid = starts.clone();
+        invalid[1].from_direction_body = [0.0; 3];
+        assert!(plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &invalid).is_err());
     }
 
     #[test]
