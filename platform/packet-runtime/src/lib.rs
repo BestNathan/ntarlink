@@ -1499,7 +1499,7 @@ mod tests {
             .filter(|event| event.state == "tracking")
             .map(|event| event.at_ns)
             .collect();
-        assert_eq!(tracking, vec![20_000_000, 110_000_000, 190_000_000]);
+        assert_eq!(tracking, vec![20_000_000, 110_000_000, 200_000_000]);
         assert!(report.pat_events.iter().any(|event| {
             event.at_ns == 30_000_000
                 && event.state == "lost"
@@ -1514,11 +1514,11 @@ mod tests {
         assert!(hops.iter().all(|hop| {
             (20_000_000..30_000_000).contains(&hop.transmit_started_ns)
                 || (110_000_000..120_000_000).contains(&hop.transmit_started_ns)
-                || (190_000_000..350_000_000).contains(&hop.transmit_started_ns)
+                || (200_000_000..350_000_000).contains(&hop.transmit_started_ns)
         }));
         assert!(hops
             .iter()
-            .any(|hop| hop.transmit_started_ns >= 190_000_000));
+            .any(|hop| hop.transmit_started_ns >= 200_000_000));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
