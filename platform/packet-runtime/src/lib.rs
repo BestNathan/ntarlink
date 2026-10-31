@@ -858,10 +858,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .transpose()?;
     let mut predicted_observations = HashMap::new();
     if let Some(runtime) = follower_runtime.as_mut() {
-        let mut commands: Vec<_> = scenario.optical_body_following_samples.iter().collect();
-        commands.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
-        for command in commands {
-            let pat = body_pat_links[command.link_id.as_str()];
+        // Use the same SYS-03 command ordering and duplicate preflight as
+        // the later lease replay, before mutating provisional SYS-02 state.
+        let samples: Vec<_> = scenario
+            .optical_body_following_samples
+            .iter()
+            .map(|sample| (sample.at_ns, sample.link_id.as_str()))
+            .collect();
+        for event in pat_runtime_transitions(&[], &samples)? {
+            let PatRuntimeTransitionKind::Sample(index) = event.kind else {
+                return Err("unexpected lease in provisional PAT command timeline".into());
+            };
+            let command = &scenario.optical_body_following_samples[index];
+            let pat = body_pat_links
+                .get(command.link_id.as_str())
+                .ok_or("unknown predicted PAT link")?;
             let observed = runtime.observe_pair(
                 &pat.from_head,
                 &pat.to_head,
@@ -1647,6 +1658,36 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn provisional_pat_samples_fail_closed_before_follower_mutation() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let mut duplicate = scenario.clone();
+        duplicate
+            .optical_body_following_samples
+            .push(scenario.optical_body_following_samples[0].clone());
+        assert_eq!(
+            prepare_pat(&duplicate).unwrap_err(),
+            "invalid or duplicate PAT sampled head command"
+        );
+
+        let mut blank = scenario.clone();
+        blank.optical_body_following_samples[0].link_id = " ".into();
+        assert_eq!(
+            prepare_pat(&blank).unwrap_err(),
+            "invalid or duplicate PAT sampled head command"
+        );
+
+        let mut unknown = scenario;
+        unknown.optical_body_following_samples[0].link_id = "missing-link".into();
+        assert_eq!(
+            prepare_pat(&unknown).unwrap_err(),
+            "unknown predicted PAT link"
         );
     }
 
