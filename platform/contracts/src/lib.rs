@@ -164,6 +164,9 @@ pub struct OpticalHeadSlewActuator {
     pub head_id: String,
     pub initial_direction_body: [f64; 3],
     pub max_slew_rate_deg_per_s: f64,
+    /// Optional rest-to-rest acceleration cap, in degrees per second squared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_slew_acceleration_deg_per_s2: Option<f64>,
 }
 
 /// Fixed body-frame gimbal target for a geometric optical contact.
@@ -632,6 +635,9 @@ impl Scenario {
                     || !seen_heads.insert(actuator.head_id.as_str())
                     || !actuator.max_slew_rate_deg_per_s.is_finite()
                     || actuator.max_slew_rate_deg_per_s <= 0.0
+                    || actuator.max_slew_acceleration_deg_per_s2.is_some_and(|accel| {
+                        !accel.is_finite() || accel <= 0.0
+                    })
                     || actuator
                         .initial_direction_body
                         .iter()
@@ -1386,6 +1392,10 @@ mod tests {
             .unwrap_err()
             .contains("invalid body-frame gimbal actuator"));
         scenario.optical_head_slew_actuators[0].max_slew_rate_deg_per_s = 3000.0;
+        scenario.optical_head_slew_actuators[0].max_slew_acceleration_deg_per_s2 = Some(0.0);
+        assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal actuator"));
+        scenario.optical_head_slew_actuators[0].max_slew_acceleration_deg_per_s2 = Some(200_000.0);
+        scenario.validate().unwrap();
         scenario.optical_head_slew_actuators[0].head_id = "missing".into();
         assert!(scenario.validate().is_err());
     }
