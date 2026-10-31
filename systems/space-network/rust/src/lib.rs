@@ -424,9 +424,7 @@ pub fn plan_contacts_with_slew_starts(
         });
     }
     windows.sort_by(|a, b| (a.start_ns, &a.link_id).cmp(&(b.start_ns, &b.link_id)));
-    reservations.sort_by(|a, b| {
-        (a.start_ns, &a.link_id).cmp(&(b.start_ns, &b.link_id))
-    });
+    reservations.sort_by(|a, b| (a.start_ns, &a.link_id).cmp(&(b.start_ns, &b.link_id)));
     events.sort_by(|a, b| {
         (a.at_ns, state_order(a.state), &a.link_id).cmp(&(
             b.at_ns,
