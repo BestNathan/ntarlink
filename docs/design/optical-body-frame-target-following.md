@@ -97,11 +97,10 @@ the actual reservation end time. Standalone unleased APIs remain supported.
 
 **Boundary:** This is command ownership only, not PAT resource arbitration.
 The current scenario contract still rejects shared-head predicted command
-streams. The packet adapter holds each link's command lease for its lifetime
-and does not yet release it on PAT loss/contact end. SYS-03 still owns the
-separate geometric contact reservations. A future integration must align
-lease acquisition/release with PAT admission, fault and contact transitions
-before permitting shared-head predicted scenarios. This step adds constant
+streams. The packet adapter now releases leases at accepted PAT reservation ends
+in an offline second pass, including fault-split contact boundaries. SYS-03 still owns the
+separate geometric contact reservations. The offline replay aligns lease acquisition/release with PAT admission and
+fault/contact boundaries; shared-head predicted scenarios remain forbidden. This step adds constant
 expected-time ownership checks per pair and O(H) owner storage.
 
 ## Acceptance and fidelity
@@ -146,12 +145,11 @@ shared-head contention, short rejected contacts and adjacent contact
 boundaries. A SYS-03/packet-runtime regression compares the reservation
 intervals with the admitted tracking contacts and packet conservation.
 
-**Integration boundary:** These typed reservation spans are not yet
-applied to `BodyHeadRuntime::release_pair_at`. The follower still processes
-sampled commands before PAT scheduling, so this change does not claim
-event-driven lease release, shared-head predicted following or a single
-actuator owner. A future bridge must apply reservation transitions in
-virtual-time order and preserve atomic pair ownership across fault splits.
+**Integration boundary:** These typed spans now drive a second, offline
+`BodyHeadRuntime` replay with virtual-time lease transitions and atomic pair
+ownership across fault splits. The provisional follower pass still precedes
+PAT scheduling, so this is not single-pass event-driven lease release,
+shared-head predicted following or a single actuator owner.
 The extra timeline uses O(A) storage and O(A log A) ordering for A accepted
 candidates; it adds no physical fidelity or packet execution events.
 
