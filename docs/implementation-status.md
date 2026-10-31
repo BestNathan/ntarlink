@@ -1,3 +1,20 @@
+## Per-head predicted optical actuator runtime ownership
+
+SYS-02 now owns each predicted BODY-frame head's mutable follower and
+ordered successful-command snapshots in `BodyHeadRuntime`. SYS-03 PAT
+requests read-only projections at admitted contact and recovery boundaries
+rather than maintaining its own follower-history map. Unit regressions
+cover independent heads, duplicate/unknown IDs, invalid and out-of-order
+samples, non-mutating projection and retry after a rejected command. The
+existing end-to-end follower scenario remains the packet/PAT acceptance
+case; the runtime has no new scenario fields.
+
+**Fidelity and performance:** deterministic sampled rest-to-rest motion,
+O(S + H) snapshot storage and O(log S) per-head historical lookup. PAT
+reservations and servo state are still distinct; this is not shared-head
+arbitration, continuous velocity, physical calibration or a closed-loop
+controller. See [design](design/optical-body-frame-target-following.md).
+
 ## Opt-in sampled BODY-frame predicted target following
 
 SYS-02 accepts `optical_body_following_samples[]` as an alternative to
