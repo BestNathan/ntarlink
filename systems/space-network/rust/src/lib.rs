@@ -250,12 +250,10 @@ pub fn pat_runtime_transitions(
                 }
                 PatRuntimeTransitionKind::Reserve(index)
             }
-            PatRuntimeTransitionKind::Sample { index, .. } => {
-                PatRuntimeTransitionKind::Sample {
-                    index,
-                    reservation_index: active_reservations.get(link_id).copied(),
-                }
-            }
+            PatRuntimeTransitionKind::Sample { index, .. } => PatRuntimeTransitionKind::Sample {
+                index,
+                reservation_index: active_reservations.get(link_id).copied(),
+            },
         };
         timeline.push(PatRuntimeTransition { at_ns, kind });
     }
@@ -813,7 +811,13 @@ mod tests {
             end_ns: 25,
             ..first.clone()
         };
-        let samples = [(0, "link"), (5, "link"), (10, "link"), (20, "link"), (25, "link")];
+        let samples = [
+            (0, "link"),
+            (5, "link"),
+            (10, "link"),
+            (20, "link"),
+            (25, "link"),
+        ];
         let ownership = |reservations: &[PatReservation]| {
             pat_runtime_transitions(reservations, &samples)
                 .unwrap()
