@@ -184,6 +184,22 @@ pub struct OpticalPatSlewTarget {
     pub to_target_body: [f64; 3],
 }
 
+/// Operator-supplied sampled body-frame target and actual head boresight.
+/// The last observation is held until the next sample; no servo is simulated.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalBodyTrackingSample {
+    pub link_id: String,
+    pub at_ns: u64,
+    pub frame: String,
+    pub from_target_body: [f64; 3],
+    pub to_target_body: [f64; 3],
+    pub from_boresight_body: [f64; 3],
+    pub to_boresight_body: [f64; 3],
+    pub from_max_error_deg: f64,
+    pub to_max_error_deg: f64,
+}
+
 /// SYS-02 scheduled unavailability of one spacecraft-owned optical head.
 /// The half-open interval is in scenario-relative virtual nanoseconds.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -295,6 +311,9 @@ pub struct Scenario {
     /// Optional fixed body-frame target per geometric PAT contact.
     #[serde(default)]
     pub optical_pat_slew_targets: Vec<OpticalPatSlewTarget>,
+    /// Optional sampled body-frame tracking error for exclusive optical heads.
+    #[serde(default)]
+    pub optical_body_tracking_samples: Vec<OpticalBodyTrackingSample>,
     /// Optional SYS-02 head maintenance/failure windows; only PAT heads are supported.
     #[serde(default)]
     pub optical_head_outages: Vec<OpticalHeadOutage>,
@@ -679,6 +698,93 @@ impl Scenario {
                         target.link_id, target.at_ns
                     ));
                 }
+            }
+        }
+        if self.optical_body_tracking_samples.len() > 10_000 {
+            return Err("body-frame tracking sample budget exceeded".into());
+        }
+        if !self.optical_body_tracking_samples.is_empty() {
+            if self.optical_head_slew_actuators.is_empty() {
+                return Err("body-frame tracking samples require gimbal actuators".into());
+            }
+            if !self.optical_steering_samples.is_empty()
+                || !self.optical_geometry_samples.is_empty()
+                || !self.optical_geometry.is_empty()
+                || !self.optical_pointing.is_empty()
+                || self
+                    .faults
+                    .iter()
+                    .any(|fault| fault.cause == FaultCause::SampledPointing)
+            {
+                return Err("body-frame tracking samples cannot mix with other pointing modes".into());
+            }
+            let target_by_contact: std::collections::HashMap<(&str, u64), &OpticalPatSlewTarget> =
+                self.optical_pat_slew_targets
+                    .iter()
+                    .map(|target| ((target.link_id.as_str(), target.at_ns), target))
+                    .collect();
+            let norm = |v: [f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            let same_direction = |a: [f64; 3], b: [f64; 3]| {
+                let dot = a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+                dot / (norm(a) * norm(b)) >= 1.0 - 1.0e-10
+            };
+            let mut last_by_link: std::collections::HashMap<&str, u64> =
+                std::collections::HashMap::new();
+            let mut head_limits: std::collections::HashMap<&str, f64> =
+                std::collections::HashMap::new();
+            let mut covered_contacts = HashSet::new();
+            for sample in &self.optical_body_tracking_samples {
+                let pat = self
+                    .optical_pat
+                    .iter()
+                    .find(|pat| pat.link_id == sample.link_id)
+                    .ok_or_else(|| format!("unknown body-frame tracking link: {}", sample.link_id))?;
+                if sample.frame != "BODY" || sample.at_ns >= self.duration_ns {
+                    return Err(format!("invalid body-frame tracking frame or time: {}", sample.link_id));
+                }
+                if let Some(previous) = last_by_link.insert(&sample.link_id, sample.at_ns) {
+                    if sample.at_ns <= previous {
+                        return Err(format!("body-frame tracking samples must increase: {}", sample.link_id));
+                    }
+                } else if sample.at_ns != 0 {
+                    return Err(format!("body-frame tracking samples must start at zero: {}", sample.link_id));
+                }
+                for vector in [
+                    sample.from_target_body,
+                    sample.to_target_body,
+                    sample.from_boresight_body,
+                    sample.to_boresight_body,
+                ] {
+                    if vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
+                        || vector.iter().all(|v| *v == 0.0)
+                    {
+                        return Err(format!("invalid body-frame tracking vector: {}", sample.link_id));
+                    }
+                }
+                for (head, limit) in [
+                    (pat.from_head.as_str(), sample.from_max_error_deg),
+                    (pat.to_head.as_str(), sample.to_max_error_deg),
+                ] {
+                    if !limit.is_finite() || !(0.0..=180.0).contains(&limit) {
+                        return Err(format!("invalid body-frame tracking error limit: {head}"));
+                    }
+                    if head_limits.insert(head, limit).is_some_and(|previous| previous != limit) {
+                        return Err(format!("inconsistent body-frame tracking head limit: {head}"));
+                    }
+                }
+                if let Some(target) = target_by_contact.get(&(sample.link_id.as_str(), sample.at_ns)) {
+                    if !same_direction(sample.from_target_body, target.from_target_body)
+                        || !same_direction(sample.to_target_body, target.to_target_body)
+                    {
+                        return Err(format!("body-frame tracking target differs from PAT target: {}", sample.link_id));
+                    }
+                    covered_contacts.insert((sample.link_id.as_str(), sample.at_ns));
+                }
+            }
+            if last_by_link.len() != pat_links.len()
+                || covered_contacts.len() != target_by_contact.len()
+            {
+                return Err("body-frame tracking samples must cover every PAT link and contact start".into());
             }
         }
         if self.optical_head_outages.len() > 10_000 {
