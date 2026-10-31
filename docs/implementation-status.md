@@ -1,3 +1,19 @@
+## PAT reservation endpoint preflight
+
+The packet adapter now checks every accepted SYS-03 PAT reservation against
+its configured link and ordered optical-head pair before starting the
+SYS-02 command-lease replay. This includes intervals containing no sampled
+target commands. Unknown links and swapped or mismatched head endpoints
+fail closed rather than silently reserving unrelated actuators. Rust
+regressions cover valid command-free intervals, swapped endpoints and
+unknown reservation links, in addition to the existing sampled-command
+lease parity and deterministic packet/PAT acceptance.
+
+**Scope and cost:** O(A) lookups for A accepted reservations using the
+existing PAT-link index, before actuator mutation. This strengthens the
+offline two-pass bridge; it does not add live PAT arbitration, shared-head
+predicted following or a continuous servo model.
+
 ## Canonical PAT sample lease projection
 
 SYS-03 now annotates each canonical sampled command with the active
