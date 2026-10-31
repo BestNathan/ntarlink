@@ -702,7 +702,12 @@ fn replay_pat_head_leases(
             PatLeaseTransitionKind::Release => (0_u8, Transition::Release(event.reservation_index)),
             PatLeaseTransitionKind::Reserve => (1_u8, Transition::Reserve(event.reservation_index)),
         };
-        timeline.push((event.at_ns, priority, reservation.link_id.as_str(), transition));
+        timeline.push((
+            event.at_ns,
+            priority,
+            reservation.link_id.as_str(),
+            transition,
+        ));
     }
     for (index, sample) in scenario.optical_body_following_samples.iter().enumerate() {
         timeline.push((
