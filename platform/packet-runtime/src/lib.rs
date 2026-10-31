@@ -1714,6 +1714,17 @@ mod tests {
         });
         assert!(replay_pat_head_leases(&scenario, &conflicting, &expected).is_err());
 
+        // Duplicate link/timestamp commands are rejected before SYS-02 state
+        // changes, even if a caller bypasses scenario contract validation.
+        let mut duplicate = scenario.clone();
+        duplicate
+            .optical_body_following_samples
+            .push(scenario.optical_body_following_samples[0].clone());
+        assert_eq!(
+            replay_pat_head_leases(&duplicate, &reservations, &expected).unwrap_err(),
+            "invalid or duplicate PAT sampled head command"
+        );
+
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
