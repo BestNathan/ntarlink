@@ -1295,6 +1295,64 @@ mod tests {
     }
 
     #[test]
+    fn body_frame_gimbal_retargeting_and_fault_split_delay_packet_admission() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-gimbal-slew.json"
+        ))
+        .unwrap();
+        let baseline = run(&scenario).unwrap();
+        let tracking = |report: &SimulationReport| {
+            report
+                .pat_events
+                .iter()
+                .filter(|event| event.state == "tracking")
+                .map(|event| event.at_ns)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tracking(&baseline), vec![20_000_000, 160_000_000]);
+        assert_eq!(baseline.injected, baseline.delivered + baseline.dropped);
+        assert_eq!(
+            serde_json::to_vec(&baseline).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+
+        scenario.faults = vec![
+            Fault {
+                at_ns: 50_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 70_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        prepared.validate().unwrap();
+        let report = run(&scenario).unwrap();
+        assert_eq!(tracking(&report), vec![20_000_000, 90_000_000, 160_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.state == "lost"
+                && event.at_ns == 50_000_000
+                && event.reason == Some("administrative_link_down")
+        }));
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .all(|hop| {
+                (20_000_000..50_000_000).contains(&hop.transmit_started_ns)
+                    || (90_000_000..120_000_000).contains(&hop.transmit_started_ns)
+                    || (160_000_000..200_000_000).contains(&hop.transmit_started_ns)
+            }));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+    }
+
+    #[test]
     fn optical_admin_fault_releases_tracking_and_reacquires_after_recovery() {
         use ntarlink_contracts::Fault;
         let mut scenario = pat_fixture();
