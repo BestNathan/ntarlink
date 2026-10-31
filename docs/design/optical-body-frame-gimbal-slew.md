@@ -65,3 +65,33 @@ saturation, continuous tracking-error calculation or optical link budget.
 Target directions are held constant within each contact, even when a
 contact is split. The next fidelity step is sampled target evolution,
 finite acceleration/settling and tracking-error-aware loss and recovery.
+
+## Optional acceleration-limited retargeting
+
+An actuator may specify `max_slew_acceleration_deg_per_s2` as a finite,
+strictly positive angular acceleration cap. With the field omitted, the
+original constant-rate zero-ramp calculation is unchanged. When supplied,
+each admitted retarget uses a symmetric **rest-to-rest** angular motion
+profile with instantaneous switching between acceleration, constant speed,
+and deceleration. Given shortest-arc distance `theta` in degrees, maximum
+rate `v` in degrees/second and acceleration `a` in degrees/second squared:
+
+- If `theta <= v*v/a`, the triangular profile takes `2*sqrt(theta/a)` seconds.
+- Otherwise, the trapezoidal profile takes `theta/v + v/a` seconds.
+
+Travel time is rounded **up** to whole virtual nanoseconds, then combined
+with the existing fixed slew dwell and acquisition delay. Both heads slew
+in parallel; the slower head determines the start of acquisition. The
+head remains exclusively reserved until the end of the accepted contact.
+Rejected candidates do not change the stored target direction. This
+assumes the head starts and ends each retarget at rest, even after a
+fault-split contact. It does not integrate a motor state, momentum,
+torque, tracking error or continuous target motion.
+
+The synthetic acceleration fixture uses `v=3000 deg/s`, `a=200000
+deg/s^2`, and a 90-degree retarget, requiring 45 ms rather than 30 ms.
+With 10 ms acquisition, second-contact tracking begins at 175 ms.
+Contract, planner and CI packet tests cover validation, travel timing,
+contact rejection and packet conservation. Complexity remains O(C log C)
+planning and O(C + H) memory; no scale benchmark or physical calibration
+is claimed.
