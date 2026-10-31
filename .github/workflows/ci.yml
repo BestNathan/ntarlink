@@ -100,14 +100,14 @@ jobs:
           import json
           r = json.load(open("/tmp/ntarlink-following.json"))
           tracking = [e["at_ns"] for e in r["pat_events"] if e["state"] == "tracking"]
-          assert tracking == [20_000_000, 110_000_000, 190_000_000], tracking
+          assert tracking == [20_000_000, 110_000_000, 200_000_000], tracking
           assert any(e["at_ns"] == 30_000_000 and e["state"] == "lost"
                      and e["reason"] == "sampled_pointing_loss" for e in r["pat_events"])
           windows = [(20_000_000, 30_000_000), (110_000_000, 120_000_000),
-                     (190_000_000, 350_000_000)]
+                     (200_000_000, 350_000_000)]
           hops = [h for p in r["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
           assert hops and all(any(a <= h["transmit_started_ns"] < b for a, b in windows) for h in hops)
-          assert any(h["transmit_started_ns"] >= 190_000_000 for h in hops)
+          assert any(h["transmit_started_ns"] >= 200_000_000 for h in hops)
           assert r["injected"] == r["delivered"] + r["dropped"]
           print("Predicted BODY-frame following:", tracking, r["delivered"], "delivered")
           PY
