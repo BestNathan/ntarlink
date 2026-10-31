@@ -999,7 +999,10 @@ mod tests {
             .iter()
             .map(|r| (r.link_id.as_str(), r.start_ns, r.end_ns))
             .collect();
-        assert_eq!(intervals, vec![("a", 0, 100), ("c", 20, 90), ("b", 100, 200)]);
+        assert_eq!(
+            intervals,
+            vec![("a", 0, 100), ("c", 20, 90), ("b", 100, 200)]
+        );
         assert_eq!(plan.windows.len(), 3);
         assert_eq!(
             plan.windows
@@ -1008,7 +1011,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("a", 5), ("c", 25), ("b", 105)]
         );
-        assert_eq!(reservation_transitions(&plan.reservations).unwrap().len(), 6);
+        assert_eq!(
+            reservation_transitions(&plan.reservations).unwrap().len(),
+            6
+        );
         let mut reversed = candidates.to_vec();
         reversed.reverse();
         assert_eq!(plan, plan_contacts(&reversed).unwrap());
