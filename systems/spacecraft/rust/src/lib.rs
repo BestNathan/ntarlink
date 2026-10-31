@@ -229,6 +229,7 @@ pub struct BodyHeadRuntime {
     history: HashMap<String, Vec<(u64, BodyHeadFollower)>>,
     /// Link-scoped command leases. PAT scheduling still owns its own reservations.
     owners: HashMap<String, String>,
+    link_heads: HashMap<String, (String, String)>,
 }
 
 impl BodyHeadRuntime {
@@ -249,6 +250,7 @@ impl BodyHeadRuntime {
             heads,
             history: HashMap::new(),
             owners: HashMap::new(),
+            link_heads: HashMap::new(),
         })
     }
 
@@ -336,6 +338,11 @@ impl BodyHeadRuntime {
         if link_id.trim().is_empty() {
             return Err("BODY-frame runtime link ID must be nonempty".into());
         }
+        if self.link_heads.get(link_id).is_some_and(|(from, to)| {
+            from != from_head_id || to != to_head_id
+        }) {
+            return Err("BODY-frame runtime link cannot change leased endpoints".into());
+        }
         for head_id in [from_head_id, to_head_id] {
             if self.owners.get(head_id).is_some_and(|owner| owner != link_id) {
                 return Err("BODY-frame runtime head owned by another link".into());
@@ -350,6 +357,10 @@ impl BodyHeadRuntime {
         )?;
         self.owners.insert(from_head_id.to_owned(), link_id.to_owned());
         self.owners.insert(to_head_id.to_owned(), link_id.to_owned());
+        self.link_heads.insert(
+            link_id.to_owned(),
+            (from_head_id.to_owned(), to_head_id.to_owned()),
+        );
         Ok(observed)
     }
 
@@ -363,6 +374,9 @@ impl BodyHeadRuntime {
     ) -> Result<(), String> {
         if link_id.trim().is_empty()
             || from_head_id == to_head_id
+            || self.link_heads.get(link_id).is_none_or(|(from, to)| {
+                from != from_head_id || to != to_head_id
+            })
             || self.owners.get(from_head_id).map(String::as_str) != Some(link_id)
             || self.owners.get(to_head_id).map(String::as_str) != Some(link_id)
         {
@@ -370,6 +384,7 @@ impl BodyHeadRuntime {
         }
         self.owners.remove(from_head_id);
         self.owners.remove(to_head_id);
+        self.link_heads.remove(link_id);
         Ok(())
     }
 
@@ -928,6 +943,9 @@ mod tests {
             .observe_pair_for_link("isl-a-c", "a", "c", 1, initial, initial)
             .is_err());
         assert!(runtime.predicted_at("c", 1).is_err());
+        assert!(runtime
+            .observe_pair_for_link("isl-a-b", "a", "c", 1, initial, initial)
+            .is_err());
         assert!(runtime.observe("a", 1, initial).is_err());
         assert!(runtime
             .observe_pair("a", "b", 1, initial, initial)
