@@ -1,3 +1,23 @@
+## Canonical SYS-03 PAT command event timeline
+
+SYS-03 now combines its validated half-open PAT lease transitions with
+SYS-02 sampled target commands into one typed virtual-time event stream.
+The packet adapter consumes the same ordered Release, Reserve, Sample
+transitions instead of building and sorting a second ad hoc timeline.
+At equal timestamps releases precede reservations, followed by commands
+ordered by link ID. Invalid overlapping reservations, blank sample links
+and duplicate link/timestamp samples fail before actuator lease mutation.
+SYS-03 unit tests verify ordering and invalid inputs; the packet-runtime
+regression verifies duplicate rejection and preserves fault-gap, same-time
+handoff, deterministic replay and packet accounting.
+
+**Fidelity and cost:** O((A + S) log(A + S)) sorting and O(A + S)
+additional memory for A reservations and S commands. This is still
+an offline two-pass verification bridge: the provisional SYS-02 follower
+history remains the source of PAT boundary projections. It does not
+provide a single mutable actuator/PAT scheduler, shared-head predicted
+command arbitration, continuous servo or physical calibration.
+
 ## PAT replay sampled-failure parity
 
 The offline SYS-02 command-lease replay now compares each sampled

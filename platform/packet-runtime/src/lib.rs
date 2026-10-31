@@ -5,9 +5,9 @@ use ntarlink_contracts::{
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
-    plan_contacts, plan_contacts_with_slew, plan_contacts_with_slew_starts,
-    reservation_transitions, HeadSlewActuator, PatCandidate, PatLeaseTransitionKind,
-    PatReservation, PatSlewStart, PatSlewTarget, PatState,
+    pat_runtime_transitions, plan_contacts, plan_contacts_with_slew,
+    plan_contacts_with_slew_starts, HeadSlewActuator, PatCandidate, PatReservation,
+    PatRuntimeTransitionKind, PatSlewStart, PatSlewTarget, PatState,
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
@@ -687,37 +687,14 @@ fn replay_pat_head_leases(
     reservations: &[PatReservation],
     expected: &PredictedObservations,
 ) -> Result<BodyHeadRuntime, String> {
-    enum Transition {
-        Release(usize),
-        Reserve(usize),
-        Sample(usize),
-    }
-
-    // Validate the full SYS-03 reservation schedule before lease mutation.
-    // Its canonical edges also define future single-runtime PAT ordering.
-    let mut timeline = Vec::new();
-    for event in reservation_transitions(reservations)? {
-        let reservation = &reservations[event.reservation_index];
-        let (priority, transition) = match event.kind {
-            PatLeaseTransitionKind::Release => (0_u8, Transition::Release(event.reservation_index)),
-            PatLeaseTransitionKind::Reserve => (1_u8, Transition::Reserve(event.reservation_index)),
-        };
-        timeline.push((
-            event.at_ns,
-            priority,
-            reservation.link_id.as_str(),
-            transition,
-        ));
-    }
-    for (index, sample) in scenario.optical_body_following_samples.iter().enumerate() {
-        timeline.push((
-            sample.at_ns,
-            2_u8,
-            sample.link_id.as_str(),
-            Transition::Sample(index),
-        ));
-    }
-    timeline.sort_by(|a, b| (a.0, a.1, a.2).cmp(&(b.0, b.1, b.2)));
+    // SYS-03 validates the entire lease schedule and merges the sampled
+    // command edges before SYS-02 mutates any follower or command lease.
+    let samples: Vec<_> = scenario
+        .optical_body_following_samples
+        .iter()
+        .map(|sample| (sample.at_ns, sample.link_id.as_str()))
+        .collect();
+    let timeline = pat_runtime_transitions(reservations, &samples)?;
 
     let pat_links: HashMap<_, _> = scenario
         .optical_pat
@@ -726,9 +703,9 @@ fn replay_pat_head_leases(
         .collect();
     let mut runtime = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators)?;
     let mut active_links = HashSet::new();
-    for (_, _, _, transition) in timeline {
-        match transition {
-            Transition::Release(index) => {
+    for event in timeline {
+        match event.kind {
+            PatRuntimeTransitionKind::Release(index) => {
                 let reservation = &reservations[index];
                 if !active_links.remove(&reservation.link_id) {
                     return Err("PAT head reservation ended without an active lease".into());
@@ -740,7 +717,7 @@ fn replay_pat_head_leases(
                     reservation.end_ns,
                 )?;
             }
-            Transition::Reserve(index) => {
+            PatRuntimeTransitionKind::Reserve(index) => {
                 let reservation = &reservations[index];
                 if reservation.start_ns >= reservation.end_ns
                     || !active_links.insert(reservation.link_id.clone())
@@ -754,7 +731,7 @@ fn replay_pat_head_leases(
                     reservation.start_ns,
                 )?;
             }
-            Transition::Sample(index) => {
+            PatRuntimeTransitionKind::Sample(index) => {
                 let sample = &scenario.optical_body_following_samples[index];
                 let pat = pat_links
                     .get(sample.link_id.as_str())
@@ -1736,6 +1713,17 @@ mod tests {
             end_ns: 110_000_000,
         });
         assert!(replay_pat_head_leases(&scenario, &conflicting, &expected).is_err());
+
+        // Duplicate link/timestamp commands are rejected before SYS-02 state
+        // changes, even if a caller bypasses scenario contract validation.
+        let mut duplicate = scenario.clone();
+        duplicate
+            .optical_body_following_samples
+            .push(scenario.optical_body_following_samples[0].clone());
+        assert_eq!(
+            replay_pat_head_leases(&duplicate, &reservations, &expected).unwrap_err(),
+            "invalid or duplicate PAT sampled head command"
+        );
 
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
