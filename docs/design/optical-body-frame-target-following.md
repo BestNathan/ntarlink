@@ -154,3 +154,31 @@ actuator owner. A future bridge must apply reservation transitions in
 virtual-time order and preserve atomic pair ownership across fault splits.
 The extra timeline uses O(A) storage and O(A log A) ordering for A accepted
 candidates; it adds no physical fidelity or packet execution events.
+
+## Offline PAT reservation and command-lease replay
+
+The packet adapter now consumes `PatPlan.reservations[]` after SYS-03
+planning. It first evaluates all sampled follower commands without leases
+to obtain immutable PAT boundary projections. A second deterministic pass
+replays those commands through a fresh `BodyHeadRuntime` in virtual-time
+order. Each accepted reservation atomically claims both heads with
+`reserve_pair_for_link`, and its exclusive end calls
+`release_pair_at(link, from, to, end_ns)`. At equal timestamps the order is
+release, reserve, sample; this permits same-time handoff without retroactive
+commands. No synthetic actuator observation is inserted at a lease start.
+
+A sample outside any reservation (for example during administrative or
+sampled-pointing loss) uses the unleased pair API to retain target-following
+state for later PAT recovery. This is safe only because the current scenario
+contract prohibits predicted streams sharing heads across links. A command
+inside a reservation must use its link-scoped lease. The replay compares
+the exact predicted boresight results and success/failure outcomes against
+the provisional pass and fails closed if they diverge. A conflicting
+reservation or invalid historical handoff aborts the run.
+
+The bridge adds O((A + S) log(A + S)) virtual-time transition sorting and
+O(A + S + H) auxiliary memory. It is still an offline two-pass adapter:
+SYS-03 does not yet schedule a single live actuator runtime, and shared-head
+predicted admission remains unsupported. A future single-pass event engine
+must arbitrate target commands during faults and model velocity-continuous
+servo dynamics without allowing unreserved commands to bypass ownership.
