@@ -41,10 +41,8 @@ regression compares reservations and admitted forwarding windows for a
 two-contact PAT fixture, including packet conservation.
 
 **Boundary and cost:** The reservation vector adds O(A) storage and
-O(A log A) ordering for A accepted candidates. This exposes the exact
-SYS-03 ownership intervals needed for a later SYS-02 lease bridge; the
-packet adapter does not yet consume these intervals to release
-`BodyHeadRuntime` command leases. Predicted shared-head streams remain
+O(A log A) ordering for A accepted candidates. The packet adapter now consumes these intervals in a second, offline
+SYS-02 command-lease replay pass, including timed releases. Predicted shared-head streams remain
 disallowed. No continuous servo, calibrated PHY or new packet admission
 behavior is claimed. See [design](design/optical-body-frame-target-following.md).
 
@@ -58,10 +56,10 @@ including an unscoped caller, cannot submit a command retroactively before
 the release. A Rust regression covers wrong-owner release, rollback, early
 handoff rejection, same-time handoff, repeated handoff and history retention.
 
-**Scope:** This is a virtual-time-safe lease primitive, not automatic PAT
-reservation release or shared-head predicted scenario admission. The existing
+**Scope:** This virtual-time-safe lease primitive is now used by the offline
+PAT reservation replay, not shared-head predicted scenario admission. The existing
 `release_pair()` remains compatible and uses the latest committed sample
-time; future PAT integration must pass its actual reservation end timestamp.
+time; the offline PAT replay passes the actual reservation end timestamp.
 The extra barrier map requires O(H) memory and O(1) expected checks.
 
 ## Link-scoped sampled optical-head command ownership
@@ -76,7 +74,7 @@ predicted follower packet/PAT scenario remains the cross-subsystem regression.
 
 **Scope and cost:** O(1) expected owner checks and O(H) owner state. The
 scenario contract still forbids shared-head predicted streams, and the packet
-adapter does not yet release leases on PAT events. These command leases do
+adapter now replays PAT reservation starts and ends to manage leases offline. These command leases do
 not replace SYS-03's exclusive contact reservations, model continuous servo
 velocity or establish shared-head PAT arbitration. See
 [design](design/optical-body-frame-target-following.md).
