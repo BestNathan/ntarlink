@@ -95,3 +95,36 @@ Contract, planner and CI packet tests cover validation, travel timing,
 contact rejection and packet conservation. Complexity remains O(C log C)
 planning and O(C + H) memory; no scale benchmark or physical calibration
 is claimed.
+
+## Optional per-head post-slew settling
+
+Each `optical_head_slew_actuators[]` entry may specify a nonnegative
+integer `settling_ns` in scenario-relative virtual nanoseconds. Omission
+preserves the existing zero-settling schedule. The dwell is applied **only
+when the head's body-frame target differs from its last admitted target**
+(nonzero computed slew time); a zero-angle retarget does not incur a new
+settling delay. This is an operator-supplied deterministic dwell, not an
+estimate from a feedback controller or measured pointing error.
+
+For each head, the required time is `travel_ns + settling_ns` (with
+checked integer overflow) for a nonzero slew, otherwise zero. The PAT
+planner waits for the maximum of the two independent head requirements
+and the existing `slew_ns` floor, then begins acquisition. Shared-head
+reservation, fault-split recovery and rejection semantics remain unchanged:
+a rejected contact does not commit a new pointing target. The `Acquiring`
+and `Tracking` events, acquired windows and packet forwarding all move
+accordingly; no new physical state is inferred between discrete events.
+
+The synthetic `optical-body-frame-gimbal-settling.json` scenario applies
+15 ms per head after a 45 ms acceleration-limited 90-degree slew. Its
+second contact begins at 120 ms, acquires for 10 ms and tracks at **190 ms**.
+The initial zero-angle contact still tracks at 20 ms. Rust planner tests
+cover zero-angle behavior, asymmetric head dwell, contact rejection,
+overflow and input-order determinism. CI verifies a later successful
+packet forwarding window, no forwarding before acquisition, packet
+conservation and repeatable JSON traces.
+
+**Fidelity:** fixed post-motion stabilization delay only, not a measured
+tracking error, continuously moving target, closed-loop gimbal controller,
+optical power budget or a physical pointing guarantee. Complexity remains
+O(C log C) planning and O(C + H) memory; no scale benchmark is claimed.
