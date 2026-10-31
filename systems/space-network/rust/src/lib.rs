@@ -63,6 +63,8 @@ pub struct HeadSlewActuator {
     pub max_slew_rate_deg_per_s: f64,
     /// Optional rest-to-rest angular acceleration limit in degrees per second squared.
     pub max_slew_acceleration_deg_per_s2: Option<f64>,
+    /// Optional post-motion settling dwell; applied only after nonzero retargeting.
+    pub settling_ns: Option<u64>,
 }
 
 /// Fixed body-frame target for one geometric contact or recovered segment.
@@ -126,6 +128,22 @@ fn slew_time_ns(
     Ok(time_ns as u64)
 }
 
+fn slew_and_settle_ns(
+    from: [f64; 3],
+    to: [f64; 3],
+    rate_deg_per_s: f64,
+    acceleration_deg_per_s2: Option<f64>,
+    settling_ns: u64,
+) -> Result<u64, String> {
+    let travel_ns = slew_time_ns(from, to, rate_deg_per_s, acceleration_deg_per_s2)?;
+    if travel_ns == 0 {
+        return Ok(0);
+    }
+    travel_ns
+        .checked_add(settling_ns)
+        .ok_or_else(|| "gimbal slew and settling duration overflow".into())
+}
+
 fn state_order(state: PatState) -> u8 {
     match state {
         PatState::Lost => 0,
@@ -171,6 +189,7 @@ pub fn plan_contacts_with_slew(
                     (
                         actuator.max_slew_rate_deg_per_s,
                         actuator.max_slew_acceleration_deg_per_s2,
+                        actuator.settling_ns,
                     ),
                 )
                 .is_some()
@@ -265,21 +284,23 @@ pub fn plan_contacts_with_slew(
             .get(&(candidate.link_id.as_str(), candidate.start_ns))
             .copied();
         let slew_ns = if let Some(target) = target {
-            let from_ns = slew_time_ns(
+            let from_ns = slew_and_settle_ns(
                 *head_directions
                     .get(&candidate.from_head)
                     .ok_or("missing from-head gimbal state")?,
                 target.from_target_body,
                 head_rates[&candidate.from_head].0,
                 head_rates[&candidate.from_head].1,
+                head_rates[&candidate.from_head].2.unwrap_or(0),
             )?;
-            let to_ns = slew_time_ns(
+            let to_ns = slew_and_settle_ns(
                 *head_directions
                     .get(&candidate.to_head)
                     .ok_or("missing to-head gimbal state")?,
                 target.to_target_body,
                 head_rates[&candidate.to_head].0,
                 head_rates[&candidate.to_head].1,
+                head_rates[&candidate.to_head].2.unwrap_or(0),
             )?;
             candidate.slew_ns.max(from_ns).max(to_ns)
         } else {
@@ -467,12 +488,14 @@ mod tests {
                 initial_direction_body: [1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
                 max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
             },
             HeadSlewActuator {
                 head_id: "b".into(),
                 initial_direction_body: [-1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
                 max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
             },
         ];
         let targets = [
@@ -524,12 +547,14 @@ mod tests {
                 initial_direction_body: [1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 100.0,
                 max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
             },
             HeadSlewActuator {
                 head_id: "b".into(),
                 initial_direction_body: [-1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 100.0,
                 max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
             },
         ];
         let target = PatSlewTarget {
@@ -577,12 +602,14 @@ mod tests {
                 initial_direction_body: [1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
                 max_slew_acceleration_deg_per_s2: Some(200_000.0),
+                settling_ns: None,
             },
             HeadSlewActuator {
                 head_id: "b".into(),
                 initial_direction_body: [-1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
                 max_slew_acceleration_deg_per_s2: Some(200_000.0),
+                settling_ns: None,
             },
         ];
         let targets = [PatSlewTarget {
@@ -599,6 +626,99 @@ mod tests {
             .unwrap()
             .windows
             .is_empty());
+    }
+
+    #[test]
+    fn gimbal_settling_delays_only_nonzero_retargets_and_preserves_rejection_state() {
+        assert_eq!(
+            slew_and_settle_ns(
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                3000.0,
+                Some(200_000.0),
+                15_000_000,
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            slew_and_settle_ns(
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                3000.0,
+                Some(200_000.0),
+                15_000_000,
+            )
+            .unwrap(),
+            60_000_000
+        );
+        assert!(slew_and_settle_ns(
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            3000.0,
+            None,
+            u64::MAX,
+        )
+        .is_err());
+
+        let candidates = [
+            contact("link", "a", "b", 0, 120_000_000),
+            contact("link", "a", "b", 120_000_000, 180_000_000),
+            contact("link", "a", "b", 180_000_000, 280_000_000),
+        ];
+        let actuators = [
+            HeadSlewActuator {
+                head_id: "a".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+                max_slew_acceleration_deg_per_s2: Some(200_000.0),
+                settling_ns: Some(15_000_000),
+            },
+            HeadSlewActuator {
+                head_id: "b".into(),
+                initial_direction_body: [-1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+                max_slew_acceleration_deg_per_s2: Some(200_000.0),
+                settling_ns: None,
+            },
+        ];
+        let targets = [
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 0,
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [-1.0, 0.0, 0.0],
+            },
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 120_000_000,
+                from_target_body: [0.0, 1.0, 0.0],
+                to_target_body: [0.0, -1.0, 0.0],
+            },
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 180_000_000,
+                from_target_body: [0.0, 1.0, 0.0],
+                to_target_body: [0.0, -1.0, 0.0],
+            },
+        ];
+        let plan = plan_contacts_with_slew(&candidates, &actuators, &targets).unwrap();
+        assert_eq!(
+            plan.windows.iter().map(|w| w.start_ns).collect::<Vec<_>>(),
+            vec![5, 240_000_003]
+        );
+        assert!(plan.events.iter().any(|event| {
+            event.at_ns == 120_000_000
+                && event.state == PatState::Rejected
+                && event.reason == Some("contact_expires_before_acquisition")
+        }));
+        let reversed = plan_contacts_with_slew(
+            &[candidates[2].clone(), candidates[0].clone(), candidates[1].clone()],
+            &actuators,
+            &[targets[2].clone(), targets[0].clone(), targets[1].clone()],
+        )
+        .unwrap();
+        assert_eq!(plan, reversed);
     }
 
     #[test]
