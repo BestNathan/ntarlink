@@ -4,7 +4,7 @@
 //! come from SYS-01; neither a contact nor this schedule is an optical PHY
 //! measurement or a packet-runtime admission decision.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub const MAX_CANDIDATES: usize = 100_000;
 
@@ -160,6 +160,75 @@ pub fn reservation_transitions(
         }
     }
     Ok(timeline)
+}
+
+/// Typed virtual-time transitions for PAT leases and sampled head commands.
+/// The packet adapter supplies SYS-02 samples without moving command ownership
+/// into SYS-03. This is still an offline schedule, not a live actuator loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatRuntimeTransitionKind {
+    Release(usize),
+    Reserve(usize),
+    Sample(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatRuntimeTransition {
+    pub at_ns: u64,
+    pub kind: PatRuntimeTransitionKind,
+}
+
+/// Merge validated PAT reservation edges with sampled SYS-02 commands.
+/// At the same instant, release precedes reserve, which precedes sample.
+/// Link IDs and original indices make the ordering deterministic; duplicate
+/// samples for a link at one instant are rejected before any lease mutation.
+pub fn pat_runtime_transitions(
+    reservations: &[PatReservation],
+    samples: &[(u64, &str)],
+) -> Result<Vec<PatRuntimeTransition>, String> {
+    if samples.len() > MAX_CANDIDATES {
+        return Err("PAT sampled command budget exceeded".into());
+    }
+    let lease_edges = reservation_transitions(reservations)?;
+    let mut events = Vec::with_capacity(lease_edges.len() + samples.len());
+    for edge in lease_edges {
+        let reservation = &reservations[edge.reservation_index];
+        let (priority, kind) = match edge.kind {
+            PatLeaseTransitionKind::Release => (
+                0_u8,
+                PatRuntimeTransitionKind::Release(edge.reservation_index),
+            ),
+            PatLeaseTransitionKind::Reserve => (
+                1_u8,
+                PatRuntimeTransitionKind::Reserve(edge.reservation_index),
+            ),
+        };
+        events.push((
+            edge.at_ns,
+            priority,
+            reservation.link_id.as_str(),
+            edge.reservation_index,
+            kind,
+        ));
+    }
+    let mut seen = HashSet::new();
+    for (index, &(at_ns, link_id)) in samples.iter().enumerate() {
+        if link_id.trim().is_empty() || !seen.insert((link_id, at_ns)) {
+            return Err("invalid or duplicate PAT sampled head command".into());
+        }
+        events.push((
+            at_ns,
+            2_u8,
+            link_id,
+            index,
+            PatRuntimeTransitionKind::Sample(index),
+        ));
+    }
+    events.sort_by(|a, b| (a.0, a.1, a.2, a.3).cmp(&(b.0, b.1, b.2, b.3)));
+    Ok(events
+        .into_iter()
+        .map(|(at_ns, _, _, _, kind)| PatRuntimeTransition { at_ns, kind })
+        .collect())
 }
 
 /// Constant-rate body-frame gimbal slew assumption for one exclusive head.
@@ -624,6 +693,71 @@ mod tests {
 
         assert_eq!(reservation_transitions(&[]).unwrap(), vec![]);
         assert_eq!(reservation_transitions(&[valid]).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn runtime_transitions_release_reserve_then_sample_at_same_instant() {
+        let reservations = vec![
+            PatReservation {
+                link_id: "b".into(),
+                from_head: "h1".into(),
+                to_head: "h3".into(),
+                start_ns: 20,
+                end_ns: 40,
+            },
+            PatReservation {
+                link_id: "a".into(),
+                from_head: "h1".into(),
+                to_head: "h2".into(),
+                start_ns: 0,
+                end_ns: 20,
+            },
+        ];
+        let samples = [(20, "b"), (5, "a"), (20, "a")];
+        let events = pat_runtime_transitions(&reservations, &samples).unwrap();
+        use PatRuntimeTransitionKind::{Release, Reserve, Sample};
+        assert_eq!(
+            events,
+            vec![
+                PatRuntimeTransition {
+                    at_ns: 0,
+                    kind: Reserve(1),
+                },
+                PatRuntimeTransition {
+                    at_ns: 5,
+                    kind: Sample(1),
+                },
+                PatRuntimeTransition {
+                    at_ns: 20,
+                    kind: Release(1),
+                },
+                PatRuntimeTransition {
+                    at_ns: 20,
+                    kind: Reserve(0),
+                },
+                PatRuntimeTransition {
+                    at_ns: 20,
+                    kind: Sample(2),
+                },
+                PatRuntimeTransition {
+                    at_ns: 20,
+                    kind: Sample(0),
+                },
+                PatRuntimeTransition {
+                    at_ns: 40,
+                    kind: Release(0),
+                },
+            ]
+        );
+        assert_eq!(
+            pat_runtime_transitions(&reservations, &[(20, "a"), (20, "a")])
+                .unwrap_err(),
+            "invalid or duplicate PAT sampled head command"
+        );
+        assert!(pat_runtime_transitions(&reservations, &[(20, " ")]).is_err());
+        let mut overlapping = reservations.clone();
+        overlapping[0].start_ns = 19;
+        assert!(pat_runtime_transitions(&overlapping, &samples).is_err());
     }
 
     #[test]
