@@ -128,3 +128,29 @@ follower does not simulate that settling or the acquisition controller.
 Shared-head arbitration, continuous actuator velocity, a single mutable
 runtime state owner, a closed-loop controller, physical calibration and
 constellation-scale benchmarks remain future work.
+
+## SYS-03 exclusive reservation timeline contract
+
+`PatPlan.reservations[]` now reports the accepted pair of exclusive heads,
+their link identity and a half-open virtual-time interval
+`[start_ns, end_ns)`. The start is the time both heads become available
+after any competing reservation, not necessarily the candidate's geometric
+start. The interval includes slew, settling, acquisition and tracking.
+`PatPlan.windows[]` continues to describe only the later packet-forwarding
+tracking interval. Rejected candidates do not reserve either head or change
+its pointing. The timeline is sorted by actual reservation start and link
+identity, and a shared head can be handed off at the exact exclusive end.
+
+The contract is tested in SYS-03 for simultaneous independent links,
+shared-head contention, short rejected contacts and adjacent contact
+boundaries. A SYS-03/packet-runtime regression compares the reservation
+intervals with the admitted tracking contacts and packet conservation.
+
+**Integration boundary:** These typed reservation spans are not yet
+applied to `BodyHeadRuntime::release_pair_at`. The follower still processes
+sampled commands before PAT scheduling, so this change does not claim
+event-driven lease release, shared-head predicted following or a single
+actuator owner. A future bridge must apply reservation transitions in
+virtual-time order and preserve atomic pair ownership across fault splits.
+The extra timeline uses O(A) storage and O(A log A) ordering for A accepted
+candidates; it adds no physical fidelity or packet execution events.
