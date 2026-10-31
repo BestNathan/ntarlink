@@ -444,7 +444,10 @@ mod tests {
         ));
         next.at_ns = 30_000_000;
         assert!(!body_tracking_target_rate_allowed(
-            &previous, &next, f64::NAN, 3000.0
+            &previous,
+            &next,
+            f64::NAN,
+            3000.0
         ));
         next.from_target_body = [0.0; 3];
         assert!(!body_tracking_target_rate_allowed(

@@ -9,8 +9,8 @@ use ntarlink_optical_pat::{
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
-    geometry_los_acceleration_allowed, geometry_los_rate_allowed,
-    geometry_pointing_allowed, pointing_allowed, HeadAvailability,
+    geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
+    pointing_allowed, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1368,7 +1368,9 @@ mod tests {
                 || (90_000_000..120_000_000).contains(&hop.transmit_started_ns)
                 || (190_000_000..260_000_000).contains(&hop.transmit_started_ns)
         }));
-        assert!(hops.iter().any(|hop| hop.transmit_started_ns >= 190_000_000));
+        assert!(hops
+            .iter()
+            .any(|hop| hop.transmit_started_ns >= 190_000_000));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
