@@ -5,8 +5,8 @@ use ntarlink_contracts::{
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
-    plan_contacts, plan_contacts_with_slew, plan_contacts_with_slew_starts,
-    pat_runtime_transitions, HeadSlewActuator, PatCandidate, PatReservation,
+    pat_runtime_transitions, plan_contacts, plan_contacts_with_slew,
+    plan_contacts_with_slew_starts, HeadSlewActuator, PatCandidate, PatReservation,
     PatRuntimeTransitionKind, PatSlewStart, PatSlewTarget, PatState,
 };
 use ntarlink_simulation::Scheduler;
