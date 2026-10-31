@@ -976,6 +976,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 initial_direction_body: actuator.initial_direction_body,
                 max_slew_rate_deg_per_s: actuator.max_slew_rate_deg_per_s,
                 max_slew_acceleration_deg_per_s2: actuator.max_slew_acceleration_deg_per_s2,
+                settling_ns: actuator.settling_ns,
             })
             .collect();
         plan_contacts_with_slew(&candidates, &actuators, &candidate_slew_targets)?
