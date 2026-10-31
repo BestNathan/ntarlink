@@ -1687,10 +1687,7 @@ mod tests {
                 sample.from_target_body,
                 sample.to_target_body,
             );
-            expected.insert(
-                (sample.link_id.clone(), sample.at_ns),
-                observed.ok(),
-            );
+            expected.insert((sample.link_id.clone(), sample.at_ns), observed.ok());
         }
         let reservation = |start_ns, end_ns| PatReservation {
             link_id: "isl-a-b".into(),
@@ -1713,8 +1710,12 @@ mod tests {
                 );
             }
         }
-        assert!(replayed.observe("sat-a/head-1", 349_000_000, [1.0, 0.0, 0.0]).is_err());
-        assert!(replayed.observe("sat-a/head-1", 350_000_000, [1.0, 0.0, 0.0]).is_ok());
+        assert!(replayed
+            .observe("sat-a/head-1", 349_000_000, [1.0, 0.0, 0.0])
+            .is_err());
+        assert!(replayed
+            .observe("sat-a/head-1", 350_000_000, [1.0, 0.0, 0.0])
+            .is_ok());
 
         let mut conflicting = reservations.clone();
         conflicting.push(PatReservation {
