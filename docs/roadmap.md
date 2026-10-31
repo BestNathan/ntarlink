@@ -18,11 +18,11 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [x] Replay accepted SYS-03 PAT reservations in virtual-time order as SYS-02 optical-head command leases, with atomic reservation start, timed release, same-instant handoff, and unleased target updates during faults; verify provisional and leased follower results agree (offline two-pass bridge, not shared-head predicted admission). See [design](design/optical-body-frame-target-following.md).
 
 
-- [x] Expose deterministic SYS-03 half-open exclusive head reservation spans separately from tracking windows, including rejected/no-lease, shared-head waiting and packet-admission regressions (not yet a SYS-02 command-lease lifecycle bridge). See [design](design/optical-body-frame-target-following.md).
+- [x] Expose deterministic SYS-03 half-open exclusive head reservation spans separately from tracking windows, including rejected/no-lease, shared-head waiting and packet-admission regressions (consumed by the offline SYS-02 lease replay). See [design](design/optical-body-frame-target-following.md).
 
-- [x] Add atomic virtual-time lease-release barriers to SYS-02 predicted optical-head command ownership, preventing retroactive handoff while preserving sampled state (PAT reservation lifecycle and shared-head predicted scenarios remain future work). See [design](design/optical-body-frame-target-following.md).
+- [x] Add atomic virtual-time lease-release barriers to SYS-02 predicted optical-head command ownership, preventing retroactive handoff while preserving sampled state (PAT reservation replay now integrated; shared-head predicted scenarios remain future work). See [design](design/optical-body-frame-target-following.md).
 
-- [x] Add atomic link-scoped ownership guards to predicted optical-head command pairs, including explicit all-or-nothing release and retry tests; packet adapter uses link IDs (not yet coupled to PAT reservations or shared-head scenario arbitration). See [design](design/optical-body-frame-target-following.md).
+- [x] Add atomic link-scoped ownership guards to predicted optical-head command pairs, including explicit all-or-nothing release and retry tests; packet adapter uses link IDs (now checked against PAT reservation replay, not shared-head scenario arbitration). See [design](design/optical-body-frame-target-following.md).
 
 - [x] Atomically stage both optical heads in each predicted BODY-frame link observation, preserving both histories on one-head failure with same-timestamp retry tests; packet adapter uses paired transitions (not shared-head arbitration or continuous servo). See [design](design/optical-body-frame-target-following.md).
 
