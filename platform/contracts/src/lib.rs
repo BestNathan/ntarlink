@@ -200,6 +200,19 @@ pub struct OpticalBodyTrackingSample {
     pub to_max_error_deg: f64,
 }
 
+/// Sampled BODY-frame commands for a predicted, per-head target follower.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalBodyFollowingSample {
+    pub link_id: String,
+    pub at_ns: u64,
+    pub frame: String,
+    pub from_target_body: [f64; 3],
+    pub to_target_body: [f64; 3],
+    pub from_max_error_deg: f64,
+    pub to_max_error_deg: f64,
+}
+
 /// SYS-02 scheduled unavailability of one spacecraft-owned optical head.
 /// The half-open interval is in scenario-relative virtual nanoseconds.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -314,6 +327,9 @@ pub struct Scenario {
     /// Optional sampled body-frame tracking error for exclusive optical heads.
     #[serde(default)]
     pub optical_body_tracking_samples: Vec<OpticalBodyTrackingSample>,
+    /// Optional predicted per-head boresight from sampled BODY-frame commands.
+    #[serde(default)]
+    pub optical_body_following_samples: Vec<OpticalBodyFollowingSample>,
     /// Optional SYS-02 head maintenance/failure windows; only PAT heads are supported.
     #[serde(default)]
     pub optical_head_outages: Vec<OpticalHeadOutage>,
@@ -700,10 +716,48 @@ impl Scenario {
                 }
             }
         }
-        if self.optical_body_tracking_samples.len() > 10_000 {
+        if !self.optical_body_tracking_samples.is_empty()
+            && !self.optical_body_following_samples.is_empty()
+        {
+            return Err("observed and predicted body-frame tracking cannot mix".into());
+        }
+        // Share target/limit/coverage validation without accepting external
+        // boresight observations in the predicted mode.
+        let predicted_validation_samples: Vec<OpticalBodyTrackingSample> = self
+            .optical_body_following_samples
+            .iter()
+            .map(|sample| OpticalBodyTrackingSample {
+                link_id: sample.link_id.clone(),
+                at_ns: sample.at_ns,
+                frame: sample.frame.clone(),
+                from_target_body: sample.from_target_body,
+                to_target_body: sample.to_target_body,
+                from_boresight_body: sample.from_target_body,
+                to_boresight_body: sample.to_target_body,
+                from_max_error_deg: sample.from_max_error_deg,
+                to_max_error_deg: sample.to_max_error_deg,
+            })
+            .collect();
+        let body_samples = if predicted_validation_samples.is_empty() {
+            &self.optical_body_tracking_samples
+        } else {
+            &predicted_validation_samples
+        };
+        if body_samples.len() > 10_000 {
             return Err("body-frame tracking sample budget exceeded".into());
         }
-        if !self.optical_body_tracking_samples.is_empty() {
+        if !self.optical_body_following_samples.is_empty() {
+            // Shared-head command arbitration is not part of this slice.
+            let mut unique_heads = HashSet::new();
+            for pat in &self.optical_pat {
+                if !unique_heads.insert(pat.from_head.as_str())
+                    || !unique_heads.insert(pat.to_head.as_str())
+                {
+                    return Err("predicted body-frame following requires exclusive PAT heads".into());
+                }
+            }
+        }
+        if !body_samples.is_empty() {
             if self.optical_head_slew_actuators.is_empty() {
                 return Err("body-frame tracking samples require gimbal actuators".into());
             }
@@ -735,7 +789,7 @@ impl Scenario {
             let mut head_limits: std::collections::HashMap<&str, f64> =
                 std::collections::HashMap::new();
             let mut covered_contacts = HashSet::new();
-            for sample in &self.optical_body_tracking_samples {
+            for sample in body_samples {
                 let pat = self
                     .optical_pat
                     .iter()
@@ -1878,6 +1932,38 @@ mod tests {
             link_id: "isl-a-b".into(),
             action: LinkAction::Down,
             cause: FaultCause::SampledPointing,
+        });
+        assert!(s.validate().unwrap_err().contains("cannot mix"));
+    }
+
+    #[test]
+    fn predicted_following_contract_rejects_invalid_and_competing_streams() {
+        let mut s = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        )).unwrap();
+        assert!(s.optical_body_tracking_samples.is_empty());
+        s.optical_body_following_samples[0].frame = "ITRS".into();
+        assert!(s.validate().unwrap_err().contains("frame or time"));
+        s.optical_body_following_samples[0].frame = "BODY".into();
+        s.optical_body_following_samples[0].from_max_error_deg = f64::NAN;
+        assert!(s.validate().unwrap_err().contains("error limit"));
+        s.optical_body_following_samples[0].from_max_error_deg = 5.0;
+        s.optical_body_following_samples[1].at_ns = 0;
+        assert!(s.validate().unwrap_err().contains("must increase"));
+        s.optical_body_following_samples[1].at_ns = 30_000_000;
+        s.optical_body_following_samples[0].from_target_body = [0.0, 1.0, 0.0];
+        assert!(s.validate().unwrap_err().contains("differs from PAT target"));
+        s.optical_body_following_samples[0].from_target_body = [1.0, 0.0, 0.0];
+        s.optical_body_tracking_samples.push(OpticalBodyTrackingSample {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "BODY".into(),
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [-1.0, 0.0, 0.0],
+            from_boresight_body: [1.0, 0.0, 0.0],
+            to_boresight_body: [-1.0, 0.0, 0.0],
+            from_max_error_deg: 5.0,
+            to_max_error_deg: 5.0,
         });
         assert!(s.validate().unwrap_err().contains("cannot mix"));
     }
