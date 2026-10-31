@@ -227,6 +227,9 @@ impl BodyHeadFollower {
 pub struct BodyHeadRuntime {
     heads: HashMap<String, BodyHeadFollower>,
     history: HashMap<String, Vec<(u64, BodyHeadFollower)>>,
+    /// Link-scoped command leases. PAT scheduling still owns its own reservations.
+    owners: HashMap<String, String>,
+    link_heads: HashMap<String, (String, String)>,
 }
 
 impl BodyHeadRuntime {
@@ -246,6 +249,8 @@ impl BodyHeadRuntime {
         Ok(Self {
             heads,
             history: HashMap::new(),
+            owners: HashMap::new(),
+            link_heads: HashMap::new(),
         })
     }
 
@@ -280,22 +285,119 @@ impl BodyHeadRuntime {
             .push((at_ns, follower));
     }
 
-    /// Apply one head's sampled command and record only successful transitions.
-    /// Each head's history is strictly ordered in virtual nanoseconds.
+    /// Apply an unleased head's sampled command. Leased heads must use the
+    /// link-scoped paired API so a caller cannot bypass command ownership.
     pub fn observe(
         &mut self,
         head_id: &str,
         at_ns: u64,
         target_body: [f64; 3],
     ) -> Result<[f64; 3], String> {
+        if self.owners.contains_key(head_id) {
+            return Err("BODY-frame runtime head has a link command owner".into());
+        }
         let (follower, boresight) = self.staged_observation(head_id, at_ns, target_body)?;
         self.commit_observation(head_id, at_ns, follower);
         Ok(boresight)
     }
 
-    /// Stage both endpoint commands before committing either head.
-    /// A failed endpoint cannot advance its peer's actuator state or history.
+    /// Preserve the original unleased paired API for standalone followers.
+    /// A leased head cannot be modified without its link identity.
     pub fn observe_pair(
+        &mut self,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+    ) -> Result<([f64; 3], [f64; 3]), String> {
+        if self.owners.contains_key(from_head_id) || self.owners.contains_key(to_head_id) {
+            return Err("BODY-frame runtime head has a link command owner".into());
+        }
+        self.observe_pair_unchecked(
+            from_head_id,
+            to_head_id,
+            at_ns,
+            from_target_body,
+            to_target_body,
+        )
+    }
+
+    /// Atomically claim both heads for one link and commit a sampled command.
+    /// A conflicting link or invalid endpoint leaves both leases and follower
+    /// histories unchanged. A link may continue to command its own heads.
+    pub fn observe_pair_for_link(
+        &mut self,
+        link_id: &str,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+    ) -> Result<([f64; 3], [f64; 3]), String> {
+        if link_id.trim().is_empty() {
+            return Err("BODY-frame runtime link ID must be nonempty".into());
+        }
+        if self
+            .link_heads
+            .get(link_id)
+            .is_some_and(|(from, to)| from != from_head_id || to != to_head_id)
+        {
+            return Err("BODY-frame runtime link cannot change leased endpoints".into());
+        }
+        for head_id in [from_head_id, to_head_id] {
+            if self
+                .owners
+                .get(head_id)
+                .is_some_and(|owner| owner != link_id)
+            {
+                return Err("BODY-frame runtime head owned by another link".into());
+            }
+        }
+        let observed = self.observe_pair_unchecked(
+            from_head_id,
+            to_head_id,
+            at_ns,
+            from_target_body,
+            to_target_body,
+        )?;
+        self.owners
+            .insert(from_head_id.to_owned(), link_id.to_owned());
+        self.owners
+            .insert(to_head_id.to_owned(), link_id.to_owned());
+        self.link_heads.insert(
+            link_id.to_owned(),
+            (from_head_id.to_owned(), to_head_id.to_owned()),
+        );
+        Ok(observed)
+    }
+
+    /// Release a link's two command leases without resetting their boresights.
+    /// A mismatched or partial release is rejected without changing either head.
+    pub fn release_pair(
+        &mut self,
+        link_id: &str,
+        from_head_id: &str,
+        to_head_id: &str,
+    ) -> Result<(), String> {
+        if link_id.trim().is_empty()
+            || from_head_id == to_head_id
+            || self
+                .link_heads
+                .get(link_id)
+                .is_none_or(|(from, to)| from != from_head_id || to != to_head_id)
+            || self.owners.get(from_head_id).map(String::as_str) != Some(link_id)
+            || self.owners.get(to_head_id).map(String::as_str) != Some(link_id)
+        {
+            return Err("BODY-frame runtime pair lease ownership mismatch".into());
+        }
+        self.owners.remove(from_head_id);
+        self.owners.remove(to_head_id);
+        self.link_heads.remove(link_id);
+        Ok(())
+    }
+
+    fn observe_pair_unchecked(
         &mut self,
         from_head_id: &str,
         to_head_id: &str,
@@ -829,6 +931,51 @@ mod tests {
         );
         assert!(runtime
             .observe_pair("a", "b", 10_000_000, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+            .is_err());
+    }
+
+    #[test]
+    fn head_runtime_link_command_leases_are_atomic_and_releasable() {
+        let actuators = ["a", "b", "c"].map(|id| OpticalHeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let initial = [1.0, 0.0, 0.0];
+        runtime
+            .observe_pair_for_link("isl-a-b", "a", "b", 0, initial, initial)
+            .unwrap();
+        assert!(runtime
+            .observe_pair_for_link("isl-a-c", "a", "c", 1, initial, initial)
+            .is_err());
+        assert!(runtime.predicted_at("c", 1).is_err());
+        assert!(runtime
+            .observe_pair_for_link("isl-a-b", "a", "c", 1, initial, initial)
+            .is_err());
+        assert!(runtime.observe("a", 1, initial).is_err());
+        assert!(runtime.observe_pair("a", "b", 1, initial, initial).is_err());
+        assert!(runtime.release_pair("isl-a-c", "a", "b").is_err());
+        assert!(runtime.release_pair("isl-a-b", "a", "c").is_err());
+        assert!(runtime
+            .observe_pair_for_link("isl-a-b", "a", "b", 1, initial, [f64::NAN, 0.0, 0.0])
+            .is_err());
+        assert_eq!(runtime.predicted_at("a", 1).unwrap().1, initial);
+        runtime
+            .observe_pair_for_link("isl-a-b", "a", "b", 1, initial, initial)
+            .unwrap();
+        runtime.release_pair("isl-a-b", "a", "b").unwrap();
+        assert!(runtime.release_pair("isl-a-b", "a", "b").is_err());
+        runtime
+            .observe_pair_for_link("isl-a-c", "a", "c", 2, initial, initial)
+            .unwrap();
+        assert_eq!(runtime.predicted_at("a", 2).unwrap().1, initial);
+        assert_eq!(runtime.predicted_at("b", 2).unwrap().1, initial);
+        assert_eq!(runtime.predicted_at("c", 2).unwrap().1, initial);
+        assert!(runtime
+            .observe_pair_for_link("isl-a-b", "a", "b", 3, initial, initial)
             .is_err());
     }
 

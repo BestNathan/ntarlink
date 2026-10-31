@@ -78,6 +78,26 @@ kinematic work, with O(S + H) stored snapshots for S commands and H heads.
 The preexisting packet scenario is a cross-subsystem regression for PAT
 reacquisition, forwarding windows and packet conservation.
 
+## Link-scoped sampled command ownership
+
+The per-head runtime now supports an atomic link-scoped pair lease. The
+packet adapter supplies the PAT link ID when committing each predicted sample.
+A different link cannot command a leased head, a link cannot silently swap
+its leased endpoint pair, and unscoped single/pair commands cannot bypass an
+active lease. Invalid commands, partial releases
+and wrong-owner releases leave both actuator histories and leases intact.
+An explicit paired release preserves boresight and target state for later
+retargeting by another link. Standalone unleased APIs remain supported.
+
+**Boundary:** This is command ownership only, not PAT resource arbitration.
+The current scenario contract still rejects shared-head predicted command
+streams. The packet adapter holds each link's command lease for its lifetime
+and does not yet release it on PAT loss/contact end. SYS-03 still owns the
+separate geometric contact reservations. A future integration must align
+lease acquisition/release with PAT admission, fault and contact transitions
+before permitting shared-head predicted scenarios. This step adds constant
+expected-time ownership checks per pair and O(H) owner storage.
+
 ## Acceptance and fidelity
 
 `scenarios/optical-body-frame-target-following.json` commands a 90-degree

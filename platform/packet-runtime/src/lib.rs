@@ -765,7 +765,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         commands.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
         for command in commands {
             let pat = body_pat_links[command.link_id.as_str()];
-            let observed = runtime.observe_pair(
+            let observed = runtime.observe_pair_for_link(
+                &command.link_id,
                 &pat.from_head,
                 &pat.to_head,
                 command.at_ns,
