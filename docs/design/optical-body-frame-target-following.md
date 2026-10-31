@@ -157,6 +157,15 @@ tracking interval. Rejected candidates do not reserve either head or change
 its pointing. The timeline is sorted by actual reservation start and link
 identity, and a shared head can be handed off at the exact exclusive end.
 
+In fixed-dwell mode, the scheduler tracks booked intervals rather than a
+single latest busy-until timestamp. A later geometric candidate may use an
+idle gap before a previously booked future reservation, but only when its
+entire reservation can finish before that booking. Body-frame gimbal mode
+continues to schedule monotonically: retroactive insertion would invalidate
+the assumed pointing direction and requires a single virtual-time actuator
+owner. The interval index adds O(log A) operations per conflict checked;
+worst-case repeated contention can require more than O(A log A) total work.
+
 The contract is tested in SYS-03 for simultaneous independent links,
 shared-head contention, short rejected contacts and adjacent contact
 boundaries. A SYS-03/packet-runtime regression compares the reservation

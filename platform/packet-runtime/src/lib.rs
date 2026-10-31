@@ -1548,6 +1548,83 @@ mod tests {
     }
 
     #[test]
+    fn pat_idle_gap_admission_reaches_packet_runtime_without_head_overlap() {
+        let mut fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        fixture["nodes"].as_array_mut().unwrap().extend([
+            serde_json::json!({"id": "sat-c", "kind": "satellite"}),
+            serde_json::json!({"id": "sat-d", "kind": "satellite"}),
+        ]);
+        let optical_link = fixture["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|link| link["id"] == "isl-a-b")
+            .unwrap()
+            .clone();
+        let mut second = optical_link.clone();
+        second["id"] = serde_json::json!("isl-a-c");
+        second["to"] = serde_json::json!("sat-c");
+        let mut third = optical_link;
+        third["id"] = serde_json::json!("isl-c-d");
+        third["from"] = serde_json::json!("sat-c");
+        third["to"] = serde_json::json!("sat-d");
+        fixture["links"]
+            .as_array_mut()
+            .unwrap()
+            .extend([second, third]);
+        let contacts = fixture["contacts"].as_array_mut().unwrap();
+        contacts.retain(|contact| contact["link_id"] != "isl-a-b");
+        contacts.extend([
+            serde_json::json!({"link_id": "isl-a-b", "start_ns": 0,
+                "end_ns": 100000000, "propagation_delay_ns": 3200000}),
+            serde_json::json!({"link_id": "isl-a-c", "start_ns": 10000000,
+                "end_ns": 200000000, "propagation_delay_ns": 3200000}),
+            serde_json::json!({"link_id": "isl-c-d", "start_ns": 20000000,
+                "end_ns": 90000000, "propagation_delay_ns": 3200000}),
+        ]);
+        let mut second_pat = fixture["optical_pat"][0].clone();
+        second_pat["link_id"] = serde_json::json!("isl-a-c");
+        second_pat["to_head"] = serde_json::json!("sat-c/head-1");
+        let mut third_pat = fixture["optical_pat"][0].clone();
+        third_pat["link_id"] = serde_json::json!("isl-c-d");
+        third_pat["from_head"] = serde_json::json!("sat-c/head-1");
+        third_pat["to_head"] = serde_json::json!("sat-d/head-1");
+        fixture["optical_pat"]
+            .as_array_mut()
+            .unwrap()
+            .extend([second_pat, third_pat]);
+
+        let scenario = Scenario::from_json(&fixture.to_string()).unwrap();
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        let admitted: Vec<_> = prepared
+            .contacts
+            .iter()
+            .filter(|contact| contact.link_id.starts_with("isl-"))
+            .map(|contact| (contact.link_id.as_str(), contact.start_ns, contact.end_ns))
+            .collect();
+        assert_eq!(
+            admitted,
+            vec![
+                ("isl-a-b", 20_000_000, 100_000_000),
+                ("isl-a-c", 120_000_000, 200_000_000),
+                ("isl-c-d", 40_000_000, 90_000_000),
+            ]
+        );
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert!(report.pat_events.iter().any(|event| {
+            event.link_id == "isl-c-d" && event.state == "tracking" && event.at_ns == 40_000_000
+        }));
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
     fn pat_tracking_gates_packets_and_reacquires_after_contact_boundary() {
         let scenario = pat_fixture();
         let report = run(&scenario).unwrap();

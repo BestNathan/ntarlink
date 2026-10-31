@@ -4,7 +4,7 @@
 //! come from SYS-01; neither a contact nor this schedule is an optical PHY
 //! measurement or a packet-runtime admission decision.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const MAX_CANDIDATES: usize = 100_000;
 
@@ -370,6 +370,41 @@ fn state_order(state: PatState) -> u8 {
     }
 }
 
+/// Find the earliest slot that does not overlap an already booked head.
+///
+/// The reservation lasts until the candidate's geometric end, so a gap is
+/// usable only if it extends all the way to that end. Earlier candidates may
+/// have booked future starts; a later candidate can still use an idle gap.
+fn first_idle_head_slot(
+    start_ns: u64,
+    end_ns: u64,
+    from_head: &str,
+    to_head: &str,
+    booked: &HashMap<&str, BTreeMap<u64, u64>>,
+) -> u64 {
+    let mut start = start_ns;
+    while start < end_ns {
+        let mut next = start;
+        for head in [from_head, to_head] {
+            if let Some(intervals) = booked.get(head) {
+                if let Some((_, &previous_end)) = intervals.range(..=start).next_back() {
+                    if previous_end > start {
+                        next = next.max(previous_end);
+                    }
+                }
+                if let Some((_, &future_end)) = intervals.range(start..end_ns).next() {
+                    next = next.max(future_end);
+                }
+            }
+        }
+        if next == start {
+            break;
+        }
+        start = next;
+    }
+    start
+}
+
 /// Schedule nonpreemptive, exclusive optical-head reservations.
 ///
 /// Candidates are processed by geometric start time and link ID, regardless
@@ -377,6 +412,8 @@ fn state_order(state: PatState) -> u8 {
 /// end once a link is acquired. Conflicts wait for both heads to be free;
 /// candidates with insufficient remaining dwell time are rejected. This
 /// models fixed delays, not pointing dynamics, tracking loss or link budget.
+/// Without gimbal actuators, an earlier candidate's future booking does not
+/// block a later candidate that can finish in the idle gap before it.
 pub fn plan_contacts(candidates: &[PatCandidate]) -> Result<PatPlan, String> {
     plan_contacts_with_slew(candidates, &[], &[])
 }
@@ -514,6 +551,10 @@ pub fn plan_contacts_with_slew_starts(
     }
 
     let mut busy_until: HashMap<&str, u64> = HashMap::new();
+    // Fixed-dwell mode may fill idle gaps before an earlier candidate's
+    // future booking. Gimbal mode retains monotone scheduling because its
+    // held pointing direction depends on chronological actuator commands.
+    let mut booked: HashMap<&str, BTreeMap<u64, u64>> = HashMap::new();
     let mut windows = Vec::new();
     let mut reservations = Vec::new();
     let mut events = Vec::new();
@@ -524,10 +565,20 @@ pub fn plan_contacts_with_slew_starts(
             state: PatState::Candidate,
             reason: None,
         });
-        let available_ns = candidate
-            .start_ns
-            .max(*busy_until.get(candidate.from_head.as_str()).unwrap_or(&0))
-            .max(*busy_until.get(candidate.to_head.as_str()).unwrap_or(&0));
+        let available_ns = if actuators.is_empty() {
+            first_idle_head_slot(
+                candidate.start_ns,
+                candidate.end_ns,
+                &candidate.from_head,
+                &candidate.to_head,
+                &booked,
+            )
+        } else {
+            candidate
+                .start_ns
+                .max(*busy_until.get(candidate.from_head.as_str()).unwrap_or(&0))
+                .max(*busy_until.get(candidate.to_head.as_str()).unwrap_or(&0))
+        };
         let target = target_by_candidate
             .get(&(candidate.link_id.as_str(), candidate.start_ns))
             .copied();
@@ -603,8 +654,17 @@ pub fn plan_contacts_with_slew_starts(
             start_ns: available_ns,
             end_ns: candidate.end_ns,
         });
-        busy_until.insert(candidate.from_head.as_str(), candidate.end_ns);
-        busy_until.insert(candidate.to_head.as_str(), candidate.end_ns);
+        if actuators.is_empty() {
+            for head in [candidate.from_head.as_str(), candidate.to_head.as_str()] {
+                booked
+                    .entry(head)
+                    .or_default()
+                    .insert(available_ns, candidate.end_ns);
+            }
+        } else {
+            busy_until.insert(candidate.from_head.as_str(), candidate.end_ns);
+            busy_until.insert(candidate.to_head.as_str(), candidate.end_ns);
+        }
         if let Some(target) = target {
             head_directions.insert(candidate.from_head.clone(), target.from_target_body);
             head_directions.insert(candidate.to_head.clone(), target.to_target_body);
@@ -922,6 +982,58 @@ mod tests {
             .events
             .iter()
             .any(|e| { e.link_id == "second" && e.state == PatState::Slewing && e.at_ns == 20 }));
+    }
+
+    #[test]
+    fn fixed_dwell_planner_fills_idle_gap_before_future_head_booking() {
+        // Link b waits for head a until 100 and books head c from 100.
+        // Link c arrives later but can finish using head c before 100.
+        let candidates = [
+            contact("a", "head-a", "head-b", 0, 100),
+            contact("b", "head-a", "head-c", 10, 200),
+            contact("c", "head-c", "head-d", 20, 90),
+        ];
+        let plan = plan_contacts(&candidates).unwrap();
+        let intervals: Vec<_> = plan
+            .reservations
+            .iter()
+            .map(|r| (r.link_id.as_str(), r.start_ns, r.end_ns))
+            .collect();
+        assert_eq!(
+            intervals,
+            vec![("a", 0, 100), ("c", 20, 90), ("b", 100, 200)]
+        );
+        assert_eq!(plan.windows.len(), 3);
+        assert_eq!(
+            plan.windows
+                .iter()
+                .map(|w| (w.link_id.as_str(), w.start_ns))
+                .collect::<Vec<_>>(),
+            vec![("a", 5), ("c", 25), ("b", 105)]
+        );
+        assert_eq!(
+            reservation_transitions(&plan.reservations).unwrap().len(),
+            6
+        );
+        let mut reversed = candidates.to_vec();
+        reversed.reverse();
+        assert_eq!(plan, plan_contacts(&reversed).unwrap());
+    }
+
+    #[test]
+    fn fixed_dwell_planner_does_not_overlap_future_booking() {
+        let plan = plan_contacts(&[
+            contact("a", "head-a", "head-b", 0, 100),
+            contact("b", "head-a", "head-c", 10, 200),
+            contact("c", "head-c", "head-d", 20, 150),
+        ])
+        .unwrap();
+        assert_eq!(plan.reservations.len(), 2);
+        assert!(plan.events.iter().any(|event| {
+            event.link_id == "c"
+                && event.state == PatState::Rejected
+                && event.reason == Some("contact_expires_before_acquisition")
+        }));
     }
 
     #[test]
