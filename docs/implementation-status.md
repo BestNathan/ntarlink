@@ -1,3 +1,20 @@
+## PAT replay sampled-failure parity
+
+The offline SYS-02 command-lease replay now compares each sampled
+observation's full success or failure result against the provisional
+follower pass. Previously two unrelated failures both collapsed to
+`None`, so a lease/ownership error could be accepted as equivalent to
+a genuine invalid target or ambiguous motion. The replay now rejects
+different error reasons while preserving intentional sampled-pointing
+loss and recovery. A Rust regression exercises an invalid target with
+matching and mismatching failure reasons; the existing end-to-end
+predicted follower acceptance checks remain in CI.
+
+**Scope and cost:** one error string per failed provisional observation,
+with no new scenario fields or packet events. This is a correctness
+hardening of the offline two-pass bridge, not a single-pass actuator
+scheduler, shared-head arbitration or a continuous servo model.
+
 ## Canonical SYS-03 PAT lease transition validation
 
 SYS-03 now validates and orders accepted half-open PAT head reservations
