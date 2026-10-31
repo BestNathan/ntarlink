@@ -652,14 +652,9 @@ mod tests {
             .unwrap(),
             60_000_000
         );
-        assert!(slew_and_settle_ns(
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            3000.0,
-            None,
-            u64::MAX,
-        )
-        .is_err());
+        assert!(
+            slew_and_settle_ns([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 3000.0, None, u64::MAX,).is_err()
+        );
 
         let candidates = [
             contact("link", "a", "b", 0, 120_000_000),
@@ -713,7 +708,11 @@ mod tests {
                 && event.reason == Some("contact_expires_before_acquisition")
         }));
         let reversed = plan_contacts_with_slew(
-            &[candidates[2].clone(), candidates[0].clone(), candidates[1].clone()],
+            &[
+                candidates[2].clone(),
+                candidates[0].clone(),
+                candidates[1].clone(),
+            ],
             &actuators,
             &[targets[2].clone(), targets[0].clone(), targets[1].clone()],
         )
