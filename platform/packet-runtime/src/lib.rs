@@ -702,14 +702,10 @@ fn replay_pat_head_leases(
         .map(|pat| (pat.link_id.as_str(), pat))
         .collect();
     let mut runtime = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators)?;
-    let mut active_links = HashSet::new();
     for event in timeline {
         match event.kind {
             PatRuntimeTransitionKind::Release(index) => {
                 let reservation = &reservations[index];
-                if !active_links.remove(&reservation.link_id) {
-                    return Err("PAT head reservation ended without an active lease".into());
-                }
                 runtime.release_pair_at(
                     &reservation.link_id,
                     &reservation.from_head,
@@ -719,11 +715,6 @@ fn replay_pat_head_leases(
             }
             PatRuntimeTransitionKind::Reserve(index) => {
                 let reservation = &reservations[index];
-                if reservation.start_ns >= reservation.end_ns
-                    || !active_links.insert(reservation.link_id.clone())
-                {
-                    return Err("invalid or overlapping PAT head reservation".into());
-                }
                 runtime.reserve_pair_for_link(
                     &reservation.link_id,
                     &reservation.from_head,
@@ -731,12 +722,22 @@ fn replay_pat_head_leases(
                     reservation.start_ns,
                 )?;
             }
-            PatRuntimeTransitionKind::Sample(index) => {
+            PatRuntimeTransitionKind::Sample {
+                index,
+                reservation_index,
+            } => {
                 let sample = &scenario.optical_body_following_samples[index];
                 let pat = pat_links
                     .get(sample.link_id.as_str())
                     .ok_or("unknown predicted PAT link")?;
-                let observed = if active_links.contains(&sample.link_id) {
+                let observed = if let Some(reservation_index) = reservation_index {
+                    let reservation = &reservations[reservation_index];
+                    if reservation.link_id != sample.link_id
+                        || reservation.from_head != pat.from_head
+                        || reservation.to_head != pat.to_head
+                    {
+                        return Err("PAT sample lease endpoint mismatch".into());
+                    }
                     runtime.observe_pair_for_link(
                         &sample.link_id,
                         &pat.from_head,
@@ -866,7 +867,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .map(|sample| (sample.at_ns, sample.link_id.as_str()))
             .collect();
         for event in pat_runtime_transitions(&[], &samples)? {
-            let PatRuntimeTransitionKind::Sample(index) = event.kind else {
+            let PatRuntimeTransitionKind::Sample { index, .. } = event.kind else {
                 return Err("unexpected lease in provisional PAT command timeline".into());
             };
             let command = &scenario.optical_body_following_samples[index];
@@ -1744,6 +1745,16 @@ mod tests {
         assert!(replayed
             .observe("sat-a/head-1", 350_000_000, [1.0, 0.0, 0.0])
             .is_ok());
+
+        // A valid but swapped head pair must not be mistaken for the
+        // canonical PAT link's command ownership at the sample boundary.
+        let mut mismatched = reservations.clone();
+        mismatched[0].from_head = "sat-b/head-1".into();
+        mismatched[0].to_head = "sat-a/head-1".into();
+        assert_eq!(
+            replay_pat_head_leases(&scenario, &mismatched, &expected).unwrap_err(),
+            "PAT sample lease endpoint mismatch"
+        );
 
         let mut conflicting = reservations.clone();
         conflicting.push(PatReservation {

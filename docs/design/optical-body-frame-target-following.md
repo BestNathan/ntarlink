@@ -244,7 +244,14 @@ head to change owners at a half-open boundary before a command at that
 same timestamp. Duplicate commands for one link/timestamp, blank sample
 links and invalid/overlapping reservations fail before the SYS-02 replay
 mutates any follower state. The packet adapter no longer maintains a
-separate transition sorting implementation.
+separate transition sorting implementation. SYS-03 also projects the
+active reservation index (or none) onto each Sample after sorting lease
+boundaries. The packet adapter consumes that projection rather than
+maintaining a second active-link set, and checks the projected link/head
+pair before applying the leased command. At a half-open release boundary,
+a command is unleased unless another reservation for its link starts at
+that instant. Unit tests cover fault gaps, boundary ownership and reversed
+reservation input; packet replay tests reject a swapped endpoint pair.
 
 The provisional SYS-02 pass still supplies immutable head projections
 for PAT planning; the canonical event stream only drives the second,

@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Project active half-open PAT lease ownership onto each canonical sampled command, remove the packet adapter's duplicate active-link tracker, and reject mismatched link/head pairing during replay; still offline two-pass execution, not live arbitration. See [status](implementation-status.md).
+
 - [x] Reuse SYS-03's canonical sampled-command timeline in the provisional SYS-02 follower pass, rejecting duplicate/blank commands before state mutation and unknown PAT links without panicking; the offline lease replay remains a separate pass. See [status](implementation-status.md).
 
 - [x] Centralize PAT Release/Reserve and sampled SYS-02 command ordering into a typed, validated virtual-time event stream with deterministic same-time handoff and duplicate-sample rejection; the packet adapter consumes it in the existing offline two-pass replay (not a single-pass actuator runtime). See [status](implementation-status.md).

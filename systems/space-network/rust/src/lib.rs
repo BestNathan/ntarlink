@@ -169,7 +169,11 @@ pub fn reservation_transitions(
 pub enum PatRuntimeTransitionKind {
     Release(usize),
     Reserve(usize),
-    Sample(usize),
+    Sample {
+        index: usize,
+        /// Active half-open PAT reservation at this command timestamp, if any.
+        reservation_index: Option<usize>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,14 +225,39 @@ pub fn pat_runtime_transitions(
             2_u8,
             link_id,
             index,
-            PatRuntimeTransitionKind::Sample(index),
+            PatRuntimeTransitionKind::Sample {
+                index,
+                reservation_index: None,
+            },
         ));
     }
     events.sort_by(|a, b| (a.0, a.1, a.2, a.3).cmp(&(b.0, b.1, b.2, b.3)));
-    Ok(events
-        .into_iter()
-        .map(|(at_ns, _, _, _, kind)| PatRuntimeTransition { at_ns, kind })
-        .collect())
+    // Resolve command ownership from the same ordered lease boundaries, not
+    // from a second mutable link-activity tracker in the packet adapter.
+    let mut active_reservations = HashMap::new();
+    let mut timeline = Vec::with_capacity(events.len());
+    for (at_ns, _, link_id, _, kind) in events {
+        let kind = match kind {
+            PatRuntimeTransitionKind::Release(index) => {
+                if active_reservations.remove(link_id) != Some(index) {
+                    return Err("PAT runtime release ownership mismatch".into());
+                }
+                PatRuntimeTransitionKind::Release(index)
+            }
+            PatRuntimeTransitionKind::Reserve(index) => {
+                if active_reservations.insert(link_id, index).is_some() {
+                    return Err("overlapping PAT runtime link reservations".into());
+                }
+                PatRuntimeTransitionKind::Reserve(index)
+            }
+            PatRuntimeTransitionKind::Sample { index, .. } => PatRuntimeTransitionKind::Sample {
+                index,
+                reservation_index: active_reservations.get(link_id).copied(),
+            },
+        };
+        timeline.push(PatRuntimeTransition { at_ns, kind });
+    }
+    Ok(timeline)
 }
 
 /// Constant-rate body-frame gimbal slew assumption for one exclusive head.
@@ -725,7 +754,10 @@ mod tests {
                 },
                 PatRuntimeTransition {
                     at_ns: 5,
-                    kind: Sample(1),
+                    kind: Sample {
+                        index: 1,
+                        reservation_index: Some(1),
+                    },
                 },
                 PatRuntimeTransition {
                     at_ns: 20,
@@ -737,11 +769,17 @@ mod tests {
                 },
                 PatRuntimeTransition {
                     at_ns: 20,
-                    kind: Sample(2),
+                    kind: Sample {
+                        index: 2,
+                        reservation_index: None,
+                    },
                 },
                 PatRuntimeTransition {
                     at_ns: 20,
-                    kind: Sample(0),
+                    kind: Sample {
+                        index: 0,
+                        reservation_index: Some(0),
+                    },
                 },
                 PatRuntimeTransition {
                     at_ns: 40,
@@ -757,6 +795,55 @@ mod tests {
         let mut overlapping = reservations.clone();
         overlapping[0].start_ns = 19;
         assert!(pat_runtime_transitions(&overlapping, &samples).is_err());
+    }
+
+    #[test]
+    fn sampled_lease_projection_respects_fault_gaps_and_half_open_ends() {
+        let first = PatReservation {
+            link_id: "link".into(),
+            from_head: "a".into(),
+            to_head: "b".into(),
+            start_ns: 5,
+            end_ns: 10,
+        };
+        let second = PatReservation {
+            start_ns: 20,
+            end_ns: 25,
+            ..first.clone()
+        };
+        let samples = [
+            (0, "link"),
+            (5, "link"),
+            (10, "link"),
+            (20, "link"),
+            (25, "link"),
+        ];
+        let ownership = |reservations: &[PatReservation]| {
+            pat_runtime_transitions(reservations, &samples)
+                .unwrap()
+                .into_iter()
+                .filter_map(|event| match event.kind {
+                    PatRuntimeTransitionKind::Sample {
+                        index,
+                        reservation_index,
+                    } => Some((
+                        event.at_ns,
+                        index,
+                        reservation_index.map(|i| reservations[i].start_ns),
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let expected = vec![
+            (0, 0, None),
+            (5, 1, Some(5)),
+            (10, 2, None),
+            (20, 3, Some(20)),
+            (25, 4, None),
+        ];
+        assert_eq!(ownership(&[first.clone(), second.clone()]), expected);
+        assert_eq!(ownership(&[second, first]), expected);
     }
 
     #[test]
