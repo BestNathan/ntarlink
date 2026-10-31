@@ -325,8 +325,7 @@ pub fn plan_contacts_with_slew_starts(
             .get(&(candidate.link_id.as_str(), candidate.start_ns))
             .copied();
         let slew_ns = if let Some(target) = target {
-            let start = start_by_candidate
-                .get(&(candidate.link_id.as_str(), candidate.start_ns));
+            let start = start_by_candidate.get(&(candidate.link_id.as_str(), candidate.start_ns));
             let from_direction = start.map(|s| s.from_direction_body).unwrap_or(
                 *head_directions
                     .get(&candidate.from_head)
@@ -589,8 +588,10 @@ mod tests {
 
     #[test]
     fn predicted_pat_start_pointing_reuses_follower_state() {
-        let candidates = [contact("link", "a", "b", 0, 120_000_000),
-            contact("link", "a", "b", 120_000_000, 200_000_000)];
+        let candidates = [
+            contact("link", "a", "b", 0, 120_000_000),
+            contact("link", "a", "b", 120_000_000, 200_000_000),
+        ];
         let actuators = ["a", "b"].map(|id| HeadSlewActuator {
             head_id: id.into(),
             initial_direction_body: [1.0, 0.0, 0.0],
@@ -598,28 +599,48 @@ mod tests {
             max_slew_acceleration_deg_per_s2: None,
             settling_ns: None,
         });
-        let targets = [PatSlewTarget {
-            link_id: "link".into(), start_ns: 0,
-            from_target_body: [1.0, 0.0, 0.0], to_target_body: [1.0, 0.0, 0.0],
-        }, PatSlewTarget {
-            link_id: "link".into(), start_ns: 120_000_000,
-            from_target_body: [0.0, 1.0, 0.0], to_target_body: [1.0, 0.0, 0.0],
-        }];
-        let starts = [PatSlewStart {
-            link_id: "link".into(), start_ns: 0,
-            from_direction_body: [1.0, 0.0, 0.0], to_direction_body: [1.0, 0.0, 0.0],
-        }, PatSlewStart {
-            link_id: "link".into(), start_ns: 120_000_000,
-            from_direction_body: [0.0, 1.0, 0.0], to_direction_body: [1.0, 0.0, 0.0],
-        }];
+        let targets = [
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 0,
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [1.0, 0.0, 0.0],
+            },
+            PatSlewTarget {
+                link_id: "link".into(),
+                start_ns: 120_000_000,
+                from_target_body: [0.0, 1.0, 0.0],
+                to_target_body: [1.0, 0.0, 0.0],
+            },
+        ];
+        let starts = [
+            PatSlewStart {
+                link_id: "link".into(),
+                start_ns: 0,
+                from_direction_body: [1.0, 0.0, 0.0],
+                to_direction_body: [1.0, 0.0, 0.0],
+            },
+            PatSlewStart {
+                link_id: "link".into(),
+                start_ns: 120_000_000,
+                from_direction_body: [0.0, 1.0, 0.0],
+                to_direction_body: [1.0, 0.0, 0.0],
+            },
+        ];
         let old = plan_contacts_with_slew(&candidates, &actuators, &targets).unwrap();
-        let handoff = plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &starts).unwrap();
+        let handoff =
+            plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &starts).unwrap();
         assert!(handoff.windows[1].start_ns < old.windows[1].start_ns);
         assert_eq!(handoff.windows[1].start_ns, 120_000_005);
-        assert!(plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &starts[..1]).is_err());
+        assert!(
+            plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &starts[..1])
+                .is_err()
+        );
         let mut invalid = starts.clone();
         invalid[1].from_direction_body = [0.0; 3];
-        assert!(plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &invalid).is_err());
+        assert!(
+            plan_contacts_with_slew_starts(&candidates, &actuators, &targets, &invalid).is_err()
+        );
     }
 
     #[test]
