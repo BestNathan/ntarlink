@@ -114,6 +114,101 @@ pub fn body_tracking_target_rate_allowed(
     )
 }
 
+/// Sampled rest-to-rest target follower for one BODY-frame optical head.
+/// The previous command is held over each interval. Velocity resets to zero
+/// at sample boundaries; this is not a continuous servo or torque model.
+#[derive(Clone, Debug)]
+pub struct BodyHeadFollower {
+    boresight_body: [f64; 3],
+    held_target_body: [f64; 3],
+    last_at_ns: u64,
+    max_rate_deg_per_s: f64,
+    max_acceleration_deg_per_s2: Option<f64>,
+}
+
+fn body_unit(vector: [f64; 3]) -> Result<[f64; 3], String> {
+    if vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12) {
+        return Err("invalid BODY-frame direction".into());
+    }
+    let norm = vector.iter().map(|v| v * v).sum::<f64>().sqrt();
+    if !norm.is_finite() || norm <= 0.0 {
+        return Err("invalid BODY-frame direction".into());
+    }
+    Ok(vector.map(|v| v / norm))
+}
+
+impl BodyHeadFollower {
+    pub fn new(
+        initial_direction_body: [f64; 3],
+        max_rate_deg_per_s: f64,
+        max_acceleration_deg_per_s2: Option<f64>,
+    ) -> Result<Self, String> {
+        if !max_rate_deg_per_s.is_finite()
+            || max_rate_deg_per_s <= 0.0
+            || max_acceleration_deg_per_s2.is_some_and(|a| !a.is_finite() || a <= 0.0)
+        {
+            return Err("invalid BODY-frame follower limits".into());
+        }
+        let initial = body_unit(initial_direction_body)?;
+        Ok(Self {
+            boresight_body: initial,
+            held_target_body: initial,
+            last_at_ns: 0,
+            max_rate_deg_per_s,
+            max_acceleration_deg_per_s2,
+        })
+    }
+
+    /// Integrate the previous held command, then latch the new target.
+    /// Returns the predicted boresight at the current sample instant.
+    pub fn observe(
+        &mut self,
+        at_ns: u64,
+        target_body: [f64; 3],
+    ) -> Result<[f64; 3], String> {
+        if at_ns < self.last_at_ns {
+            return Err("BODY-frame follower timestamps must increase".into());
+        }
+        let next_target = body_unit(target_body)?;
+        let elapsed_s = (at_ns - self.last_at_ns) as f64 * 1.0e-9;
+        let max_travel_deg = if let Some(a) = self.max_acceleration_deg_per_s2 {
+            let t_to_rate = self.max_rate_deg_per_s / a;
+            if elapsed_s <= 2.0 * t_to_rate {
+                a * elapsed_s * elapsed_s / 4.0
+            } else {
+                self.max_rate_deg_per_s * (elapsed_s - t_to_rate)
+            }
+        } else {
+            self.max_rate_deg_per_s * elapsed_s
+        };
+        if !max_travel_deg.is_finite() {
+            return Err("BODY-frame follower travel exceeds numeric range".into());
+        }
+        let from = self.boresight_body;
+        let to = self.held_target_body;
+        let dot = from.iter().zip(to).map(|(a, b)| a * b).sum::<f64>().clamp(-1.0, 1.0);
+        let tangent = std::array::from_fn::<_, 3, _>(|i| to[i] - from[i] * dot);
+        let sine = tangent.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let angle_deg = sine.atan2(dot).to_degrees();
+        let predicted = if angle_deg <= max_travel_deg + 1.0e-12 {
+            to
+        } else if sine <= 1.0e-12 {
+            // Exact antiparallel directions have no unique shortest-arc plane.
+            return Err("ambiguous antiparallel BODY-frame follower target".into());
+        } else {
+            let step = max_travel_deg.to_radians();
+            let rotated = std::array::from_fn::<_, 3, _>(|i| {
+                from[i] * step.cos() + tangent[i] / sine * step.sin()
+            });
+            body_unit(rotated)?
+        };
+        self.boresight_body = predicted;
+        self.held_target_body = next_target;
+        self.last_at_ns = at_ns;
+        Ok(predicted)
+    }
+}
+
 /// Compute the two line-of-sight steering angles from one ITRS snapshot.
 /// Boresight and position vectors must share the ITRS axes; a fixed snapshot
 /// is not a time-varying attitude or ephemeris model. A degenerate vector
@@ -453,6 +548,29 @@ mod tests {
         assert!(!body_tracking_target_rate_allowed(
             &previous, &next, 3000.0, 3000.0
         ));
+    }
+
+    #[test]
+    fn sampled_follower_predicts_lag_and_acceleration_limited_recovery() {
+        let mut head = BodyHeadFollower::new([1.0, 0.0, 0.0], 3000.0, Some(200000.0)).unwrap();
+        assert_eq!(head.observe(0, [1.0, 0.0, 0.0]).unwrap(), [1.0, 0.0, 0.0]);
+        assert_eq!(head.observe(30_000_000, [0.0, 1.0, 0.0]).unwrap(), [1.0, 0.0, 0.0]);
+        let halfway = head.observe(60_000_000, [0.0, 1.0, 0.0]).unwrap();
+        assert!((halfway[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
+        assert!((halfway[1] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
+        let reached = head.observe(90_000_000, [0.0, 1.0, 0.0]).unwrap();
+        assert!(reached[0].abs() < 1.0e-12 && (reached[1] - 1.0).abs() < 1.0e-12);
+        assert!(head.observe(89_000_000, [0.0, 1.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn sampled_follower_rejects_invalid_and_ambiguous_commands() {
+        assert!(BodyHeadFollower::new([0.0; 3], 1.0, None).is_err());
+        assert!(BodyHeadFollower::new([1.0, 0.0, 0.0], 0.0, None).is_err());
+        let mut head = BodyHeadFollower::new([1.0, 0.0, 0.0], 100.0, None).unwrap();
+        head.observe(0, [-1.0, 0.0, 0.0]).unwrap();
+        assert!(head.observe(10_000_000, [-1.0, 0.0, 0.0]).is_err());
+        assert!(head.observe(10_000_000, [f64::NAN, 0.0, 0.0]).is_err());
     }
 
     #[test]
