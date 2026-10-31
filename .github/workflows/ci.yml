@@ -55,6 +55,21 @@ jobs:
           assert report["injected"] == report["delivered"] + report["dropped"], report
           print("Body-frame gimbal PAT:", tracking, report["delivered"], "delivered")
           PY
+      - name: Verify acceleration-limited body-frame gimbal PAT and packet forwarding
+        run: |
+          python3 -m json.tool scenarios/optical-body-frame-gimbal-acceleration.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-body-frame-gimbal-acceleration.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-gimbal-acceleration.json --json > /tmp/ntarlink-gimbal-acceleration.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/ntarlink-gimbal-acceleration.json"))
+          tracking = [event["at_ns"] for event in report["pat_events"] if event["state"] == "tracking"]
+          assert tracking == [20_000_000, 175_000_000], tracking
+          hops = [hop for packet in report["packets"] for hop in packet["hops"] if hop["link_id"] == "isl-a-b"]
+          assert hops and all(20_000_000 <= hop["transmit_started_ns"] < 120_000_000 or 175_000_000 <= hop["transmit_started_ns"] < 200_000_000 for hop in hops), hops
+          assert report["injected"] == report["delivered"] + report["dropped"], report
+          print("Acceleration-limited PAT:", tracking, report["delivered"], "delivered")
+          PY
       - name: Verify optical PAT fault releases and reacquires tracking
         run: |
           python3 -m json.tool scenarios/optical-pat-link-fault.json > /dev/null
