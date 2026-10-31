@@ -1,3 +1,25 @@
+## Fixed-dwell PAT admission into idle optical-head gaps
+
+SYS-03 now keeps interval-indexed head reservations in the fixed-dwell
+(no body-frame gimbal actuator) planner. An earlier geometric candidate may
+reserve a shared head only after another contact ends; a later candidate
+can still acquire that head in an earlier idle gap when its entire
+half-open reservation fits before the future booking. Previously a
+single per-head busy-until watermark could reject such a valid contact.
+Reservations remain exclusive, deterministic under reversed input,
+and fail closed if the candidate cannot finish before an existing booking.
+SYS-03 tests exercise both the admitted gap and the conflicting case;
+a synthetic three-ISL packet-runtime regression verifies tracking-window
+admission, packet accounting and repeatability.
+
+**Scope and performance:** Each head uses an ordered interval map with
+O(log A) lookup/insertion for A reservations; a candidate may scan multiple
+conflicting intervals, so pathological contention can exceed O(A log A)
+overall. Gimbal-actuated scheduling deliberately retains its monotone
+busy-until policy because inserting an earlier command would invalidate
+the current held-pointing history. This is an offline scheduling fix,
+not live arbitration, shared-head predicted following or continuous servo.
+
 ## Shared canonical PAT head command executor
 
 The packet adapter now uses one canonical virtual-time executor for both
