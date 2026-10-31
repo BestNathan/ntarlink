@@ -1,6 +1,7 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
 use ntarlink_contracts::{
-    OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalPointing,
+    OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalHeadSlewActuator,
+    OpticalPointing,
 };
 use std::collections::HashMap;
 
@@ -216,6 +217,82 @@ impl BodyHeadFollower {
         let target = projection.held_target_body;
         let boresight = projection.observe(at_ns, target)?;
         Ok((boresight, target))
+    }
+}
+
+/// Single owner of sampled predicted BODY-frame head state and immutable
+/// historical snapshots. PAT consumes projections; it does not mutate this
+/// command timeline or own the follower's actuator state.
+#[derive(Debug)]
+pub struct BodyHeadRuntime {
+    heads: HashMap<String, BodyHeadFollower>,
+    history: HashMap<String, Vec<(u64, BodyHeadFollower)>>,
+}
+
+impl BodyHeadRuntime {
+    pub fn new(actuators: &[OpticalHeadSlewActuator]) -> Result<Self, String> {
+        let mut heads = HashMap::new();
+        for actuator in actuators {
+            if actuator.head_id.trim().is_empty() || heads.contains_key(&actuator.head_id) {
+                return Err("invalid or duplicate BODY-frame runtime head".into());
+            }
+            let follower = BodyHeadFollower::new(
+                actuator.initial_direction_body,
+                actuator.max_slew_rate_deg_per_s,
+                actuator.max_slew_acceleration_deg_per_s2,
+            )?;
+            heads.insert(actuator.head_id.clone(), follower);
+        }
+        Ok(Self {
+            heads,
+            history: HashMap::new(),
+        })
+    }
+
+    /// Apply one head's sampled command and record only successful transitions.
+    /// Each head's history is strictly ordered in virtual nanoseconds.
+    pub fn observe(
+        &mut self,
+        head_id: &str,
+        at_ns: u64,
+        target_body: [f64; 3],
+    ) -> Result<[f64; 3], String> {
+        if self
+            .history
+            .get(head_id)
+            .and_then(|history| history.last())
+            .is_some_and(|(previous, _)| at_ns <= *previous)
+        {
+            return Err("BODY-frame runtime head samples must increase".into());
+        }
+        let follower = self
+            .heads
+            .get_mut(head_id)
+            .ok_or("unknown BODY-frame runtime head")?;
+        let boresight = follower.observe(at_ns, target_body)?;
+        self.history
+            .entry(head_id.to_owned())
+            .or_default()
+            .push((at_ns, follower.clone()));
+        Ok(boresight)
+    }
+
+    /// Project from the latest successful command at or before a PAT boundary.
+    /// Historical commands and the live head state remain unchanged.
+    pub fn predicted_at(
+        &self,
+        head_id: &str,
+        at_ns: u64,
+    ) -> Result<([f64; 3], [f64; 3]), String> {
+        let history = self
+            .history
+            .get(head_id)
+            .ok_or("missing predicted optical head history")?;
+        let count = history.partition_point(|(sample_ns, _)| *sample_ns <= at_ns);
+        if count == 0 {
+            return Err("missing predicted head state at PAT boundary".into());
+        }
+        history[count - 1].1.predicted_at(at_ns)
     }
 }
 
@@ -586,6 +663,84 @@ mod tests {
         assert!((projected[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
         assert_eq!(head.observe(60_000_000, target).unwrap(), projected);
         assert!(head.predicted_at(59_000_000).is_err());
+    }
+
+    #[test]
+    fn head_runtime_projects_from_last_successful_command_without_mutating_history() {
+        let actuators = [
+            OpticalHeadSlewActuator {
+                head_id: "sat-a/head-1".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+                max_slew_acceleration_deg_per_s2: Some(200000.0),
+                settling_ns: Some(15_000_000),
+            },
+            OpticalHeadSlewActuator {
+                head_id: "sat-b/head-1".into(),
+                initial_direction_body: [-1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+                max_slew_acceleration_deg_per_s2: Some(200000.0),
+                settling_ns: None,
+            },
+        ];
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        runtime
+            .observe("sat-a/head-1", 0, [1.0, 0.0, 0.0])
+            .unwrap();
+        runtime
+            .observe("sat-b/head-1", 0, [-1.0, 0.0, 0.0])
+            .unwrap();
+        runtime
+            .observe("sat-a/head-1", 30_000_000, [0.0, 1.0, 0.0])
+            .unwrap();
+
+        let (projected, target) = runtime.predicted_at("sat-a/head-1", 60_000_000).unwrap();
+        assert_eq!(target, [0.0, 1.0, 0.0]);
+        assert!((projected[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
+        assert_eq!(
+            runtime.predicted_at("sat-a/head-1", 60_000_000).unwrap(),
+            (projected, target)
+        );
+        assert_eq!(
+            runtime.predicted_at("sat-b/head-1", 60_000_000).unwrap().0,
+            [-1.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            runtime
+                .observe("sat-a/head-1", 60_000_000, target)
+                .unwrap(),
+            projected
+        );
+        assert!(runtime.predicted_at("sat-a/head-1", 29_000_000).is_ok());
+        assert!(runtime.observe("sat-a/head-1", 60_000_000, target).is_err());
+        assert!(runtime.observe("unknown", 90_000_000, target).is_err());
+    }
+
+    #[test]
+    fn head_runtime_rejects_duplicate_heads_and_does_not_record_failed_samples() {
+        let actuator = OpticalHeadSlewActuator {
+            head_id: "sat-a/head-1".into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        };
+        assert!(BodyHeadRuntime::new(&[actuator.clone(), actuator.clone()]).is_err());
+        let mut runtime = BodyHeadRuntime::new(&[actuator]).unwrap();
+        assert!(runtime.predicted_at("sat-a/head-1", 0).is_err());
+        runtime
+            .observe("sat-a/head-1", 0, [1.0, 0.0, 0.0])
+            .unwrap();
+        assert!(runtime
+            .observe("sat-a/head-1", 10_000_000, [f64::NAN, 0.0, 0.0])
+            .is_err());
+        assert_eq!(
+            runtime.predicted_at("sat-a/head-1", 10_000_000).unwrap(),
+            ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        );
+        runtime
+            .observe("sat-a/head-1", 10_000_000, [0.0, 1.0, 0.0])
+            .unwrap();
     }
 
     #[test]
