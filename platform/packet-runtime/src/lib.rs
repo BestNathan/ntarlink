@@ -701,6 +701,16 @@ fn replay_pat_head_leases(
         .iter()
         .map(|pat| (pat.link_id.as_str(), pat))
         .collect();
+    // Validate every accepted reservation, including intervals with no
+    // sampled commands, before mutating the SYS-02 actuator runtime.
+    for reservation in reservations {
+        let pat = pat_links
+            .get(reservation.link_id.as_str())
+            .ok_or("unknown PAT reservation link")?;
+        if reservation.from_head != pat.from_head || reservation.to_head != pat.to_head {
+            return Err("PAT reservation endpoint mismatch".into());
+        }
+    }
     let mut runtime = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators)?;
     for event in timeline {
         match event.kind {
@@ -1753,7 +1763,7 @@ mod tests {
         mismatched[0].to_head = "sat-a/head-1".into();
         assert_eq!(
             replay_pat_head_leases(&scenario, &mismatched, &expected).unwrap_err(),
-            "PAT sample lease endpoint mismatch"
+            "PAT reservation endpoint mismatch"
         );
 
         let mut conflicting = reservations.clone();
@@ -1782,6 +1792,39 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn predicted_pat_reservations_validate_endpoints_without_samples() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        scenario.optical_body_following_samples.clear();
+        let pat = &scenario.optical_pat[0];
+        let valid = PatReservation {
+            link_id: pat.link_id.clone(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns: 0,
+            end_ns: 10_000_000,
+        };
+        let expected = HashMap::new();
+        assert!(replay_pat_head_leases(&scenario, &[valid.clone()], &expected).is_ok());
+
+        let mut swapped = valid.clone();
+        std::mem::swap(&mut swapped.from_head, &mut swapped.to_head);
+        assert_eq!(
+            replay_pat_head_leases(&scenario, &[swapped], &expected).unwrap_err(),
+            "PAT reservation endpoint mismatch"
+        );
+
+        let mut unknown = valid;
+        unknown.link_id = "missing-pat-link".into();
+        assert_eq!(
+            replay_pat_head_leases(&scenario, &[unknown], &expected).unwrap_err(),
+            "unknown PAT reservation link"
         );
     }
 
