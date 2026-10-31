@@ -1,3 +1,19 @@
+## Optional acceleration-limited body-frame optical-head slew
+
+SYS-02/03 now accepts an optional positive per-head
+`max_slew_acceleration_deg_per_s2` alongside existing constant-rate
+gimbal configuration. The deterministic PAT planner computes a
+rest-to-rest triangular or trapezoidal slew profile, rounds travel up to
+virtual nanoseconds and delays acquisition until both exclusive heads
+finish. Omitted acceleration caps retain legacy constant-rate behavior.
+Contract and planner regressions plus a synthetic packet-runtime CI
+scenario verify 90-degree retargeting (45 ms travel, 175 ms second
+tracking), contact rejection and packet conservation.
+
+**Fidelity:** idealized acceleration-bounded kinematics, not motor torque,
+feedback, continuous target tracking, physical calibration or optical PHY.
+See [design](design/optical-body-frame-gimbal-slew.md).
+
 ## Optional body-frame optical-head slew actuator scheduling
 
 SYS-02/03 now supports opt-in `optical_head_slew_actuators[]` and
