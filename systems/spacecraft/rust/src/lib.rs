@@ -249,14 +249,12 @@ impl BodyHeadRuntime {
         })
     }
 
-    /// Apply one head's sampled command and record only successful transitions.
-    /// Each head's history is strictly ordered in virtual nanoseconds.
-    pub fn observe(
-        &mut self,
+    fn staged_observation(
+        &self,
         head_id: &str,
         at_ns: u64,
         target_body: [f64; 3],
-    ) -> Result<[f64; 3], String> {
+    ) -> Result<(BodyHeadFollower, [f64; 3]), String> {
         if self
             .history
             .get(head_id)
@@ -265,16 +263,56 @@ impl BodyHeadRuntime {
         {
             return Err("BODY-frame runtime head samples must increase".into());
         }
-        let follower = self
+        let mut follower = self
             .heads
-            .get_mut(head_id)
-            .ok_or("unknown BODY-frame runtime head")?;
+            .get(head_id)
+            .ok_or("unknown BODY-frame runtime head")?
+            .clone();
         let boresight = follower.observe(at_ns, target_body)?;
+        Ok((follower, boresight))
+    }
+
+    fn commit_observation(&mut self, head_id: &str, at_ns: u64, follower: BodyHeadFollower) {
+        self.heads.insert(head_id.to_owned(), follower.clone());
         self.history
             .entry(head_id.to_owned())
             .or_default()
-            .push((at_ns, follower.clone()));
+            .push((at_ns, follower));
+    }
+
+    /// Apply one head's sampled command and record only successful transitions.
+    /// Each head's history is strictly ordered in virtual nanoseconds.
+    pub fn observe(
+        &mut self,
+        head_id: &str,
+        at_ns: u64,
+        target_body: [f64; 3],
+    ) -> Result<[f64; 3], String> {
+        let (follower, boresight) = self.staged_observation(head_id, at_ns, target_body)?;
+        self.commit_observation(head_id, at_ns, follower);
         Ok(boresight)
+    }
+
+    /// Stage both endpoint commands before committing either head.
+    /// A failed endpoint cannot advance its peer's actuator state or history.
+    pub fn observe_pair(
+        &mut self,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+    ) -> Result<([f64; 3], [f64; 3]), String> {
+        if from_head_id == to_head_id {
+            return Err("BODY-frame follower endpoints must use distinct heads".into());
+        }
+        let (from_follower, from_boresight) =
+            self.staged_observation(from_head_id, at_ns, from_target_body)?;
+        let (to_follower, to_boresight) =
+            self.staged_observation(to_head_id, at_ns, to_target_body)?;
+        self.commit_observation(from_head_id, at_ns, from_follower);
+        self.commit_observation(to_head_id, at_ns, to_follower);
+        Ok((from_boresight, to_boresight))
     }
 
     /// Project from the latest successful command at or before a PAT boundary.
@@ -731,6 +769,102 @@ mod tests {
         runtime
             .observe("sat-a/head-1", 10_000_000, [0.0, 1.0, 0.0])
             .unwrap();
+    }
+
+    #[test]
+    fn head_runtime_pair_rolls_back_both_heads_and_allows_same_timestamp_retry() {
+        let actuators = [
+            OpticalHeadSlewActuator {
+                head_id: "a".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            },
+            OpticalHeadSlewActuator {
+                head_id: "b".into(),
+                initial_direction_body: [0.0, 1.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            },
+        ];
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        assert_eq!(
+            runtime
+                .observe_pair("a", "b", 0, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+                .unwrap(),
+            ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+        );
+        assert!(runtime
+            .observe_pair("a", "b", 10_000_000, [0.0, 0.0, 1.0], [f64::NAN, 0.0, 0.0])
+            .is_err());
+        assert_eq!(
+            runtime.predicted_at("a", 10_000_000).unwrap(),
+            ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            runtime.predicted_at("b", 10_000_000).unwrap(),
+            ([0.0, 1.0, 0.0], [0.0, 1.0, 0.0])
+        );
+        assert!(runtime
+            .observe_pair("a", "a", 10_000_000, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+            .is_err());
+        assert!(runtime
+            .observe_pair("a", "missing", 10_000_000, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+            .is_err());
+        assert_eq!(
+            runtime
+                .observe_pair("a", "b", 10_000_000, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+                .unwrap(),
+            ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+        );
+        assert_eq!(
+            runtime.predicted_at("a", 10_000_000).unwrap().1,
+            [0.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            runtime.predicted_at("b", 10_000_000).unwrap().1,
+            [0.0, 0.0, 1.0]
+        );
+        assert!(runtime
+            .observe_pair("a", "b", 10_000_000, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+            .is_err());
+    }
+
+    #[test]
+    fn head_runtime_pair_rolls_back_on_second_head_ambiguous_motion() {
+        let actuators = ["a", "b"].map(|id| OpticalHeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        runtime
+            .observe_pair("a", "b", 0, [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0])
+            .unwrap();
+        assert!(runtime
+            .observe_pair("a", "b", 10_000_000, [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0])
+            .is_err());
+        assert_eq!(
+            runtime.predicted_at("a", 10_000_000).unwrap(),
+            ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            runtime
+                .observe_pair(
+                    "a",
+                    "b",
+                    3_000_000_000,
+                    [0.0, 1.0, 0.0],
+                    [-1.0, 0.0, 0.0],
+                )
+                .unwrap()
+                .0,
+            [1.0, 0.0, 0.0]
+        );
     }
 
     #[test]
