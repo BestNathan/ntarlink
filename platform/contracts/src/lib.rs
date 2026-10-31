@@ -621,8 +621,7 @@ impl Scenario {
         }
         // The opt-in actuator model needs every head and every geometric PAT
         // contact to be covered. No implied initial pointing is permitted.
-        if !self.optical_head_slew_actuators.is_empty()
-            || !self.optical_pat_slew_targets.is_empty()
+        if !self.optical_head_slew_actuators.is_empty() || !self.optical_pat_slew_targets.is_empty()
         {
             if self.optical_head_slew_actuators.len() != head_owners.len() {
                 return Err("body-frame gimbal actuators must cover every PAT head".into());
@@ -633,10 +632,16 @@ impl Scenario {
                     || !seen_heads.insert(actuator.head_id.as_str())
                     || !actuator.max_slew_rate_deg_per_s.is_finite()
                     || actuator.max_slew_rate_deg_per_s <= 0.0
-                    || actuator.initial_direction_body.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
+                    || actuator
+                        .initial_direction_body
+                        .iter()
+                        .any(|v| !v.is_finite() || v.abs() > 1.0e12)
                     || actuator.initial_direction_body.iter().all(|v| *v == 0.0)
                 {
-                    return Err(format!("invalid body-frame gimbal actuator: {}", actuator.head_id));
+                    return Err(format!(
+                        "invalid body-frame gimbal actuator: {}",
+                        actuator.head_id
+                    ));
                 }
             }
             let contacts: HashSet<(&str, u64)> = self
@@ -653,10 +658,12 @@ impl Scenario {
                 if target.frame != "BODY"
                     || !contacts.contains(&(target.link_id.as_str(), target.at_ns))
                     || !seen_targets.insert((target.link_id.as_str(), target.at_ns))
-                    || [target.from_target_body, target.to_target_body].iter().any(|vector| {
-                        vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
-                            || vector.iter().all(|v| *v == 0.0)
-                    })
+                    || [target.from_target_body, target.to_target_body]
+                        .iter()
+                        .any(|vector| {
+                            vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
+                                || vector.iter().all(|v| *v == 0.0)
+                        })
                 {
                     return Err(format!(
                         "invalid body-frame gimbal target: {} at {}",
@@ -1351,22 +1358,33 @@ mod tests {
             },
         ];
         scenario.validate().unwrap();
-        assert!(serde_json::to_string(&scenario).unwrap().contains("optical_pat_slew_targets"));
+        assert!(serde_json::to_string(&scenario)
+            .unwrap()
+            .contains("optical_pat_slew_targets"));
         scenario.optical_pat_slew_targets.pop();
-        assert!(scenario.validate().unwrap_err().contains("cover every PAT contact"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("cover every PAT contact"));
         let second = OpticalPatSlewTarget {
             at_ns: 120_000_000,
             ..scenario.optical_pat_slew_targets[0].clone()
         };
         scenario.optical_pat_slew_targets.push(second);
         scenario.optical_pat_slew_targets[1].frame = "ITRS".into();
-        assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal target"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("invalid body-frame gimbal target"));
         scenario.optical_pat_slew_targets[1].frame = "BODY".into();
         scenario.optical_pat_slew_targets[1].from_target_body = [0.0; 3];
         assert!(scenario.validate().is_err());
         scenario.optical_pat_slew_targets[1].from_target_body = [0.0, 1.0, 0.0];
         scenario.optical_head_slew_actuators[0].max_slew_rate_deg_per_s = 0.0;
-        assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal actuator"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("invalid body-frame gimbal actuator"));
         scenario.optical_head_slew_actuators[0].max_slew_rate_deg_per_s = 3000.0;
         scenario.optical_head_slew_actuators[0].head_id = "missing".into();
         assert!(scenario.validate().is_err());
