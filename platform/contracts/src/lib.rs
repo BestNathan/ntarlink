@@ -716,7 +716,9 @@ impl Scenario {
                     .iter()
                     .any(|fault| fault.cause == FaultCause::SampledPointing)
             {
-                return Err("body-frame tracking samples cannot mix with other pointing modes".into());
+                return Err(
+                    "body-frame tracking samples cannot mix with other pointing modes".into(),
+                );
             }
             let target_by_contact: std::collections::HashMap<(&str, u64), &OpticalPatSlewTarget> =
                 self.optical_pat_slew_targets
@@ -738,16 +740,27 @@ impl Scenario {
                     .optical_pat
                     .iter()
                     .find(|pat| pat.link_id == sample.link_id)
-                    .ok_or_else(|| format!("unknown body-frame tracking link: {}", sample.link_id))?;
+                    .ok_or_else(|| {
+                        format!("unknown body-frame tracking link: {}", sample.link_id)
+                    })?;
                 if sample.frame != "BODY" || sample.at_ns >= self.duration_ns {
-                    return Err(format!("invalid body-frame tracking frame or time: {}", sample.link_id));
+                    return Err(format!(
+                        "invalid body-frame tracking frame or time: {}",
+                        sample.link_id
+                    ));
                 }
                 if let Some(previous) = last_by_link.insert(&sample.link_id, sample.at_ns) {
                     if sample.at_ns <= previous {
-                        return Err(format!("body-frame tracking samples must increase: {}", sample.link_id));
+                        return Err(format!(
+                            "body-frame tracking samples must increase: {}",
+                            sample.link_id
+                        ));
                     }
                 } else if sample.at_ns != 0 {
-                    return Err(format!("body-frame tracking samples must start at zero: {}", sample.link_id));
+                    return Err(format!(
+                        "body-frame tracking samples must start at zero: {}",
+                        sample.link_id
+                    ));
                 }
                 for vector in [
                     sample.from_target_body,
@@ -758,7 +771,10 @@ impl Scenario {
                     if vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
                         || vector.iter().all(|v| *v == 0.0)
                     {
-                        return Err(format!("invalid body-frame tracking vector: {}", sample.link_id));
+                        return Err(format!(
+                            "invalid body-frame tracking vector: {}",
+                            sample.link_id
+                        ));
                     }
                 }
                 for (head, limit) in [
@@ -768,15 +784,25 @@ impl Scenario {
                     if !limit.is_finite() || !(0.0..=180.0).contains(&limit) {
                         return Err(format!("invalid body-frame tracking error limit: {head}"));
                     }
-                    if head_limits.insert(head, limit).is_some_and(|previous| previous != limit) {
-                        return Err(format!("inconsistent body-frame tracking head limit: {head}"));
+                    if head_limits
+                        .insert(head, limit)
+                        .is_some_and(|previous| previous != limit)
+                    {
+                        return Err(format!(
+                            "inconsistent body-frame tracking head limit: {head}"
+                        ));
                     }
                 }
-                if let Some(target) = target_by_contact.get(&(sample.link_id.as_str(), sample.at_ns)) {
+                if let Some(target) =
+                    target_by_contact.get(&(sample.link_id.as_str(), sample.at_ns))
+                {
                     if !same_direction(sample.from_target_body, target.from_target_body)
                         || !same_direction(sample.to_target_body, target.to_target_body)
                     {
-                        return Err(format!("body-frame tracking target differs from PAT target: {}", sample.link_id));
+                        return Err(format!(
+                            "body-frame tracking target differs from PAT target: {}",
+                            sample.link_id
+                        ));
                     }
                     covered_contacts.insert((sample.link_id.as_str(), sample.at_ns));
                 }
@@ -784,7 +810,10 @@ impl Scenario {
             if last_by_link.len() != pat_links.len()
                 || covered_contacts.len() != target_by_contact.len()
             {
-                return Err("body-frame tracking samples must cover every PAT link and contact start".into());
+                return Err(
+                    "body-frame tracking samples must cover every PAT link and contact start"
+                        .into(),
+                );
             }
         }
         if self.optical_head_outages.len() > 10_000 {
@@ -1470,7 +1499,10 @@ mod tests {
 
         let mut invalid = baseline.clone();
         invalid.optical_body_tracking_samples[3].from_target_body = [1.0, 0.0, 0.0];
-        assert!(invalid.validate().unwrap_err().contains("differs from PAT target"));
+        assert!(invalid
+            .validate()
+            .unwrap_err()
+            .contains("differs from PAT target"));
 
         let mut invalid = baseline.clone();
         invalid.optical_head_slew_actuators.clear();
