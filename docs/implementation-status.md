@@ -1,3 +1,19 @@
+## Canonical provisional PAT sample preflight
+
+The provisional SYS-02 follower pass now consumes SYS-03's canonical
+sample-only virtual-time transition sequence, instead of sorting commands
+independently from the subsequent lease replay. Duplicate link/timestamp
+commands and blank link IDs fail before any provisional follower mutation.
+Unknown PAT link IDs return a structured error rather than panicking when
+a caller bypasses scenario validation. Packet-runtime regressions cover
+all three malformed inputs; existing predicted-follower PAT and packet
+acceptance remains the compatibility baseline.
+
+**Fidelity and cost:** the same O(S log S) sample ordering and O(S)
+temporary event memory are used for S commands. This is still a provisional
+pass followed by an offline lease replay, not a single-pass mutable
+actuator/PAT scheduler or shared-head predicted arbitration.
+
 ## Canonical SYS-03 PAT command event timeline
 
 SYS-03 now combines its validated half-open PAT lease transitions with
