@@ -19,6 +19,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
 
+type PredictedPair = ([f64; 3], [f64; 3]);
+type PredictedObservations = HashMap<(String, u64), Option<PredictedPair>>;
+
 /// Piecewise-linear delay at the completion of packet serialization.
 /// Integer arithmetic and nearest-nanosecond rounding preserve reproducibility.
 fn interpolated_delay(samples: &[PropagationDelaySample], at_ns: u64) -> u64 {
@@ -681,7 +684,7 @@ impl<'a> Runtime<'a> {
 fn replay_pat_head_leases(
     scenario: &Scenario,
     reservations: &[PatReservation],
-    expected: &HashMap<(String, u64), Option<([f64; 3], [f64; 3])>>,
+    expected: &PredictedObservations,
 ) -> Result<BodyHeadRuntime, String> {
     enum Transition {
         Release(usize),
