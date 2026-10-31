@@ -717,16 +717,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         })
         .collect();
-    steering_faults.extend(scenario.optical_body_tracking_samples.iter().map(|sample| Fault {
-        at_ns: sample.at_ns,
-        link_id: sample.link_id.clone(),
-        action: if body_tracking_error_allowed(sample) {
-            LinkAction::Up
-        } else {
-            LinkAction::Down
-        },
-        cause: FaultCause::SampledPointing,
-    }));
+    steering_faults.extend(
+        scenario
+            .optical_body_tracking_samples
+            .iter()
+            .map(|sample| Fault {
+                at_ns: sample.at_ns,
+                link_id: sample.link_id.clone(),
+                action: if body_tracking_error_allowed(sample) {
+                    LinkAction::Up
+                } else {
+                    LinkAction::Down
+                },
+                cause: FaultCause::SampledPointing,
+            }),
+    );
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
@@ -1344,7 +1349,9 @@ mod tests {
                 || (110_000_000..120_000_000).contains(&hop.transmit_started_ns)
                 || (190_000_000..260_000_000).contains(&hop.transmit_started_ns)
         }));
-        assert!(hops.iter().any(|hop| hop.transmit_started_ns >= 190_000_000));
+        assert!(hops
+            .iter()
+            .any(|hop| hop.transmit_started_ns >= 190_000_000));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
