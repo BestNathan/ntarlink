@@ -279,11 +279,7 @@ impl BodyHeadRuntime {
 
     /// Project from the latest successful command at or before a PAT boundary.
     /// Historical commands and the live head state remain unchanged.
-    pub fn predicted_at(
-        &self,
-        head_id: &str,
-        at_ns: u64,
-    ) -> Result<([f64; 3], [f64; 3]), String> {
+    pub fn predicted_at(&self, head_id: &str, at_ns: u64) -> Result<([f64; 3], [f64; 3]), String> {
         let history = self
             .history
             .get(head_id)
@@ -684,9 +680,7 @@ mod tests {
             },
         ];
         let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
-        runtime
-            .observe("sat-a/head-1", 0, [1.0, 0.0, 0.0])
-            .unwrap();
+        runtime.observe("sat-a/head-1", 0, [1.0, 0.0, 0.0]).unwrap();
         runtime
             .observe("sat-b/head-1", 0, [-1.0, 0.0, 0.0])
             .unwrap();
@@ -706,9 +700,7 @@ mod tests {
             [-1.0, 0.0, 0.0]
         );
         assert_eq!(
-            runtime
-                .observe("sat-a/head-1", 60_000_000, target)
-                .unwrap(),
+            runtime.observe("sat-a/head-1", 60_000_000, target).unwrap(),
             projected
         );
         assert!(runtime.predicted_at("sat-a/head-1", 29_000_000).is_ok());
@@ -728,9 +720,7 @@ mod tests {
         assert!(BodyHeadRuntime::new(&[actuator.clone(), actuator.clone()]).is_err());
         let mut runtime = BodyHeadRuntime::new(&[actuator]).unwrap();
         assert!(runtime.predicted_at("sat-a/head-1", 0).is_err());
-        runtime
-            .observe("sat-a/head-1", 0, [1.0, 0.0, 0.0])
-            .unwrap();
+        runtime.observe("sat-a/head-1", 0, [1.0, 0.0, 0.0]).unwrap();
         assert!(runtime
             .observe("sat-a/head-1", 10_000_000, [f64::NAN, 0.0, 0.0])
             .is_err());
