@@ -753,7 +753,9 @@ impl Scenario {
                 if !unique_heads.insert(pat.from_head.as_str())
                     || !unique_heads.insert(pat.to_head.as_str())
                 {
-                    return Err("predicted body-frame following requires exclusive PAT heads".into());
+                    return Err(
+                        "predicted body-frame following requires exclusive PAT heads".into(),
+                    );
                 }
             }
         }
@@ -1940,7 +1942,8 @@ mod tests {
     fn predicted_following_contract_rejects_invalid_and_competing_streams() {
         let mut s = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
-        )).unwrap();
+        ))
+        .unwrap();
         assert!(s.optical_body_tracking_samples.is_empty());
         s.optical_body_following_samples[0].frame = "ITRS".into();
         assert!(s.validate().unwrap_err().contains("frame or time"));
@@ -1952,19 +1955,23 @@ mod tests {
         assert!(s.validate().unwrap_err().contains("must increase"));
         s.optical_body_following_samples[1].at_ns = 30_000_000;
         s.optical_body_following_samples[0].from_target_body = [0.0, 1.0, 0.0];
-        assert!(s.validate().unwrap_err().contains("differs from PAT target"));
+        assert!(s
+            .validate()
+            .unwrap_err()
+            .contains("differs from PAT target"));
         s.optical_body_following_samples[0].from_target_body = [1.0, 0.0, 0.0];
-        s.optical_body_tracking_samples.push(OpticalBodyTrackingSample {
-            link_id: "isl-a-b".into(),
-            at_ns: 0,
-            frame: "BODY".into(),
-            from_target_body: [1.0, 0.0, 0.0],
-            to_target_body: [-1.0, 0.0, 0.0],
-            from_boresight_body: [1.0, 0.0, 0.0],
-            to_boresight_body: [-1.0, 0.0, 0.0],
-            from_max_error_deg: 5.0,
-            to_max_error_deg: 5.0,
-        });
+        s.optical_body_tracking_samples
+            .push(OpticalBodyTrackingSample {
+                link_id: "isl-a-b".into(),
+                at_ns: 0,
+                frame: "BODY".into(),
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [-1.0, 0.0, 0.0],
+                from_boresight_body: [1.0, 0.0, 0.0],
+                to_boresight_body: [-1.0, 0.0, 0.0],
+                from_max_error_deg: 5.0,
+                to_max_error_deg: 5.0,
+            });
         assert!(s.validate().unwrap_err().contains("cannot mix"));
     }
 
