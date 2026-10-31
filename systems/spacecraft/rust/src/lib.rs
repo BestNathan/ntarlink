@@ -133,6 +133,7 @@ pub fn geometry_los_acceleration_allowed(
             })
         };
         let norm = |v: [f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let elapsed_s = (b.at_ns - a.at_ns) as f64 * 1.0e-9;
         let a = los(a);
         let b = los(b);
         let a_norm = norm(a);
@@ -155,7 +156,6 @@ pub fn geometry_los_acceleration_allowed(
         if sine == 0.0 {
             return Some([0.0; 3]);
         }
-        let elapsed_s = (b.at_ns - a.at_ns) as f64 * 1.0e-9;
         let scale = sine.atan2(dot).to_degrees() / (sine * elapsed_s);
         let velocity = cross.map(|component| component * scale);
         velocity.iter().all(|value| value.is_finite()).then_some(velocity)
