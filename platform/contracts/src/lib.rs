@@ -1340,11 +1340,13 @@ mod tests {
                 head_id: "sat-a/head-1".into(),
                 initial_direction_body: [1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
+                max_slew_acceleration_deg_per_s2: None,
             },
             OpticalHeadSlewActuator {
                 head_id: "sat-b/head-1".into(),
                 initial_direction_body: [-1.0, 0.0, 0.0],
                 max_slew_rate_deg_per_s: 3000.0,
+                max_slew_acceleration_deg_per_s2: None,
             },
         ];
         scenario.optical_pat_slew_targets = vec![
