@@ -164,7 +164,7 @@
       "items": {
         "$ref": "#/$defs/optical_body_tracking_sample"
       },
-      "description": "Optional time-indexed BODY-frame target and observed boresight vectors for each PAT link. Requires exclusive-head gimbal actuators and a sample at every contact start; finite sample-and-hold tracking error, not a servo."
+      "description": "Optional time-indexed BODY-frame target and observed boresight vectors for each PAT link. Requires exclusive-head gimbal actuators and a sample at every contact start; finite sample-and-hold tracking error plus a per-head sampled target angular-rate feasibility gate, not a servo."
     }
   },
   "$defs": {

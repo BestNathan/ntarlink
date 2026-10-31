@@ -1,3 +1,19 @@
+## Sampled BODY-frame tracking target angular-rate feasibility
+
+SYS-02 now checks consecutive commanded target directions from
+`optical_body_tracking_samples[]` against each exclusive head's existing
+maximum slew rate. Even perfectly aligned externally observed boresight
+cannot mask an unreachable sampled target change. A failed target-rate
+sample interrupts PAT and packet forwarding; a later feasible sample
+requires reacquisition and does not override an administrative outage.
+Synthetic Rust tests and packet CI cover a 90-degree / 25 ms target step,
+recovery, independent faults, deterministic traces and conservation.
+
+**Fidelity:** finite-sample mean target-rate gate only; the observed
+boresight remains external. No continuous servo, acceleration-constrained
+target follower, optical PHY or physical calibration is claimed. See
+[design](design/optical-body-frame-tracking-error.md).
+
 ## Optional sampled BODY-frame optical tracking error
 
 SYS-02/03 now supports `optical_body_tracking_samples[]` for external

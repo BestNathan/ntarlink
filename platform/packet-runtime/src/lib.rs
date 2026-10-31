@@ -8,7 +8,8 @@ use ntarlink_optical_pat::{
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
-    body_tracking_error_allowed, geometry_los_acceleration_allowed, geometry_los_rate_allowed,
+    body_tracking_error_allowed, body_tracking_target_rate_allowed,
+    geometry_los_acceleration_allowed, geometry_los_rate_allowed,
     geometry_pointing_allowed, pointing_allowed, HeadAvailability,
 };
 use serde::Serialize;
@@ -717,21 +718,41 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         })
         .collect();
-    steering_faults.extend(
-        scenario
-            .optical_body_tracking_samples
-            .iter()
-            .map(|sample| Fault {
-                at_ns: sample.at_ns,
-                link_id: sample.link_id.clone(),
-                action: if body_tracking_error_allowed(sample) {
-                    LinkAction::Up
-                } else {
-                    LinkAction::Down
-                },
-                cause: FaultCause::SampledPointing,
-            }),
-    );
+    // A matching measured boresight alone cannot certify a target jump
+    // that exceeds either head's slew-rate budget between observations.
+    let body_head_rates: HashMap<_, _> = scenario
+        .optical_head_slew_actuators
+        .iter()
+        .map(|head| (head.head_id.as_str(), head.max_slew_rate_deg_per_s))
+        .collect();
+    let body_pat_links: HashMap<_, _> = scenario
+        .optical_pat
+        .iter()
+        .map(|pat| (pat.link_id.as_str(), pat))
+        .collect();
+    let mut previous_body_sample = HashMap::new();
+    steering_faults.extend(scenario.optical_body_tracking_samples.iter().map(|sample| {
+        let previous = previous_body_sample.insert(sample.link_id.as_str(), sample);
+        let rate_allowed = previous.is_none_or(|earlier| {
+            let pat = body_pat_links[sample.link_id.as_str()];
+            body_tracking_target_rate_allowed(
+                earlier,
+                sample,
+                body_head_rates[pat.from_head.as_str()],
+                body_head_rates[pat.to_head.as_str()],
+            )
+        });
+        Fault {
+            at_ns: sample.at_ns,
+            link_id: sample.link_id.clone(),
+            action: if body_tracking_error_allowed(sample) && rate_allowed {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
+            cause: FaultCause::SampledPointing,
+        }
+    }));
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
@@ -1306,6 +1327,49 @@ mod tests {
             (20_000_000..120_000_000).contains(&hop.transmit_started_ns)
                 || (140_000_000..200_000_000).contains(&hop.transmit_started_ns)
         }));
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn sampled_body_target_rate_loss_blocks_pat_even_with_perfect_boresight() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-rate-gate.json"
+        ))
+        .unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 90_000_000, 190_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 25_000_000
+                && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        assert!(!report.control_events.iter().any(|event| {
+            event.kind == "contact_open"
+                && event.link_id.as_deref() == Some("isl-a-b")
+                && (40_000_000..70_000_000).contains(&event.at_ns)
+        }));
+        let hops: Vec<_> = report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .collect();
+        assert!(hops.iter().all(|hop| {
+            (20_000_000..25_000_000).contains(&hop.transmit_started_ns)
+                || (90_000_000..120_000_000).contains(&hop.transmit_started_ns)
+                || (190_000_000..260_000_000).contains(&hop.transmit_started_ns)
+        }));
+        assert!(hops.iter().any(|hop| hop.transmit_started_ns >= 190_000_000));
+        assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
