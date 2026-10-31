@@ -230,6 +230,8 @@ pub struct BodyHeadRuntime {
     /// Link-scoped command leases. PAT scheduling still owns its own reservations.
     owners: HashMap<String, String>,
     link_heads: HashMap<String, (String, String)>,
+    /// Earliest allowed time for a new command after a timed lease release.
+    release_floor_ns: HashMap<String, u64>,
 }
 
 impl BodyHeadRuntime {
@@ -251,6 +253,7 @@ impl BodyHeadRuntime {
             history: HashMap::new(),
             owners: HashMap::new(),
             link_heads: HashMap::new(),
+            release_floor_ns: HashMap::new(),
         })
     }
 
@@ -260,6 +263,13 @@ impl BodyHeadRuntime {
         at_ns: u64,
         target_body: [f64; 3],
     ) -> Result<(BodyHeadFollower, [f64; 3]), String> {
+        if self
+            .release_floor_ns
+            .get(head_id)
+            .is_some_and(|released_at| at_ns < *released_at)
+        {
+            return Err("BODY-frame runtime command precedes lease release".into());
+        }
         if self
             .history
             .get(head_id)
@@ -372,13 +382,37 @@ impl BodyHeadRuntime {
         Ok(observed)
     }
 
-    /// Release a link's two command leases without resetting their boresights.
-    /// A mismatched or partial release is rejected without changing either head.
+    /// Legacy release at the last committed sample time. Call release_pair_at
+    /// when a PAT reservation has a later, explicit virtual-time end boundary.
     pub fn release_pair(
         &mut self,
         link_id: &str,
         from_head_id: &str,
         to_head_id: &str,
+    ) -> Result<(), String> {
+        let at_ns = [from_head_id, to_head_id]
+            .into_iter()
+            .filter_map(|head| {
+                self.history
+                    .get(head)
+                    .and_then(|samples| samples.last())
+                    .map(|(at_ns, _)| *at_ns)
+            })
+            .max()
+            .unwrap_or(0);
+        self.release_pair_at(link_id, from_head_id, to_head_id, at_ns)
+    }
+
+    /// Atomically release a link's two command leases at a virtual-time
+    /// boundary. Later owners cannot submit commands before this boundary,
+    /// even if the previous owner's final observation was much earlier.
+    /// A failed release preserves both owners and their time barriers.
+    pub fn release_pair_at(
+        &mut self,
+        link_id: &str,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
     ) -> Result<(), String> {
         if link_id.trim().is_empty()
             || from_head_id == to_head_id
@@ -391,8 +425,24 @@ impl BodyHeadRuntime {
         {
             return Err("BODY-frame runtime pair lease ownership mismatch".into());
         }
-        self.owners.remove(from_head_id);
-        self.owners.remove(to_head_id);
+        for head_id in [from_head_id, to_head_id] {
+            if self
+                .history
+                .get(head_id)
+                .and_then(|samples| samples.last())
+                .is_some_and(|(sample_ns, _)| at_ns < *sample_ns)
+                || self
+                    .release_floor_ns
+                    .get(head_id)
+                    .is_some_and(|released_at| at_ns < *released_at)
+            {
+                return Err("BODY-frame runtime lease release precedes head history".into());
+            }
+        }
+        for head_id in [from_head_id, to_head_id] {
+            self.owners.remove(head_id);
+            self.release_floor_ns.insert(head_id.to_owned(), at_ns);
+        }
         self.link_heads.remove(link_id);
         Ok(())
     }
@@ -977,6 +1027,50 @@ mod tests {
         assert!(runtime
             .observe_pair_for_link("isl-a-b", "a", "b", 3, initial, initial)
             .is_err());
+    }
+
+    #[test]
+    fn timed_head_lease_release_blocks_retroactive_handoff() {
+        let actuators = ["a", "b", "c"].map(|id| OpticalHeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        runtime
+            .observe_pair_for_link("first", "a", "b", 0, target, target)
+            .unwrap();
+        runtime
+            .observe_pair_for_link("first", "a", "b", 10, target, target)
+            .unwrap();
+        assert!(runtime.release_pair_at("first", "a", "b", 9).is_err());
+        assert!(runtime.release_pair_at("wrong", "a", "b", 50).is_err());
+        assert!(runtime
+            .observe_pair_for_link("second", "a", "c", 50, target, target)
+            .is_err());
+        runtime.release_pair_at("first", "a", "b", 50).unwrap();
+        assert!(runtime
+            .observe_pair_for_link("second", "a", "c", 49, target, target)
+            .is_err());
+        assert!(runtime.predicted_at("c", 50).is_err());
+        assert!(runtime.observe("b", 49, target).is_err());
+        runtime
+            .observe_pair_for_link("second", "a", "c", 50, target, target)
+            .unwrap();
+        assert!(runtime.release_pair_at("second", "a", "c", 49).is_err());
+        runtime.release_pair_at("second", "a", "c", 100).unwrap();
+        assert!(runtime
+            .observe_pair_for_link("first", "a", "b", 99, target, target)
+            .is_err());
+        runtime
+            .observe_pair_for_link("first", "a", "b", 100, target, target)
+            .unwrap();
+        assert_eq!(runtime.predicted_at("a", 100).unwrap().1, target);
+        assert_eq!(runtime.predicted_at("b", 100).unwrap().1, target);
+        assert_eq!(runtime.predicted_at("c", 100).unwrap().1, target);
     }
 
     #[test]
