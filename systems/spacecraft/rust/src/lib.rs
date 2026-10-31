@@ -1,5 +1,7 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
-use ntarlink_contracts::{OpticalGeometry, OpticalHeadOutage, OpticalPointing};
+use ntarlink_contracts::{
+    OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalPointing,
+};
 use std::collections::HashMap;
 
 /// Conservative static steering-envelope gate for an operator-supplied
@@ -16,6 +18,49 @@ pub fn pointing_allowed(pointing: &OpticalPointing) -> bool {
             && (0.0..=180.0).contains(angle)
             && (0.0..=180.0).contains(limit)
             && angle <= limit
+    })
+}
+
+/// Compare supplied target and measured boresight directions in each local
+/// spacecraft BODY frame. The observation is held between sample instants;
+/// this is not a prediction of actuator response or continuous pointing.
+pub fn body_tracking_error_allowed(sample: &OpticalBodyTrackingSample) -> bool {
+    if sample.frame != "BODY" {
+        return false;
+    }
+    [
+        (
+            sample.from_target_body,
+            sample.from_boresight_body,
+            sample.from_max_error_deg,
+        ),
+        (
+            sample.to_target_body,
+            sample.to_boresight_body,
+            sample.to_max_error_deg,
+        ),
+    ]
+    .iter()
+    .all(|(target, actual, limit)| {
+        if !limit.is_finite() || !(0.0..=180.0).contains(limit) {
+            return false;
+        }
+        let norm = |v: &[f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let a = norm(target);
+        let b = norm(actual);
+        if !a.is_finite() || !b.is_finite() || a <= 0.0 || b <= 0.0 {
+            return false;
+        }
+        let u = target.map(|v| v / a);
+        let v = actual.map(|v| v / b);
+        let dot = u.iter().zip(v).map(|(x, y)| x * y).sum::<f64>();
+        let cross = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let angle_deg = norm(&cross).atan2(dot).to_degrees();
+        angle_deg.is_finite() && angle_deg <= limit + 1.0e-9
     })
 }
 
@@ -279,6 +324,38 @@ mod tests {
         assert!(!pointing_allowed(&pointing));
         pointing.from_off_axis_deg = f64::NAN;
         assert!(!pointing_allowed(&pointing));
+    }
+
+    #[test]
+    fn body_tracking_error_is_reciprocal_frame_local_and_fails_closed() {
+        let mut sample = OpticalBodyTrackingSample {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "BODY".into(),
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [-1.0, 0.0, 0.0],
+            from_boresight_body: [2.0, 0.0, 0.0],
+            to_boresight_body: [-2.0, 0.0, 0.0],
+            from_max_error_deg: 5.0,
+            to_max_error_deg: 5.0,
+        };
+        assert!(body_tracking_error_allowed(&sample));
+        sample.from_boresight_body = [0.0, 1.0, 0.0];
+        assert!(!body_tracking_error_allowed(&sample));
+        sample.from_max_error_deg = 90.0;
+        assert!(body_tracking_error_allowed(&sample));
+        sample.to_boresight_body = [1.0, 0.0, 0.0];
+        assert!(!body_tracking_error_allowed(&sample));
+        sample.to_max_error_deg = 180.0;
+        assert!(body_tracking_error_allowed(&sample));
+        sample.from_boresight_body = [0.0; 3];
+        assert!(!body_tracking_error_allowed(&sample));
+        sample.from_boresight_body = [1.0, 0.0, 0.0];
+        sample.from_max_error_deg = f64::NAN;
+        assert!(!body_tracking_error_allowed(&sample));
+        sample.from_max_error_deg = 5.0;
+        sample.frame = "ITRS".into();
+        assert!(!body_tracking_error_allowed(&sample));
     }
 
     #[test]

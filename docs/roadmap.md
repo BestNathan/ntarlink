@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in sampled BODY-frame target-versus-observed-boresight tracking-error gate for exclusive optical heads, with per-head limits, contact-target consistency, independent administrative faults, PAT reacquisition and synthetic packet CI (external observations, not a servo or continuous tracking guarantee). See [design](design/optical-body-frame-tracking-error.md).
+
 - [x] Optional per-head post-motion gimbal settling dwell delays SYS-03 acquisition after nonzero body-frame retargets, with independent head timing, rejection safety and deterministic packet CI (not continuous tracking error or servo feedback). See [design](design/optical-body-frame-gimbal-slew.md).
 
 - [x] Optional per-head rest-to-rest acceleration-limited body-frame gimbal slew scheduling with triangular/trapezoidal travel time, PAT acquisition delay and synthetic packet CI (not a servo, moving-target tracker or continuous error model). See [design](design/optical-body-frame-gimbal-slew.md).

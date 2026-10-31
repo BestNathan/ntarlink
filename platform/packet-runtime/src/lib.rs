@@ -8,8 +8,8 @@ use ntarlink_optical_pat::{
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
-    geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
-    pointing_allowed, HeadAvailability,
+    body_tracking_error_allowed, geometry_los_acceleration_allowed, geometry_los_rate_allowed,
+    geometry_pointing_allowed, pointing_allowed, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -717,6 +717,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         })
         .collect();
+    steering_faults.extend(
+        scenario
+            .optical_body_tracking_samples
+            .iter()
+            .map(|sample| Fault {
+                at_ns: sample.at_ns,
+                link_id: sample.link_id.clone(),
+                action: if body_tracking_error_allowed(sample) {
+                    LinkAction::Up
+                } else {
+                    LinkAction::Down
+                },
+                cause: FaultCause::SampledPointing,
+            }),
+    );
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
@@ -1045,6 +1060,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.faults.extend(effective_faults);
     prepared.optical_head_slew_actuators.clear();
     prepared.optical_pat_slew_targets.clear();
+    prepared.optical_body_tracking_samples.clear();
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
     prepared.optical_steering_samples.clear();
@@ -1290,6 +1306,53 @@ mod tests {
             (20_000_000..120_000_000).contains(&hop.transmit_started_ns)
                 || (140_000_000..200_000_000).contains(&hop.transmit_started_ns)
         }));
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn sampled_body_tracking_error_interrupts_and_reacquires_gimbal_pat() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-tracking-error.json"
+        ))
+        .unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 110_000_000, 190_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000
+                && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        assert!(!report
+            .control_events
+            .iter()
+            .any(|event| event.kind == "contact_open"
+                && event.link_id.as_deref() == Some("isl-a-b")
+                && (40_000_000..90_000_000).contains(&event.at_ns)));
+        let hops: Vec<_> = report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .collect();
+        assert!(!hops.is_empty());
+        assert!(hops.iter().all(|hop| {
+            (20_000_000..30_000_000).contains(&hop.transmit_started_ns)
+                || (110_000_000..120_000_000).contains(&hop.transmit_started_ns)
+                || (190_000_000..260_000_000).contains(&hop.transmit_started_ns)
+        }));
+        assert!(hops
+            .iter()
+            .any(|hop| hop.transmit_started_ns >= 190_000_000));
+        assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()

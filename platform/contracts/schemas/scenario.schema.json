@@ -157,6 +157,14 @@
         "$ref": "#/$defs/optical_pat_slew_target"
       },
       "description": "Optional fixed body-frame target directions at each geometric PAT contact start. Reused through fault-split recovery; not ephemeris-derived."
+    },
+    "optical_body_tracking_samples": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_body_tracking_sample"
+      },
+      "description": "Optional time-indexed BODY-frame target and observed boresight vectors for each PAT link. Requires exclusive-head gimbal actuators and a sample at every contact start; finite sample-and-hold tracking error, not a servo."
     }
   },
   "$defs": {
@@ -742,6 +750,56 @@
         },
         "to_target_body": {
           "$ref": "#/$defs/vector3"
+        }
+      }
+    },
+    "optical_body_tracking_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "at_ns",
+        "frame",
+        "from_target_body",
+        "to_target_body",
+        "from_boresight_body",
+        "to_boresight_body",
+        "from_max_error_deg",
+        "to_max_error_deg"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame": {
+          "const": "BODY"
+        },
+        "from_target_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "to_target_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "from_boresight_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "to_boresight_body": {
+          "$ref": "#/$defs/vector3"
+        },
+        "from_max_error_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
+        },
+        "to_max_error_deg": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180
         }
       }
     }
