@@ -64,6 +64,56 @@ pub fn body_tracking_error_allowed(sample: &OpticalBodyTrackingSample) -> bool {
     })
 }
 
+/// Check whether consecutive commanded BODY-frame target observations are
+/// reachable at each exclusive head's configured angular slew rate.
+/// This is a finite-sample mean-rate feasibility gate, not inferred boresight
+/// or continuous servo tracking. Each endpoint uses its own BODY frame.
+pub fn body_tracking_target_rate_allowed(
+    previous: &OpticalBodyTrackingSample,
+    current: &OpticalBodyTrackingSample,
+    from_max_rate_deg_per_s: f64,
+    to_max_rate_deg_per_s: f64,
+) -> bool {
+    if previous.link_id != current.link_id
+        || previous.frame != "BODY"
+        || current.frame != "BODY"
+        || previous.at_ns >= current.at_ns
+    {
+        return false;
+    }
+    let elapsed_s = (current.at_ns - previous.at_ns) as f64 * 1.0e-9;
+    let within_limit = |a: [f64; 3], b: [f64; 3], rate: f64| {
+        if !rate.is_finite() || rate <= 0.0 {
+            return false;
+        }
+        let norm = |v: [f64; 3]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        let a_norm = norm(a);
+        let b_norm = norm(b);
+        if !a_norm.is_finite() || !b_norm.is_finite() || a_norm <= 0.0 || b_norm <= 0.0 {
+            return false;
+        }
+        let a = a.map(|x| x / a_norm);
+        let b = b.map(|x| x / b_norm);
+        let dot = a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+        let cross = [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ];
+        let angle_deg = norm(cross).atan2(dot).to_degrees();
+        angle_deg.is_finite() && angle_deg <= rate * elapsed_s + 1.0e-9
+    };
+    within_limit(
+        previous.from_target_body,
+        current.from_target_body,
+        from_max_rate_deg_per_s,
+    ) && within_limit(
+        previous.to_target_body,
+        current.to_target_body,
+        to_max_rate_deg_per_s,
+    )
+}
+
 /// Compute the two line-of-sight steering angles from one ITRS snapshot.
 /// Boresight and position vectors must share the ITRS axes; a fixed snapshot
 /// is not a time-varying attitude or ephemeris model. A degenerate vector
@@ -356,6 +406,53 @@ mod tests {
         sample.from_max_error_deg = 5.0;
         sample.frame = "ITRS".into();
         assert!(!body_tracking_error_allowed(&sample));
+    }
+
+    #[test]
+    fn body_tracking_target_rate_is_reciprocal_and_uses_elapsed_virtual_time() {
+        let previous = OpticalBodyTrackingSample {
+            link_id: "isl-a-b".into(),
+            at_ns: 0,
+            frame: "BODY".into(),
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [-1.0, 0.0, 0.0],
+            from_boresight_body: [1.0, 0.0, 0.0],
+            to_boresight_body: [-1.0, 0.0, 0.0],
+            from_max_error_deg: 5.0,
+            to_max_error_deg: 5.0,
+        };
+        let mut next = previous.clone();
+        next.at_ns = 25_000_000;
+        next.from_target_body = [0.0, 1.0, 0.0];
+        next.from_boresight_body = [0.0, 1.0, 0.0];
+        assert!(body_tracking_error_allowed(&next));
+        assert!(!body_tracking_target_rate_allowed(
+            &previous, &next, 3000.0, 3000.0
+        ));
+        next.at_ns = 30_000_000;
+        assert!(body_tracking_target_rate_allowed(
+            &previous, &next, 3000.0, 3000.0
+        ));
+        next.to_target_body = [0.0, -1.0, 0.0];
+        assert!(!body_tracking_target_rate_allowed(
+            &previous, &next, 3000.0, 2000.0
+        ));
+        next.to_target_body = previous.to_target_body;
+        next.at_ns = 0;
+        assert!(!body_tracking_target_rate_allowed(
+            &previous, &next, 3000.0, 3000.0
+        ));
+        next.at_ns = 30_000_000;
+        assert!(!body_tracking_target_rate_allowed(
+            &previous,
+            &next,
+            f64::NAN,
+            3000.0
+        ));
+        next.from_target_body = [0.0; 3];
+        assert!(!body_tracking_target_rate_allowed(
+            &previous, &next, 3000.0, 3000.0
+        ));
     }
 
     #[test]

@@ -72,3 +72,31 @@ state. Sample-and-hold can miss arbitrary motion between observations.
 The next slice should introduce a deterministic target-following actuator
 state update and an explicit tracking-error model driven by that state,
 then validate it against a physical reference or high-fidelity controller.
+
+## Sampled target-rate feasibility (incremental follow-up)
+
+The Rust SYS-02 gate also checks the shortest-arc angular displacement of
+successive commanded BODY-frame target directions for each endpoint. The
+elapsed scenario-relative virtual time and each head's existing
+`max_slew_rate_deg_per_s` determine an inclusive mean-rate bound. Both
+endpoint rates must pass independently; the first observation establishes
+the baseline. A sample with zero observed tracking error can still be
+unavailable if its target changed too quickly. A later rate-feasible sample
+recovers the sampled-pointing state, subject to independent administrative
+faults and a fresh PAT acquisition.
+
+The synthetic `optical-body-frame-target-rate-gate.json` fixture changes
+one target by 90 degrees over 25 ms at a 3,000 deg/s head limit, while
+reporting perfect boresight alignment. The 3,600 deg/s target step must
+cause loss at 25 ms. A stationary follow-up target at 50 ms restores the
+pointing-rate gate, but a 40–70 ms administrative outage prevents reopening.
+Tracking resumes at 90 ms and the next contact is acquired at 190 ms.
+Rust numerical and packet tests plus CI check loss provenance, forwarding
+windows, deterministic replay and packet conservation.
+
+This is an **observed target motion feasibility audit**, not a simulated
+boresight, acceleration-constrained continuous tracker or closed-loop
+controller. Rate feasibility over a finite interval does not imply
+reachability at every instant, and measured boresight remains externally
+supplied. The next milestone is stateful per-head target following with
+sampled predicted boresight and explicit acceleration/settling semantics.

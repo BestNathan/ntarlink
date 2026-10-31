@@ -112,6 +112,27 @@ jobs:
           assert report["injected"] == report["delivered"] + report["dropped"], report
           print("Body-frame tracking error:", tracking, report["delivered"], "delivered")
           PY
+      - name: Verify sampled body-frame target slew-rate feasibility gates PAT
+        run: |
+          python3 -m json.tool scenarios/optical-body-frame-target-rate-gate.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-body-frame-target-rate-gate.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-target-rate-gate.json --json > /tmp/ntarlink-body-target-rate.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-target-rate-gate.json --json > /tmp/ntarlink-body-target-rate-repeat.json
+          cmp /tmp/ntarlink-body-target-rate.json /tmp/ntarlink-body-target-rate-repeat.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/ntarlink-body-target-rate.json"))
+          events = report["pat_events"]
+          tracking = [e["at_ns"] for e in events if e["state"] == "tracking"]
+          assert tracking == [20_000_000, 90_000_000, 190_000_000], tracking
+          assert any(e["at_ns"] == 25_000_000 and e["state"] == "lost" and e["reason"] == "sampled_pointing_loss" for e in events), events
+          hops = [h for p in report["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          windows = [(20_000_000, 25_000_000), (90_000_000, 120_000_000), (190_000_000, 260_000_000)]
+          assert all(any(a <= h["transmit_started_ns"] < b for a, b in windows) for h in hops), hops
+          assert any(h["transmit_started_ns"] >= 190_000_000 for h in hops), hops
+          assert report["injected"] == report["delivered"] + report["dropped"], report
+          print("Body target-rate gate:", tracking, report["delivered"], "delivered")
+          PY
       - name: Verify optical PAT fault releases and reacquires tracking
         run: |
           python3 -m json.tool scenarios/optical-pat-link-fault.json > /dev/null
