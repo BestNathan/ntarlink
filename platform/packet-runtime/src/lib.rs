@@ -1709,16 +1709,20 @@ mod tests {
         ))
         .unwrap();
         let pat = &scenario.optical_pat[0];
-        let reservations: Vec<_> = [(0, 30_000_000), (90_000_000, 120_000_000), (120_000_000, 350_000_000)]
-            .into_iter()
-            .map(|(start_ns, end_ns)| PatReservation {
-                link_id: pat.link_id.clone(),
-                from_head: pat.from_head.clone(),
-                to_head: pat.to_head.clone(),
-                start_ns,
-                end_ns,
-            })
-            .collect();
+        let reservations: Vec<_> = [
+            (0, 30_000_000),
+            (90_000_000, 120_000_000),
+            (120_000_000, 350_000_000),
+        ]
+        .into_iter()
+        .map(|(start_ns, end_ns)| PatReservation {
+            link_id: pat.link_id.clone(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns,
+            end_ns,
+        })
+        .collect();
         let (provisional, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
         let (leased, actual) =
             execute_pat_head_timeline(&scenario, &reservations, Some(&expected)).unwrap();
