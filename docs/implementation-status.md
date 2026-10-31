@@ -1,3 +1,21 @@
+## Optional post-slew optical-head settling dwell
+
+SYS-02/03 now supports an opt-in `settling_ns` per exclusive body-frame
+optical-head actuator. After a nonzero retarget, Rust waits for the
+acceleration-limited or constant-rate travel plus that head's settling
+dwell, before beginning PAT acquisition. The slower of two independent
+heads and the existing fixed slew floor determine the delay. Zero-angle
+targets and omitted dwell retain legacy timing; rejected contacts do not
+change head pointing. A synthetic packet-runtime CI scenario verifies
+20 ms initial tracking, 190 ms reacquisition after a 90-degree retarget,
+suppressed forwarding before acquisition, deterministic traces and packet
+conservation. Rust contract/planner regressions cover input validation,
+overflow, asymmetric heads and rejected retargets.
+
+**Fidelity:** operator-supplied fixed stabilization dwell, not continuous
+tracking error, measured servo response, calibrated laser PHY or a physical
+settling guarantee. See [design](design/optical-body-frame-gimbal-slew.md).
+
 ## Optional acceleration-limited body-frame optical-head slew
 
 SYS-02/03 now accepts an optional positive per-head
