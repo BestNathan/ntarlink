@@ -131,7 +131,9 @@ pub fn plan_contacts_with_slew(
     actuators: &[HeadSlewActuator],
     targets: &[PatSlewTarget],
 ) -> Result<PatPlan, String> {
-    if actuators.is_empty() != targets.is_empty() {
+    if (actuators.is_empty() && !targets.is_empty())
+        || (!actuators.is_empty() && targets.is_empty() && !candidates.is_empty())
+    {
         return Err("gimbal actuators and contact targets must be configured together".into());
     }
     let mut head_rates = HashMap::new();
