@@ -635,9 +635,9 @@ impl Scenario {
                     || !seen_heads.insert(actuator.head_id.as_str())
                     || !actuator.max_slew_rate_deg_per_s.is_finite()
                     || actuator.max_slew_rate_deg_per_s <= 0.0
-                    || actuator.max_slew_acceleration_deg_per_s2.is_some_and(|accel| {
-                        !accel.is_finite() || accel <= 0.0
-                    })
+                    || actuator
+                        .max_slew_acceleration_deg_per_s2
+                        .is_some_and(|accel| !accel.is_finite() || accel <= 0.0)
                     || actuator
                         .initial_direction_body
                         .iter()
@@ -1393,7 +1393,10 @@ mod tests {
             .contains("invalid body-frame gimbal actuator"));
         scenario.optical_head_slew_actuators[0].max_slew_rate_deg_per_s = 3000.0;
         scenario.optical_head_slew_actuators[0].max_slew_acceleration_deg_per_s2 = Some(0.0);
-        assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal actuator"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("invalid body-frame gimbal actuator"));
         scenario.optical_head_slew_actuators[0].max_slew_acceleration_deg_per_s2 = Some(200_000.0);
         scenario.validate().unwrap();
         scenario.optical_head_slew_actuators[0].head_id = "missing".into();
