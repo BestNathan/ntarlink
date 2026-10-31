@@ -200,3 +200,25 @@ also replay reversed reservations and verify identical follower projections,
 packet conservation and deterministic output. This adds an offline O(A log A)
 sort and O(A) memory for A accepted reservations; it is not a live single-pass
 arbiter or a servo model.
+
+## Active lease acquisition-time safety
+
+SYS-02 records the acquisition timestamp for each active link-scoped head pair.
+A command issued under that lease, or its explicit release, cannot precede
+its acquisition boundary, even when the pair has not received any sampled
+actuator command. A failed historical operation preserves both head owners,
+command history and release barriers. A same-instant command or release is
+valid, preserving half-open PAT reservation semantics. The compatibility
+`release_pair()` API releases an unsampled reservation no earlier than its
+acquisition timestamp; PAT replay continues to use the explicit
+`release_pair_at()` boundary.
+
+This closes a gap in the SYS-02 API when it is used independently of the
+sorted SYS-03 replay. It does not make the offline two-pass adapter into a
+live shared-head arbiter, continuous servo or physical pointing guarantee.
+Per-link acquisition timestamps add O(L) state for L active leases and
+constant expected-time checks per paired command and release. A Rust
+regression covers pre-acquisition commands, premature release, atomic
+failure, exact-boundary handoff and unsampled legacy release. The existing
+packet/PAT acceptance scenarios remain the cross-subsystem compatibility
+checks.
