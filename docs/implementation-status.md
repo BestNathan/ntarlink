@@ -12,8 +12,11 @@ recovery, deterministic traces and packet conservation.
 
 **Fidelity:** sampled zero-velocity-at-boundary approximation, not a
 continuous servo or calibrated motor model. Predicted mode currently
-disallows shared-head command streams. PAT contact-target scheduling and
-follower state remain separate. See
+disallows shared-head command streams. PAT now consumes immutable projected
+head-state snapshots and held targets at admitted contact and fault-recovery
+boundaries, avoiding stale contact-start slew assumptions. PAT reservations
+and follower integration remain separate; no single mutable servo owner is
+claimed. See
 [design](design/optical-body-frame-target-following.md).
 
 ## Sampled BODY-frame tracking target angular-rate feasibility

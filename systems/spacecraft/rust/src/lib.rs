@@ -208,6 +208,15 @@ impl BodyHeadFollower {
         self.last_at_ns = at_ns;
         Ok(predicted)
     }
+
+    /// Project a head to a PAT boundary without changing its sampled command history.
+    /// The projection retains the last commanded target and rest-to-rest model.
+    pub fn predicted_at(&self, at_ns: u64) -> Result<([f64; 3], [f64; 3]), String> {
+        let mut projection = self.clone();
+        let target = projection.held_target_body;
+        let boresight = projection.observe(at_ns, target)?;
+        Ok((boresight, target))
+    }
 }
 
 /// Compute the two line-of-sight steering angles from one ITRS snapshot.
@@ -565,6 +574,18 @@ mod tests {
         let reached = head.observe(90_000_000, [0.0, 1.0, 0.0]).unwrap();
         assert!(reached[0].abs() < 1.0e-12 && (reached[1] - 1.0).abs() < 1.0e-12);
         assert!(head.observe(89_000_000, [0.0, 1.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn follower_projection_preserves_sample_history_and_held_target() {
+        let mut head = BodyHeadFollower::new([1.0, 0.0, 0.0], 3000.0, Some(200000.0)).unwrap();
+        head.observe(0, [1.0, 0.0, 0.0]).unwrap();
+        head.observe(30_000_000, [0.0, 1.0, 0.0]).unwrap();
+        let (projected, target) = head.predicted_at(60_000_000).unwrap();
+        assert_eq!(target, [0.0, 1.0, 0.0]);
+        assert!((projected[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1.0e-12);
+        assert_eq!(head.observe(60_000_000, target).unwrap(), projected);
+        assert!(head.predicted_at(59_000_000).is_err());
     }
 
     #[test]

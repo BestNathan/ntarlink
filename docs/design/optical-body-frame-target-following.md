@@ -59,10 +59,16 @@ Rust tests cover lag, recovery, invalid directions, antiparallel ambiguity,
 PAT loss/reacquisition, packet accounting and deterministic replay.
 
 Complexity is O(S log S + H) for S samples and H heads, with O(H) state.
-This is not a continuous motion guarantee. The existing PAT planner still
-uses contact-start slew targets and independent head reservations; follower
-state is not synchronized into the planner after a fault. Settling dwell is
-applied by PAT acquisition scheduling, not the follower's between-sample
-tracking integration. Shared-head arbitration, persistent velocity, a
-closed-loop controller, physical calibration and constellation-scale
-benchmarks remain future work.
+This is not a continuous motion guarantee. The PAT planner now consumes an immutable predicted boresight and held target
+for each admitted contact or fault-recovery boundary. The snapshot is projected
+from the latest successful follower command without inserting a new sample
+into the follower's rest-to-rest integration timeline. Thus a recovery uses
+the current commanded target rather than rewinding to the geometric contact's
+initial target. A later contact does not double-count a slew already completed
+by the follower. Legacy scenarios without predicted commands keep the prior
+PAT scheduling semantics. PAT still owns independent exclusive reservations
+and applies its fixed slew floor, settling dwell and acquisition time; the
+follower does not simulate that settling or the acquisition controller.
+Shared-head arbitration, continuous actuator velocity, a single mutable
+runtime state owner, a closed-loop controller, physical calibration and
+constellation-scale benchmarks remain future work.
