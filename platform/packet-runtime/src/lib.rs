@@ -1746,6 +1746,16 @@ mod tests {
             .observe("sat-a/head-1", 350_000_000, [1.0, 0.0, 0.0])
             .is_ok());
 
+        // A valid but swapped head pair must not be mistaken for the
+        // canonical PAT link's command ownership at the sample boundary.
+        let mut mismatched = reservations.clone();
+        mismatched[0].from_head = "sat-b/head-1".into();
+        mismatched[0].to_head = "sat-a/head-1".into();
+        assert_eq!(
+            replay_pat_head_leases(&scenario, &mismatched, &expected).unwrap_err(),
+            "PAT sample lease endpoint mismatch"
+        );
+
         let mut conflicting = reservations.clone();
         conflicting.push(PatReservation {
             link_id: "other-link".into(),
