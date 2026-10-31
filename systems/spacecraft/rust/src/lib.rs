@@ -411,7 +411,9 @@ impl BodyHeadRuntime {
                     .and_then(|samples| samples.last())
                     .is_some_and(|(sample_ns, _)| at_ns < *sample_ns)
             {
-                return Err("BODY-frame pair reservation conflicts with head history or owner".into());
+                return Err(
+                    "BODY-frame pair reservation conflicts with head history or owner".into(),
+                );
             }
         }
         for head_id in [from_head_id, to_head_id] {
@@ -1080,30 +1082,31 @@ mod tests {
             max_slew_acceleration_deg_per_s2: None,
             settling_ns: None,
         };
-        let mut runtime = BodyHeadRuntime::new(&[
-            actuator("a"),
-            actuator("b"),
-            actuator("c"),
-        ])
-        .unwrap();
-        runtime.reserve_pair_for_link("first", "a", "b", 10).unwrap();
-        assert!(runtime.reserve_pair_for_link("second", "a", "c", 11).is_err());
-        assert!(runtime.reserve_pair_for_link("first", "a", "b", 11).is_err());
-        assert!(runtime.reserve_pair_for_link("other", "a", "unknown", 11).is_err());
+        let mut runtime =
+            BodyHeadRuntime::new(&[actuator("a"), actuator("b"), actuator("c")]).unwrap();
+        runtime
+            .reserve_pair_for_link("first", "a", "b", 10)
+            .unwrap();
+        assert!(runtime
+            .reserve_pair_for_link("second", "a", "c", 11)
+            .is_err());
+        assert!(runtime
+            .reserve_pair_for_link("first", "a", "b", 11)
+            .is_err());
+        assert!(runtime
+            .reserve_pair_for_link("other", "a", "unknown", 11)
+            .is_err());
         assert!(runtime.observe("a", 11, [1.0, 0.0, 0.0]).is_err());
         runtime
-            .observe_pair_for_link(
-                "first",
-                "a",
-                "b",
-                10,
-                [1.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-            )
+            .observe_pair_for_link("first", "a", "b", 10, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0])
             .unwrap();
         runtime.release_pair_at("first", "a", "b", 30).unwrap();
-        assert!(runtime.reserve_pair_for_link("second", "a", "c", 29).is_err());
-        runtime.reserve_pair_for_link("second", "a", "c", 30).unwrap();
+        assert!(runtime
+            .reserve_pair_for_link("second", "a", "c", 29)
+            .is_err());
+        runtime
+            .reserve_pair_for_link("second", "a", "c", 30)
+            .unwrap();
         assert!(runtime.release_pair_at("second", "a", "c", 29).is_err());
         runtime.release_pair_at("second", "a", "c", 40).unwrap();
         assert!(runtime.observe("a", 39, [1.0, 0.0, 0.0]).is_err());
