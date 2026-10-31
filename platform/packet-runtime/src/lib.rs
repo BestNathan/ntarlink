@@ -3,7 +3,9 @@ use ntarlink_contracts::{
     ContactMode, Fault, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario,
 };
 use ntarlink_network_control::next_hops;
-use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
+use ntarlink_optical_pat::{
+    plan_contacts, plan_contacts_with_slew, HeadSlewActuator, PatCandidate, PatSlewTarget, PatState,
+};
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
@@ -690,6 +692,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .map(|geometry| ((geometry.link_id.as_str(), geometry.at_ns), geometry))
         .collect();
     let mut pointing_rejections = Vec::new();
+    let slew_targets_by_contact: HashMap<_, _> = scenario
+        .optical_pat_slew_targets
+        .iter()
+        .map(|target| ((target.link_id.as_str(), target.at_ns), target))
+        .collect();
 
     // SYS-02 samples are interpreted inside Rust at virtual-time boundaries.
     // Only effective state edges reach the packet engine; these observations
@@ -868,6 +875,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     let availability = HeadAvailability::new(&scenario.optical_head_outages);
     let mut head_downs = HashSet::new();
     let mut candidates = Vec::new();
+    let mut candidate_slew_targets = Vec::new();
     // Candidate end times are unique per directed link because both geometric
     // contacts and administrative intervals are non-overlapping.
     let mut source_by_end = HashMap::new();
@@ -942,11 +950,35 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     slew_ns: config.slew_ns,
                     acquisition_ns: config.acquisition_ns,
                 });
+                if !scenario.optical_head_slew_actuators.is_empty() {
+                    let target = slew_targets_by_contact
+                        .get(&(contact.link_id.as_str(), contact.start_ns))
+                        .ok_or("missing validated body-frame PAT target")?;
+                    candidate_slew_targets.push(PatSlewTarget {
+                        link_id: contact.link_id.clone(),
+                        start_ns: admitted_start,
+                        from_target_body: target.from_target_body,
+                        to_target_body: target.to_target_body,
+                    });
+                }
                 source_by_end.insert((contact.link_id.clone(), admitted_end), source_index);
             }
         }
     }
-    let plan = plan_contacts(&candidates)?;
+    let plan = if scenario.optical_head_slew_actuators.is_empty() {
+        plan_contacts(&candidates)?
+    } else {
+        let actuators: Vec<_> = scenario
+            .optical_head_slew_actuators
+            .iter()
+            .map(|actuator| HeadSlewActuator {
+                head_id: actuator.head_id.clone(),
+                initial_direction_body: actuator.initial_direction_body,
+                max_slew_rate_deg_per_s: actuator.max_slew_rate_deg_per_s,
+            })
+            .collect();
+        plan_contacts_with_slew(&candidates, &actuators, &candidate_slew_targets)?
+    };
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
         let source = source_by_end
@@ -1009,6 +1041,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .faults
         .retain(|fault| !configs.contains_key(fault.link_id.as_str()));
     prepared.faults.extend(effective_faults);
+    prepared.optical_head_slew_actuators.clear();
+    prepared.optical_pat_slew_targets.clear();
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
     prepared.optical_steering_samples.clear();
