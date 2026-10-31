@@ -6,7 +6,8 @@ use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{plan_contacts, PatCandidate, PatState};
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
-    geometry_los_rate_allowed, geometry_pointing_allowed, pointing_allowed, HeadAvailability,
+    geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
+    pointing_allowed, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -717,13 +718,25 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .iter()
         .map(|rate| (rate.link_id.as_str(), rate))
         .collect();
-    let mut previous_geometry: HashMap<&str, &ntarlink_contracts::OpticalGeometry> = HashMap::new();
+    let tracking_accelerations: HashMap<_, _> = scenario
+        .optical_tracking_accelerations
+        .iter()
+        .map(|acceleration| (acceleration.link_id.as_str(), acceleration))
+        .collect();
+    let mut previous_geometry: HashMap<
+        &str,
+        (&ntarlink_contracts::OpticalGeometry, Option<&ntarlink_contracts::OpticalGeometry>),
+    > = HashMap::new();
     steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
-        let previous = previous_geometry.insert(sample.link_id.as_str(), sample);
+        let previous = previous_geometry.get(sample.link_id.as_str()).copied();
+        previous_geometry.insert(
+            sample.link_id.as_str(),
+            (sample, previous.map(|(earlier, _)| earlier)),
+        );
         let rate_allowed = tracking_rates
             .get(sample.link_id.as_str())
             .is_none_or(|rate| {
-                previous.is_none_or(|earlier| {
+                previous.is_none_or(|(earlier, _)| {
                     geometry_los_rate_allowed(
                         earlier,
                         sample,
@@ -732,10 +745,26 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     )
                 })
             });
+        let acceleration_allowed = tracking_accelerations
+            .get(sample.link_id.as_str())
+            .is_none_or(|acceleration| {
+                previous.is_none_or(|(earlier, first)| {
+                    first.is_none_or(|first| {
+                        geometry_los_acceleration_allowed(
+                            first,
+                            earlier,
+                            sample,
+                            acceleration
+                                .from_max_los_accel_deg_per_s2
+                                .min(acceleration.to_max_los_accel_deg_per_s2),
+                        )
+                    })
+                })
+            });
         Fault {
             at_ns: sample.at_ns,
             link_id: sample.link_id.clone(),
-            action: if geometry_pointing_allowed(sample) && rate_allowed {
+            action: if geometry_pointing_allowed(sample) && rate_allowed && acceleration_allowed {
                 LinkAction::Up
             } else {
                 LinkAction::Down
@@ -1679,6 +1708,63 @@ mod tests {
             .pat_events
             .iter()
             .any(|event| { event.at_ns == 30_000_000 && event.state == "lost" }));
+    }
+
+    #[test]
+    fn native_itrs_los_acceleration_gate_releases_pat_and_preserves_fault_domains() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-itrs-los-acceleration-gate.json"
+        ))
+        .unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 95_000_000, 140_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 50_000_000
+                && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        let edges: Vec<_> = report
+            .control_events
+            .iter()
+            .filter(|event| {
+                event.link_id.as_deref() == Some("isl-a-b")
+                    && (event.kind == "link_down" || event.kind == "link_up")
+            })
+            .map(|event| (event.at_ns, event.kind.as_str()))
+            .collect();
+        assert_eq!(
+            edges,
+            vec![(50_000_000, "link_down"), (75_000_000, "link_up")]
+        );
+        assert!(report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .all(|hop| !(50_000_000..95_000_000).contains(&hop.transmit_started_ns)));
+        assert!(report.delivered > 0 && report.dropped > 0);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+        let mut unbounded = scenario.clone();
+        unbounded.optical_tracking_accelerations.clear();
+        let baseline = run(&unbounded).unwrap();
+        assert!(!baseline.pat_events.iter().any(|event| {
+            event.at_ns == 50_000_000 && event.state == "lost"
+        }));
+        assert!(baseline.pat_events.iter().any(|event| {
+            event.at_ns == 55_000_000
+                && event.state == "lost"
+                && event.reason == Some("administrative_link_down")
+        }));
     }
 
     #[test]

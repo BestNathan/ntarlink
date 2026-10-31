@@ -1,3 +1,20 @@
+## Optional Rust-native sampled ITRS LOS angular-acceleration gate
+
+SYS-02 now accepts independent `optical_tracking_accelerations[]` limits
+for native `optical_geometry_samples[]`. Rust compares consecutive signed
+ITRS LOS angular-velocity vectors over the midpoint-to-midpoint interval,
+detecting direction reversals as well as velocity steps. The first two
+observations establish a baseline; ambiguous antiparallel axes fail closed.
+The independent sampled-pointing state controls SYS-03 tracking loss,
+exclusive-head release, reacquisition and packet forwarding while
+administrative faults remain independent. Contract, numerical and packet
+regressions and a CI scenario cover threshold failure, overlapping outages,
+recovery, deterministic replay and packet conservation.
+
+**Fidelity:** this is a finite-sample ITRS motion proxy, not body-frame
+actuator dynamics, continuous pointing feasibility or optical PHY. See
+[design](design/optical-itrs-los-acceleration-gate.md).
+
 ## Optional sampled spacecraft-body LOS angular-acceleration audit
 
 The SYS-01/02 native ITRS compiler now accepts an opt-in, finite nonnegative

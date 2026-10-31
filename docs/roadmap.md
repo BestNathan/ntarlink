@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Opt-in Rust-native sampled ITRS LOS angular-acceleration proxy gates PAT tracking with signed velocity vectors, fail-closed antiparallel axes, overlapping fault recovery and packet CI (not spacecraft-body gimbal dynamics or continuous tracking). See [design](design/optical-itrs-los-acceleration-gate.md).
+
 - [x] Opt-in spacecraft-body-frame sampled LOS angular-acceleration audit for native ITRS compilation, using signed angular-velocity vectors and interval-midpoint finite differences, with fail-closed limits, manifest provenance and Python regression tests (not a gimbal actuator or continuous tracking model). See [design](design/optical-native-itrs-compiler.md).
 
 - [x] Opt-in spacecraft-body-frame LOS angular-rate audit on compiled native ITRS observations, with inverse attitude rotation, per-head peak provenance and fail-closed Python tests (finite sampled mean velocity, not a gimbal servo or Rust runtime tracking gate). See [design](design/optical-native-itrs-compiler.md).

@@ -133,6 +133,14 @@
         "$ref": "#/$defs/optical_tracking_rate"
       },
       "description": "Optional per-PAT-link ITRS line-of-sight angular rate limits (degrees per second) for native optical_geometry_samples only. Evaluated at the later observation, not continuous gimbal dynamics."
+    },
+    "optical_tracking_accelerations": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/optical_tracking_acceleration"
+      },
+      "description": "Optional per-PAT-link sampled ITRS LOS angular-acceleration limits (degrees per second squared). Three observations are required; not a spacecraft-body gimbal actuator."
     }
   },
   "$defs": {
@@ -367,6 +375,29 @@
           "minimum": 0
         },
         "to_max_los_rate_deg_per_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "optical_tracking_acceleration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "link_id",
+        "from_max_los_accel_deg_per_s2",
+        "to_max_los_accel_deg_per_s2"
+      ],
+      "properties": {
+        "link_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from_max_los_accel_deg_per_s2": {
+          "type": "number",
+          "minimum": 0
+        },
+        "to_max_los_accel_deg_per_s2": {
           "type": "number",
           "minimum": 0
         }

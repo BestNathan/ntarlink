@@ -108,3 +108,15 @@ closed. These are supplied discrete snapshots; the Rust runtime does not
 propagate SGP4 or solve spacecraft attitude, and does not guarantee pointing
 between observations. The existing per-contact `optical_geometry[]` mode
 remains supported.
+
+## Implemented sampled ITRS LOS angular-acceleration gate
+
+An opt-in per-PAT-link `optical_tracking_accelerations[]` constraint uses
+three successive native ITRS observations to estimate signed LOS angular
+acceleration in degrees per second squared. It detects direction reversal,
+fails closed on ambiguous antiparallel rotation axes and keeps administrative
+outages independent of pointing feasibility. SYS-03 releases exclusive heads
+on loss and requires reacquisition on recovery. This is a finite-sample
+Earth-fixed motion proxy, not a body-frame gimbal servo, continuous tracking
+model or physically calibrated actuator. See
+[design](../design/optical-itrs-los-acceleration-gate.md).
