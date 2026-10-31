@@ -892,10 +892,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 command.from_target_body,
                 command.to_target_body,
             );
-            predicted_observations.insert(
-                (command.link_id.clone(), command.at_ns),
-                observed.clone(),
-            );
+            predicted_observations
+                .insert((command.link_id.clone(), command.at_ns), observed.clone());
             let allowed = match observed {
                 Ok((from_boresight_body, to_boresight_body)) => {
                     body_tracking_error_allowed(&OpticalBodyTrackingSample {
