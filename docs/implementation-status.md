@@ -1,3 +1,23 @@
+## Shared canonical PAT head command executor
+
+The packet adapter now uses one canonical virtual-time executor for both
+provisional SYS-02 follower observations and the later SYS-03 PAT reservation
+lease replay. It consumes SYS-03 Release, Reserve and Sample transitions,
+preflights all configured link/head endpoints before actuator mutation, and
+retains full success/error results for comparison. This removes the second
+handwritten command-application loop, so changes to ownership or sample
+handling cannot silently diverge between the two execution paths. A Rust
+regression compares provisional and leased observations, immutable head
+projections, and reversed reservation input; the existing fault-gap and
+packet-accounting acceptance cases remain the baseline.
+
+**Fidelity and cost:** two independent O(S) actuator histories are still
+computed around offline PAT planning, with O((A + S) log(A + S)) event sorting
+for A reservations and S commands. The shared executor is a structural
+precondition, not a live single-pass PAT/actuator scheduler. Shared-head
+predicted arbitration, continuous servo and calibrated optics remain out of
+scope.
+
 ## PAT reservation endpoint preflight
 
 The packet adapter now checks every accepted SYS-03 PAT reservation against
