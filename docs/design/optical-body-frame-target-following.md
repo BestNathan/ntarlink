@@ -59,6 +59,16 @@ commands. A failed head update is not recorded as a successful snapshot;
 the other head remains independently observable. Projection never advances
 the live follower or inserts a synthetic sample into the command timeline.
 
+A sampled link command is applied as an atomic two-head transition: both
+endpoint followers are staged and validated before either successful snapshot
+is committed. If one endpoint rejects a command (including ambiguous
+antiparallel motion), neither head advances. A later valid command may retry
+the same timestamp. This prevents a failed link observation from silently
+advancing only one actuator; it does not add shared-head arbitration or a
+continuous servo. Runtime tests cover invalid second-head commands, distinct
+head IDs, timestamp retries and motion failures. Existing PAT/packet scenario
+checks remain the cross-subsystem compatibility acceptance.
+
 This consolidates state ownership and removes packet-runtime's duplicate
 per-head history bookkeeping. It does **not** unify PAT reservations with
 the follower, implement shared-head command arbitration, or introduce

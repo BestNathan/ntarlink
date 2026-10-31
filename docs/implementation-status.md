@@ -1,3 +1,19 @@
+## Atomic sampled optical-head pair transitions
+
+SYS-02 now stages both heads of each predicted BODY-frame link observation
+before committing either follower or its successful-command history. If one
+endpoint rejects a command, both remain unchanged and a valid same-timestamp
+retry is possible. The packet adapter uses this atomic API. Rust regressions
+cover invalid second-head targets, ambiguous antiparallel motion, unknown or
+identical heads and retries; the existing synthetic PAT/packet scenario remains
+the cross-subsystem compatibility check.
+
+**Fidelity and performance:** constant-time staging of two follower clones
+and two successful snapshots per sample; no new scenario fields. This prevents
+partial state commits but does not model shared-head arbitration, continuous
+velocity, servo control or optical PHY. See
+[design](design/optical-body-frame-target-following.md).
+
 ## Per-head predicted optical actuator runtime ownership
 
 SYS-02 now owns each predicted BODY-frame head's mutable follower and

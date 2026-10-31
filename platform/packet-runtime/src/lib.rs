@@ -765,10 +765,15 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         commands.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
         for command in commands {
             let pat = body_pat_links[command.link_id.as_str()];
-            let from = runtime.observe(&pat.from_head, command.at_ns, command.from_target_body);
-            let to = runtime.observe(&pat.to_head, command.at_ns, command.to_target_body);
-            let allowed = match (from, to) {
-                (Ok(from_boresight_body), Ok(to_boresight_body)) => {
+            let observed = runtime.observe_pair(
+                &pat.from_head,
+                &pat.to_head,
+                command.at_ns,
+                command.from_target_body,
+                command.to_target_body,
+            );
+            let allowed = match observed {
+                Ok((from_boresight_body, to_boresight_body)) => {
                     body_tracking_error_allowed(&OpticalBodyTrackingSample {
                         link_id: command.link_id.clone(),
                         at_ns: command.at_ns,

@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Atomically stage both optical heads in each predicted BODY-frame link observation, preserving both histories on one-head failure with same-timestamp retry tests; packet adapter uses paired transitions (not shared-head arbitration or continuous servo). See [design](design/optical-body-frame-target-following.md).
+
 - [x] Consolidate sampled BODY-frame follower state and successful-command history into one per-head SYS-02 runtime; PAT consumes immutable boundary projections with duplicate/ordering checks and regression coverage (not yet a shared PAT reservation owner or continuous servo). See [design](design/optical-body-frame-target-following.md).
 
 - [x] Pass immutable per-head predicted BODY-frame pointing and held targets into PAT at each admitted contact/recovery boundary, without perturbing follower sample history; packet acceptance remains deterministic (not a unified continuous servo or shared-head arbiter). See [design](design/optical-body-frame-target-following.md).
