@@ -1,3 +1,20 @@
+## Link-scoped sampled optical-head command ownership
+
+SYS-02 now supports atomic per-link command leases for both predicted optical
+heads. The packet adapter uses the link-scoped paired observation API;
+conflicting owners and unscoped writes cannot mutate a leased head. Explicit
+paired release preserves actuator history and rejects wrong-owner or partial
+release without side effects. Rust tests cover conflicts, failed-command
+rollback, retry, release and retargeting by a different link; the existing
+predicted follower packet/PAT scenario remains the cross-subsystem regression.
+
+**Scope and cost:** O(1) expected owner checks and O(H) owner state. The
+scenario contract still forbids shared-head predicted streams, and the packet
+adapter does not yet release leases on PAT events. These command leases do
+not replace SYS-03's exclusive contact reservations, model continuous servo
+velocity or establish shared-head PAT arbitration. See
+[design](design/optical-body-frame-target-following.md).
+
 ## Atomic sampled optical-head pair transitions
 
 SYS-02 now stages both heads of each predicted BODY-frame link observation
