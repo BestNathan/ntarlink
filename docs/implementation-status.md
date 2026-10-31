@@ -1,3 +1,25 @@
+## Canonical PAT sample lease projection
+
+SYS-03 now annotates each canonical sampled command with the active
+half-open PAT reservation index, if one exists at that virtual timestamp.
+The packet adapter consumes this projection instead of independently
+maintaining a second active-link set during lease replay. It verifies the
+projected reservation's link and head pair before applying a leased
+command. Release, Reserve, then Sample ordering ensures a command exactly
+at an exclusive end is unleased unless a new reservation begins there.
+
+SYS-03 regressions cover pre-acquisition commands, fault gaps, exact
+release boundaries, same-instant handoff, and reservation input-order
+independence. Packet-runtime regressions cover mismatched head pairing
+and preserve the existing deterministic packet/PAT acceptance scenario.
+
+**Scope and cost:** O(A + S) transition annotation after the existing
+O((A + S) log(A + S)) sort, with O(A) active-link indexing for A
+reservations and S samples. This removes duplicate replay ownership
+bookkeeping, not the provisional SYS-02 pass. Shared-head predicted
+commands, continuous servo control, and live PAT arbitration remain
+unsupported.
+
 ## Canonical provisional PAT sample preflight
 
 The provisional SYS-02 follower pass now consumes SYS-03's canonical
