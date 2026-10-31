@@ -750,8 +750,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            pat_runtime_transitions(&reservations, &[(20, "a"), (20, "a")])
-                .unwrap_err(),
+            pat_runtime_transitions(&reservations, &[(20, "a"), (20, "a")]).unwrap_err(),
             "invalid or duplicate PAT sampled head command"
         );
         assert!(pat_runtime_transitions(&reservations, &[(20, " ")]).is_err());
