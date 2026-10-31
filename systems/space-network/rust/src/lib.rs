@@ -48,9 +48,23 @@ pub struct AcquiredWindow {
     pub end_ns: u64,
 }
 
+/// Exclusive occupancy of both optical heads, including slew and acquisition.
+/// The half-open interval starts when both heads become available, not when
+/// the geometric candidate was first observed. Rejected contacts reserve none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PatReservation {
+    pub link_id: String,
+    pub from_head: String,
+    pub to_head: String,
+    pub start_ns: u64,
+    pub end_ns: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PatPlan {
     pub windows: Vec<AcquiredWindow>,
+    /// Successful exclusive head reservations, including pre-tracking dwell.
+    pub reservations: Vec<PatReservation>,
     pub events: Vec<PatEvent>,
 }
 
@@ -309,6 +323,7 @@ pub fn plan_contacts_with_slew_starts(
 
     let mut busy_until: HashMap<&str, u64> = HashMap::new();
     let mut windows = Vec::new();
+    let mut reservations = Vec::new();
     let mut events = Vec::new();
     for candidate in &sorted {
         events.push(PatEvent {
@@ -389,6 +404,13 @@ pub fn plan_contacts_with_slew_starts(
                 reason: None,
             });
         }
+        reservations.push(PatReservation {
+            link_id: candidate.link_id.clone(),
+            from_head: candidate.from_head.clone(),
+            to_head: candidate.to_head.clone(),
+            start_ns: available_ns,
+            end_ns: candidate.end_ns,
+        });
         busy_until.insert(candidate.from_head.as_str(), candidate.end_ns);
         busy_until.insert(candidate.to_head.as_str(), candidate.end_ns);
         if let Some(target) = target {
@@ -402,6 +424,9 @@ pub fn plan_contacts_with_slew_starts(
         });
     }
     windows.sort_by(|a, b| (a.start_ns, &a.link_id).cmp(&(b.start_ns, &b.link_id)));
+    reservations.sort_by(|a, b| {
+        (a.start_ns, &a.link_id).cmp(&(b.start_ns, &b.link_id))
+    });
     events.sort_by(|a, b| {
         (a.at_ns, state_order(a.state), &a.link_id).cmp(&(
             b.at_ns,
@@ -409,7 +434,11 @@ pub fn plan_contacts_with_slew_starts(
             &b.link_id,
         ))
     });
-    Ok(PatPlan { windows, events })
+    Ok(PatPlan {
+        windows,
+        reservations,
+        events,
+    })
 }
 
 #[cfg(test)]
@@ -439,6 +468,16 @@ mod tests {
                 end_ns: 30
             }]
         );
+        assert_eq!(
+            plan.reservations,
+            vec![PatReservation {
+                link_id: "isl-a-b".into(),
+                from_head: "a-head".into(),
+                to_head: "b-head".into(),
+                start_ns: 10,
+                end_ns: 30,
+            }]
+        );
         let timeline: Vec<_> = plan.events.iter().map(|e| (e.at_ns, e.state)).collect();
         assert_eq!(
             timeline,
@@ -456,6 +495,7 @@ mod tests {
     fn too_short_contact_never_establishes_link() {
         let plan = plan_contacts(&[contact("short", "a", "b", 0, 5)]).unwrap();
         assert!(plan.windows.is_empty());
+        assert!(plan.reservations.is_empty());
         assert_eq!(plan.events[1].state, PatState::Rejected);
         assert_eq!(
             plan.events[1].reason,
@@ -476,6 +516,13 @@ mod tests {
                 .map(|w| (w.link_id.as_str(), w.start_ns, w.end_ns))
                 .collect::<Vec<_>>(),
             vec![("first", 5, 20), ("second", 25, 40)]
+        );
+        assert_eq!(
+            plan.reservations
+                .iter()
+                .map(|r| (r.link_id.as_str(), r.from_head.as_str(), r.start_ns, r.end_ns))
+                .collect::<Vec<_>>(),
+            vec![("first", "a", 0, 20), ("second", "a", 20, 40)]
         );
         assert!(plan
             .events
@@ -498,6 +545,23 @@ mod tests {
     }
 
     #[test]
+    fn rejected_candidate_does_not_hold_heads_or_delay_next_candidate() {
+        let plan = plan_contacts(&[
+            contact("a-short", "a", "b", 0, 5),
+            contact("z-long", "a", "c", 0, 20),
+        ])
+        .unwrap();
+        assert_eq!(plan.reservations.len(), 1);
+        assert_eq!(plan.reservations[0].link_id, "z-long");
+        assert_eq!(plan.reservations[0].start_ns, 0);
+        assert_eq!(plan.reservations[0].end_ns, 20);
+        assert!(plan
+            .events
+            .iter()
+            .any(|e| e.link_id == "a-short" && e.state == PatState::Rejected));
+    }
+
+    #[test]
     fn independent_heads_acquire_in_parallel_and_input_order_is_irrelevant() {
         let a = contact("a", "h1", "h2", 0, 20);
         let b = contact("b", "h3", "h4", 0, 20);
@@ -506,6 +570,7 @@ mod tests {
         assert_eq!(first, reverse);
         assert_eq!(first.windows.len(), 2);
         assert!(first.windows.iter().all(|w| w.start_ns == 5));
+        assert!(first.reservations.iter().all(|r| r.start_ns == 0));
     }
 
     #[test]
@@ -518,6 +583,13 @@ mod tests {
         assert_eq!(
             plan.windows.iter().map(|w| w.start_ns).collect::<Vec<_>>(),
             vec![5, 25]
+        );
+        assert_eq!(
+            plan.reservations
+                .iter()
+                .map(|r| (r.start_ns, r.end_ns))
+                .collect::<Vec<_>>(),
+            vec![(0, 20), (20, 40)]
         );
         let boundary: Vec<_> = plan.events.iter().filter(|e| e.at_ns == 20).collect();
         assert_eq!(boundary[0].state, PatState::Lost);
