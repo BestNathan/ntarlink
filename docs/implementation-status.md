@@ -1,3 +1,19 @@
+## Virtual-time optical-head lease handoff barrier
+
+SYS-02 now provides an atomic `release_pair_at(..., at_ns)` operation that
+preserves the two followers and records the earliest allowed timestamp for
+subsequent commands on each released head. It rejects releases before either
+head's latest successful sample or prior release boundary. A later owner,
+including an unscoped caller, cannot submit a command retroactively before
+the release. A Rust regression covers wrong-owner release, rollback, early
+handoff rejection, same-time handoff, repeated handoff and history retention.
+
+**Scope:** This is a virtual-time-safe lease primitive, not automatic PAT
+reservation release or shared-head predicted scenario admission. The existing
+`release_pair()` remains compatible and uses the latest committed sample
+time; future PAT integration must pass its actual reservation end timestamp.
+The extra barrier map requires O(H) memory and O(1) expected checks.
+
 ## Link-scoped sampled optical-head command ownership
 
 SYS-02 now supports atomic per-link command leases for both predicted optical
