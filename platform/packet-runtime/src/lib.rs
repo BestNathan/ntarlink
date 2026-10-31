@@ -677,32 +677,30 @@ impl<'a> Runtime<'a> {
 /// Only opted-in optical links are gated; other contacts are unchanged.
 /// Administrative down/up transitions interrupt tracking, release optical
 /// heads and require a fresh acquisition before forwarding can resume.
-/// Replay sampled commands against the accepted SYS-03 reservation timeline.
-/// PAT planning uses a provisional unleased follower pass to compute boundary
-/// projections; this second pass verifies the identical actuator history while
-/// acquiring and releasing link-scoped command leases at virtual-time edges.
-/// End, start and sample transitions at the same instant run in that order.
-fn replay_pat_head_leases(
+/// Execute the canonical SYS-03 virtual-time lease and command timeline
+/// through one SYS-02 actuator owner. An empty reservation set produces the
+/// provisional follower observations used to plan PAT contact boundaries.
+/// A populated set verifies the same observations under actual command leases.
+/// This shares one execution path, but PAT planning still requires two passes.
+fn execute_pat_head_timeline(
     scenario: &Scenario,
     reservations: &[PatReservation],
-    expected: &PredictedObservations,
-) -> Result<BodyHeadRuntime, String> {
-    // SYS-03 validates the entire lease schedule and merges the sampled
-    // command edges before SYS-02 mutates any follower or command lease.
+    expected: Option<&PredictedObservations>,
+) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let samples: Vec<_> = scenario
         .optical_body_following_samples
         .iter()
         .map(|sample| (sample.at_ns, sample.link_id.as_str()))
         .collect();
     let timeline = pat_runtime_transitions(reservations, &samples)?;
-
     let pat_links: HashMap<_, _> = scenario
         .optical_pat
         .iter()
         .map(|pat| (pat.link_id.as_str(), pat))
         .collect();
-    // Validate every accepted reservation, including intervals with no
-    // sampled commands, before mutating the SYS-02 actuator runtime.
+
+    // Preflight all endpoints, including command-free reservations, before
+    // applying any state transition to the SYS-02 actuator owner.
     for reservation in reservations {
         let pat = pat_links
             .get(reservation.link_id.as_str())
@@ -711,7 +709,14 @@ fn replay_pat_head_leases(
             return Err("PAT reservation endpoint mismatch".into());
         }
     }
+    for sample in &scenario.optical_body_following_samples {
+        if !pat_links.contains_key(sample.link_id.as_str()) {
+            return Err("unknown predicted PAT link".into());
+        }
+    }
+
     let mut runtime = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators)?;
+    let mut observations = HashMap::new();
     for event in timeline {
         match event.kind {
             PatRuntimeTransitionKind::Release(index) => {
@@ -757,9 +762,9 @@ fn replay_pat_head_leases(
                         sample.to_target_body,
                     )
                 } else {
-                    // A sample during pointing/admin loss still updates the
-                    // exclusive head's held target for later reacquisition.
-                    // Shared-head predicted streams remain contract-rejected.
+                    // Commands in fault gaps may update held targets only when
+                    // both heads are unleased. Shared-head predicted following
+                    // remains contract-rejected.
                     runtime.observe_pair(
                         &pat.from_head,
                         &pat.to_head,
@@ -768,16 +773,29 @@ fn replay_pat_head_leases(
                         sample.to_target_body,
                     )
                 };
-                let provisional = expected
-                    .get(&(sample.link_id.clone(), sample.at_ns))
-                    .ok_or("missing provisional BODY-frame observation")?;
-                if &observed != provisional {
-                    return Err("PAT lease replay diverged from predicted head history".into());
+                if let Some(expected) = expected {
+                    let provisional = expected
+                        .get(&(sample.link_id.clone(), sample.at_ns))
+                        .ok_or("missing provisional BODY-frame observation")?;
+                    if &observed != provisional {
+                        return Err("PAT lease replay diverged from predicted head history".into());
+                    }
                 }
+                observations.insert((sample.link_id.clone(), sample.at_ns), observed);
             }
         }
     }
-    Ok(runtime)
+    Ok((runtime, observations))
+}
+
+/// Validate the planned PAT reservations against the provisional observations
+/// without maintaining a second implementation of the command event loop.
+fn replay_pat_head_leases(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: &PredictedObservations,
+) -> Result<BodyHeadRuntime, String> {
+    execute_pat_head_timeline(scenario, reservations, Some(expected)).map(|(runtime, _)| runtime)
 }
 
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
@@ -862,37 +880,19 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         }
     }));
-    // SYS-02 owns the mutable per-head follower state and sample history.
-    // PAT receives only immutable projections at candidate boundaries.
-    let mut follower_runtime = (!scenario.optical_body_following_samples.is_empty())
-        .then(|| BodyHeadRuntime::new(&scenario.optical_head_slew_actuators))
-        .transpose()?;
+    // Both provisional planning and lease replay use the same typed event
+    // executor. Only the provisional history supplies immutable PAT boundary
+    // projections; lease replay verifies it after reservations are planned.
+    let mut follower_runtime = None;
     let mut predicted_observations = HashMap::new();
-    if let Some(runtime) = follower_runtime.as_mut() {
-        // Use the same SYS-03 command ordering and duplicate preflight as
-        // the later lease replay, before mutating provisional SYS-02 state.
-        let samples: Vec<_> = scenario
-            .optical_body_following_samples
-            .iter()
-            .map(|sample| (sample.at_ns, sample.link_id.as_str()))
-            .collect();
-        for event in pat_runtime_transitions(&[], &samples)? {
-            let PatRuntimeTransitionKind::Sample { index, .. } = event.kind else {
-                return Err("unexpected lease in provisional PAT command timeline".into());
-            };
-            let command = &scenario.optical_body_following_samples[index];
-            let pat = body_pat_links
-                .get(command.link_id.as_str())
-                .ok_or("unknown predicted PAT link")?;
-            let observed = runtime.observe_pair(
-                &pat.from_head,
-                &pat.to_head,
-                command.at_ns,
-                command.from_target_body,
-                command.to_target_body,
-            );
-            predicted_observations
-                .insert((command.link_id.clone(), command.at_ns), observed.clone());
+    if !scenario.optical_body_following_samples.is_empty() {
+        let (runtime, observations) = execute_pat_head_timeline(scenario, &[], None)?;
+        follower_runtime = Some(runtime);
+        predicted_observations = observations;
+        for command in &scenario.optical_body_following_samples {
+            let observed = predicted_observations
+                .get(&(command.link_id.clone(), command.at_ns))
+                .ok_or("missing provisional BODY-frame observation")?;
             let allowed = match observed {
                 Ok((from_boresight_body, to_boresight_body)) => {
                     body_tracking_error_allowed(&OpticalBodyTrackingSample {
@@ -901,13 +901,13 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                         frame: command.frame.clone(),
                         from_target_body: command.from_target_body,
                         to_target_body: command.to_target_body,
-                        from_boresight_body,
-                        to_boresight_body,
+                        from_boresight_body: *from_boresight_body,
+                        to_boresight_body: *to_boresight_body,
                         from_max_error_deg: command.from_max_error_deg,
                         to_max_error_deg: command.to_max_error_deg,
                     })
                 }
-                _ => false,
+                Err(_) => false,
             };
             steering_faults.push(Fault {
                 at_ns: command.at_ns,
@@ -1700,6 +1700,44 @@ mod tests {
             prepare_pat(&unknown).unwrap_err(),
             "unknown predicted PAT link"
         );
+    }
+
+    #[test]
+    fn canonical_pat_executor_matches_provisional_and_leased_history() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let pat = &scenario.optical_pat[0];
+        let reservations: Vec<_> = [(0, 30_000_000), (90_000_000, 120_000_000), (120_000_000, 350_000_000)]
+            .into_iter()
+            .map(|(start_ns, end_ns)| PatReservation {
+                link_id: pat.link_id.clone(),
+                from_head: pat.from_head.clone(),
+                to_head: pat.to_head.clone(),
+                start_ns,
+                end_ns,
+            })
+            .collect();
+        let (provisional, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let (leased, actual) =
+            execute_pat_head_timeline(&scenario, &reservations, Some(&expected)).unwrap();
+        assert_eq!(actual, expected);
+        for sample in &scenario.optical_body_following_samples {
+            if expected[&(sample.link_id.clone(), sample.at_ns)].is_ok() {
+                for head in [&pat.from_head, &pat.to_head] {
+                    assert_eq!(
+                        leased.predicted_at(head, sample.at_ns).unwrap(),
+                        provisional.predicted_at(head, sample.at_ns).unwrap()
+                    );
+                }
+            }
+        }
+        let mut reversed = reservations;
+        reversed.reverse();
+        let (_, reordered) =
+            execute_pat_head_timeline(&scenario, &reversed, Some(&expected)).unwrap();
+        assert_eq!(reordered, expected);
     }
 
     #[test]
