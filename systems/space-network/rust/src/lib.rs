@@ -518,7 +518,12 @@ mod tests {
         assert_eq!(
             plan.reservations
                 .iter()
-                .map(|r| (r.link_id.as_str(), r.from_head.as_str(), r.start_ns, r.end_ns))
+                .map(|r| (
+                    r.link_id.as_str(),
+                    r.from_head.as_str(),
+                    r.start_ns,
+                    r.end_ns
+                ))
                 .collect::<Vec<_>>(),
             vec![("first", "a", 0, 20), ("second", "a", 20, 40)]
         );
