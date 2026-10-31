@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
 
 type PredictedPair = ([f64; 3], [f64; 3]);
-type PredictedObservations = HashMap<(String, u64), Option<PredictedPair>>;
+type PredictedObservations = HashMap<(String, u64), Result<PredictedPair, String>>;
 
 /// Piecewise-linear delay at the completion of packet serialization.
 /// Integer arithmetic and nearest-nanosecond rounding preserve reproducibility.
@@ -783,7 +783,7 @@ fn replay_pat_head_leases(
                 let provisional = expected
                     .get(&(sample.link_id.clone(), sample.at_ns))
                     .ok_or("missing provisional BODY-frame observation")?;
-                if observed.ok().as_ref() != provisional.as_ref() {
+                if &observed != provisional {
                     return Err("PAT lease replay diverged from predicted head history".into());
                 }
             }
@@ -894,7 +894,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             );
             predicted_observations.insert(
                 (command.link_id.clone(), command.at_ns),
-                observed.as_ref().ok().copied(),
+                observed.clone(),
             );
             let allowed = match observed {
                 Ok((from_boresight_body, to_boresight_body)) => {
@@ -1692,7 +1692,7 @@ mod tests {
                 sample.from_target_body,
                 sample.to_target_body,
             );
-            expected.insert((sample.link_id.clone(), sample.at_ns), observed.ok());
+            expected.insert((sample.link_id.clone(), sample.at_ns), observed);
         }
         let reservation = |start_ns, end_ns| PatReservation {
             link_id: "isl-a-b".into(),
@@ -1744,6 +1744,43 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn predicted_pat_replay_rejects_mismatched_sample_failures() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        scenario.optical_body_following_samples.truncate(1);
+        let sample = &mut scenario.optical_body_following_samples[0];
+        sample.from_target_body = [0.0, 0.0, 0.0];
+
+        let key = (sample.link_id.clone(), sample.at_ns);
+        let mut expected = HashMap::new();
+        expected.insert(key.clone(), Err("invalid BODY-frame direction".to_owned()));
+        let pat = &scenario.optical_pat[0];
+        let reservations = vec![PatReservation {
+            link_id: pat.link_id.clone(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns: 0,
+            end_ns: 30_000_000,
+        }];
+
+        // A genuinely invalid target is an expected sampled-pointing failure.
+        assert!(replay_pat_head_leases(&scenario, &reservations, &expected).is_ok());
+
+        // A different error must not be silently accepted merely because
+        // both passes returned Err; it could indicate a lease violation.
+        expected.insert(
+            key,
+            Err("BODY-frame runtime head owned by another link".to_owned()),
+        );
+        assert_eq!(
+            replay_pat_head_leases(&scenario, &reservations, &expected).unwrap_err(),
+            "PAT lease replay diverged from predicted head history"
         );
     }
 
