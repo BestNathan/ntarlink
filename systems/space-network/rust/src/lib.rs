@@ -73,7 +73,10 @@ pub struct PatSlewTarget {
 }
 
 fn unit_direction(vector: [f64; 3]) -> Option<[f64; 3]> {
-    if vector.iter().any(|value| !value.is_finite() || value.abs() > 1.0e12) {
+    if vector
+        .iter()
+        .any(|value| !value.is_finite() || value.abs() > 1.0e12)
+    {
         return None;
     }
     let norm = vector.iter().map(|value| value * value).sum::<f64>().sqrt();
@@ -499,10 +502,14 @@ mod tests {
             to_target_body: [-1.0, 0.0, 0.0],
         };
         assert!(plan_contacts_with_slew(&candidates, &actuators, &[]).is_err());
-        assert!(plan_contacts_with_slew(&candidates, &actuators, &[PatSlewTarget {
-            from_target_body: [0.0; 3],
-            ..target.clone()
-        }])
+        assert!(plan_contacts_with_slew(
+            &candidates,
+            &actuators,
+            &[PatSlewTarget {
+                from_target_body: [0.0; 3],
+                ..target.clone()
+            }]
+        )
         .is_err());
         assert!(plan_contacts_with_slew(&candidates, &actuators, &[target]).is_ok());
     }
