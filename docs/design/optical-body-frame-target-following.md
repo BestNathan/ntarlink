@@ -181,6 +181,17 @@ predicted admission remains unsupported. A future single-pass event engine
 must arbitrate target commands during faults and model velocity-continuous
 servo dynamics without allowing unreserved commands to bypass ownership.
 
+## Provisional command preflight
+
+The provisional follower pass now uses the same SYS-03
+`pat_runtime_transitions` sample ordering as the subsequent lease replay,
+with an empty reservation set. This rejects blank link IDs and duplicate
+link/timestamp commands before any provisional head mutation, and reports
+unknown PAT links as errors rather than indexing an absent configuration.
+It prevents divergent command ordering and unvalidated-input panics but does
+not eliminate the offline second pass or permit shared-head predicted
+command streams.
+
 ## Canonical PAT lease boundary validation
 
 SYS-03 exports a typed, validated reservation-transition sequence. Each
