@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "name": "optical-body-frame-target-following",
+  "duration_ns": 350000000,
+  "control_delay_ns": 5000000,
+  "nodes": [
+    {
+      "id": "ue-a",
+      "kind": "terminal",
+      "latitude_deg": 31.2,
+      "longitude_deg": 121.5
+    },
+    {
+      "id": "sat-a",
+      "kind": "satellite"
+    },
+    {
+      "id": "sat-b",
+      "kind": "satellite"
+    },
+    {
+      "id": "gw-a",
+      "kind": "ground_station",
+      "latitude_deg": 30.3,
+      "longitude_deg": 120.2
+    },
+    {
+      "id": "pop-a",
+      "kind": "pop"
+    },
+    {
+      "id": "internet",
+      "kind": "internet"
+    }
+  ],
+  "links": [
+    {
+      "id": "user-ue-a",
+      "from": "ue-a",
+      "to": "sat-a",
+      "kind": "user_rf",
+      "capacity_bps": 100000000,
+      "propagation_delay_ns": 2000000,
+      "processing_delay_ns": 300000,
+      "queue_limit_bytes": 4800
+    },
+    {
+      "id": "isl-a-b",
+      "from": "sat-a",
+      "to": "sat-b",
+      "kind": "optical_isl",
+      "capacity_bps": 1000000000,
+      "propagation_delay_ns": 3200000,
+      "processing_delay_ns": 200000,
+      "queue_limit_bytes": 9600
+    },
+    {
+      "id": "feeder-b-gw",
+      "from": "sat-b",
+      "to": "gw-a",
+      "kind": "feeder",
+      "capacity_bps": 200000000,
+      "propagation_delay_ns": 2300000,
+      "processing_delay_ns": 300000,
+      "queue_limit_bytes": 4800
+    },
+    {
+      "id": "backhaul-gw-pop",
+      "from": "gw-a",
+      "to": "pop-a",
+      "kind": "backhaul",
+      "capacity_bps": 1000000000,
+      "propagation_delay_ns": 1500000,
+      "processing_delay_ns": 100000,
+      "queue_limit_bytes": 9600
+    },
+    {
+      "id": "pop-internet",
+      "from": "pop-a",
+      "to": "internet",
+      "kind": "internet",
+      "capacity_bps": 1000000000,
+      "propagation_delay_ns": 2500000,
+      "processing_delay_ns": 100000,
+      "queue_limit_bytes": 9600
+    }
+  ],
+  "flows": [
+    {
+      "id": "internet-ping",
+      "source": "ue-a",
+      "destination": "internet",
+      "packet_size_bytes": 1200,
+      "packet_count": 12,
+      "start_ns": 0,
+      "interval_ns": 30000000
+    }
+  ],
+  "faults": [
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 40000000,
+      "action": "down"
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 70000000,
+      "action": "up"
+    }
+  ],
+  "contact_mode": "scheduled",
+  "contacts": [
+    {
+      "link_id": "user-ue-a",
+      "start_ns": 0,
+      "end_ns": 350000000,
+      "propagation_delay_ns": 2000000
+    },
+    {
+      "link_id": "isl-a-b",
+      "start_ns": 0,
+      "end_ns": 120000000,
+      "propagation_delay_ns": 3200000
+    },
+    {
+      "link_id": "isl-a-b",
+      "start_ns": 120000000,
+      "end_ns": 350000000,
+      "propagation_delay_ns": 3200000
+    },
+    {
+      "link_id": "feeder-b-gw",
+      "start_ns": 0,
+      "end_ns": 350000000,
+      "propagation_delay_ns": 2300000
+    }
+  ],
+  "optical_pat": [
+    {
+      "link_id": "isl-a-b",
+      "from_head": "sat-a/head-1",
+      "to_head": "sat-b/head-1",
+      "slew_ns": 10000000,
+      "acquisition_ns": 10000000
+    }
+  ],
+  "optical_head_slew_actuators": [
+    {
+      "head_id": "sat-a/head-1",
+      "initial_direction_body": [
+        1,
+        0,
+        0
+      ],
+      "max_slew_rate_deg_per_s": 3000,
+      "max_slew_acceleration_deg_per_s2": 200000,
+      "settling_ns": 15000000
+    },
+    {
+      "head_id": "sat-b/head-1",
+      "initial_direction_body": [
+        -1,
+        0,
+        0
+      ],
+      "max_slew_rate_deg_per_s": 3000,
+      "max_slew_acceleration_deg_per_s2": 200000,
+      "settling_ns": 15000000
+    }
+  ],
+  "optical_pat_slew_targets": [
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 0,
+      "frame": "BODY",
+      "from_target_body": [
+        1,
+        0,
+        0
+      ],
+      "to_target_body": [
+        -1,
+        0,
+        0
+      ]
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 120000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        0,
+        -1,
+        0
+      ]
+    }
+  ],
+  "optical_body_following_samples": [
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 0,
+      "frame": "BODY",
+      "from_target_body": [
+        1,
+        0,
+        0
+      ],
+      "to_target_body": [
+        -1,
+        0,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 30000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        -1,
+        0,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 60000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        -1,
+        0,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 90000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        -1,
+        0,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 120000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        0,
+        -1,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 150000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        0,
+        -1,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    },
+    {
+      "link_id": "isl-a-b",
+      "at_ns": 180000000,
+      "frame": "BODY",
+      "from_target_body": [
+        0,
+        1,
+        0
+      ],
+      "to_target_body": [
+        0,
+        -1,
+        0
+      ],
+      "from_max_error_deg": 5,
+      "to_max_error_deg": 5
+    }
+  ]
+}
