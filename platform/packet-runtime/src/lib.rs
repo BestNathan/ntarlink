@@ -1,6 +1,7 @@
 use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
 use ntarlink_contracts::{
-    ContactMode, Fault, FaultCause, LinkAction, LinkKind, PropagationDelaySample, Scenario,
+    ContactMode, Fault, FaultCause, LinkAction, LinkKind, OpticalBodyTrackingSample,
+    PropagationDelaySample, Scenario,
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
@@ -10,7 +11,7 @@ use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
-    pointing_allowed, HeadAvailability,
+    pointing_allowed, BodyHeadFollower, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -753,6 +754,57 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         }
     }));
+    // Predicted mode keeps per-head actuator state instead of trusting a
+    // supplied measured boresight. Commands are held between samples.
+    if !scenario.optical_body_following_samples.is_empty() {
+        let mut followers: HashMap<&str, BodyHeadFollower> = scenario
+            .optical_head_slew_actuators
+            .iter()
+            .map(|head| {
+                BodyHeadFollower::new(
+                    head.initial_direction_body,
+                    head.max_slew_rate_deg_per_s,
+                    head.max_slew_acceleration_deg_per_s2,
+                )
+                .map(|follower| (head.head_id.as_str(), follower))
+            })
+            .collect::<Result<_, _>>()?;
+        let mut commands: Vec<_> = scenario.optical_body_following_samples.iter().collect();
+        commands.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
+        for command in commands {
+            let pat = body_pat_links[command.link_id.as_str()];
+            let from = followers
+                .get_mut(pat.from_head.as_str())
+                .expect("validated from-head follower")
+                .observe(command.at_ns, command.from_target_body);
+            let to = followers
+                .get_mut(pat.to_head.as_str())
+                .expect("validated to-head follower")
+                .observe(command.at_ns, command.to_target_body);
+            let allowed = match (from, to) {
+                (Ok(from_boresight_body), Ok(to_boresight_body)) => {
+                    body_tracking_error_allowed(&OpticalBodyTrackingSample {
+                        link_id: command.link_id.clone(),
+                        at_ns: command.at_ns,
+                        frame: command.frame.clone(),
+                        from_target_body: command.from_target_body,
+                        to_target_body: command.to_target_body,
+                        from_boresight_body,
+                        to_boresight_body,
+                        from_max_error_deg: command.from_max_error_deg,
+                        to_max_error_deg: command.to_max_error_deg,
+                    })
+                }
+                _ => false,
+            };
+            steering_faults.push(Fault {
+                at_ns: command.at_ns,
+                link_id: command.link_id.clone(),
+                action: if allowed { LinkAction::Up } else { LinkAction::Down },
+                cause: FaultCause::SampledPointing,
+            });
+        }
+    }
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
     // orbit or attitude integration occurs inside the packet runtime.
@@ -1082,6 +1134,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared.optical_head_slew_actuators.clear();
     prepared.optical_pat_slew_targets.clear();
     prepared.optical_body_tracking_samples.clear();
+    prepared.optical_body_following_samples.clear();
     prepared.optical_head_outages.clear();
     prepared.optical_pointing.clear();
     prepared.optical_steering_samples.clear();
@@ -1371,6 +1424,36 @@ mod tests {
         assert!(hops
             .iter()
             .any(|hop| hop.transmit_started_ns >= 190_000_000));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn predicted_body_follower_lag_interrupts_pat_and_reacquires() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        )).unwrap();
+        let report = run(&scenario).unwrap();
+        let tracking: Vec<_> = report.pat_events.iter()
+            .filter(|event| event.state == "tracking")
+            .map(|event| event.at_ns)
+            .collect();
+        assert_eq!(tracking, vec![20_000_000, 110_000_000, 250_000_000]);
+        assert!(report.pat_events.iter().any(|event| {
+            event.at_ns == 30_000_000 && event.state == "lost"
+                && event.reason == Some("sampled_pointing_loss")
+        }));
+        let hops: Vec<_> = report.packets.iter().flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b").collect();
+        assert!(hops.iter().all(|hop| {
+            (20_000_000..30_000_000).contains(&hop.transmit_started_ns)
+                || (110_000_000..120_000_000).contains(&hop.transmit_started_ns)
+                || (250_000_000..350_000_000).contains(&hop.transmit_started_ns)
+        }));
+        assert!(hops.iter().any(|hop| hop.transmit_started_ns >= 250_000_000));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
