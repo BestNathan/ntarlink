@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Optional per-head rest-to-rest acceleration-limited body-frame gimbal slew scheduling with triangular/trapezoidal travel time, PAT acquisition delay and synthetic packet CI (not a servo, moving-target tracker or continuous error model). See [design](design/optical-body-frame-gimbal-slew.md).
+
 - [x] Opt-in per-exclusive-head body-frame constant-rate gimbal retargeting delays SYS-03 PAT acquisition, with explicit initial pointing, contact targets, shared-head reservations, packet acceptance and synthetic CI (not acceleration-limited servo, continuous tracking error or optical PHY). See [design](design/optical-body-frame-gimbal-slew.md).
 
 - [x] Opt-in Rust-native sampled ITRS LOS angular-acceleration proxy gates PAT tracking with signed velocity vectors, fail-closed antiparallel axes, overlapping fault recovery and packet CI (not spacecraft-body gimbal dynamics or continuous tracking). See [design](design/optical-itrs-los-acceleration-gate.md).
