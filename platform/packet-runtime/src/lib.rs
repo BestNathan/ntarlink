@@ -800,7 +800,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             steering_faults.push(Fault {
                 at_ns: command.at_ns,
                 link_id: command.link_id.clone(),
-                action: if allowed { LinkAction::Up } else { LinkAction::Down },
+                action: if allowed {
+                    LinkAction::Up
+                } else {
+                    LinkAction::Down
+                },
                 cause: FaultCause::SampledPointing,
             });
         }
@@ -1435,25 +1439,35 @@ mod tests {
     fn predicted_body_follower_lag_interrupts_pat_and_reacquires() {
         let scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
-        )).unwrap();
+        ))
+        .unwrap();
         let report = run(&scenario).unwrap();
-        let tracking: Vec<_> = report.pat_events.iter()
+        let tracking: Vec<_> = report
+            .pat_events
+            .iter()
             .filter(|event| event.state == "tracking")
             .map(|event| event.at_ns)
             .collect();
         assert_eq!(tracking, vec![20_000_000, 110_000_000, 250_000_000]);
         assert!(report.pat_events.iter().any(|event| {
-            event.at_ns == 30_000_000 && event.state == "lost"
+            event.at_ns == 30_000_000
+                && event.state == "lost"
                 && event.reason == Some("sampled_pointing_loss")
         }));
-        let hops: Vec<_> = report.packets.iter().flat_map(|packet| &packet.hops)
-            .filter(|hop| hop.link_id == "isl-a-b").collect();
+        let hops: Vec<_> = report
+            .packets
+            .iter()
+            .flat_map(|packet| &packet.hops)
+            .filter(|hop| hop.link_id == "isl-a-b")
+            .collect();
         assert!(hops.iter().all(|hop| {
             (20_000_000..30_000_000).contains(&hop.transmit_started_ns)
                 || (110_000_000..120_000_000).contains(&hop.transmit_started_ns)
                 || (250_000_000..350_000_000).contains(&hop.transmit_started_ns)
         }));
-        assert!(hops.iter().any(|hop| hop.transmit_started_ns >= 250_000_000));
+        assert!(hops
+            .iter()
+            .any(|hop| hop.transmit_started_ns >= 250_000_000));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
