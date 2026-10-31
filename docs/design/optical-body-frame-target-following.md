@@ -43,6 +43,11 @@ held target is reachable, predicted boresight equals that target. Otherwise
 the head advances by D on the shortest arc. Partial travel toward an exactly
 antiparallel target fails closed because the rotation plane is ambiguous.
 
+The predicted boresight is compared with the **new** target at the sample
+instant via atan2(cross-product magnitude, dot product). Both endpoints must
+meet their own error limits. SYS-03 combines these pointing edges with
+independent administrative faults. Recovery requires fresh PAT acquisition.
+
 ## Per-head runtime state ownership
 
 The SYS-02 `BodyHeadRuntime` now owns the mutable follower for each
@@ -62,11 +67,6 @@ search over that head's successful samples: O(log S) lookup plus constant
 kinematic work, with O(S + H) stored snapshots for S commands and H heads.
 The preexisting packet scenario is a cross-subsystem regression for PAT
 reacquisition, forwarding windows and packet conservation.
-
-The predicted boresight is compared with the **new** target at the sample
-instant via atan2(cross-product magnitude, dot product). Both endpoints must
-meet their own error limits. SYS-03 combines these pointing edges with
-independent administrative faults. Recovery requires fresh PAT acquisition.
 
 ## Acceptance and fidelity
 
