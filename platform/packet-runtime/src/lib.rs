@@ -5,7 +5,8 @@ use ntarlink_contracts::{
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
-    plan_contacts, plan_contacts_with_slew, HeadSlewActuator, PatCandidate, PatSlewTarget, PatState,
+    plan_contacts, plan_contacts_with_slew, plan_contacts_with_slew_starts, HeadSlewActuator,
+    PatCandidate, PatSlewStart, PatSlewTarget, PatState,
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
@@ -754,6 +755,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         }
     }));
+    let mut follower_history: HashMap<&str, Vec<(u64, BodyHeadFollower)>> = HashMap::new();
     // Predicted mode keeps per-head actuator state instead of trusting a
     // supplied measured boresight. Commands are held between samples.
     if !scenario.optical_body_following_samples.is_empty() {
@@ -781,6 +783,18 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 .get_mut(pat.to_head.as_str())
                 .expect("validated to-head follower")
                 .observe(command.at_ns, command.to_target_body);
+            if from.is_ok() {
+                follower_history.entry(pat.from_head.as_str()).or_default().push((
+                    command.at_ns,
+                    followers[pat.from_head.as_str()].clone(),
+                ));
+            }
+            if to.is_ok() {
+                follower_history.entry(pat.to_head.as_str()).or_default().push((
+                    command.at_ns,
+                    followers[pat.to_head.as_str()].clone(),
+                ));
+            }
             let allowed = match (from, to) {
                 (Ok(from_boresight_body), Ok(to_boresight_body)) => {
                     body_tracking_error_allowed(&OpticalBodyTrackingSample {
@@ -968,6 +982,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     let mut head_downs = HashSet::new();
     let mut candidates = Vec::new();
     let mut candidate_slew_targets = Vec::new();
+    let mut candidate_slew_starts = Vec::new();
     // Candidate end times are unique per directed link because both geometric
     // contacts and administrative intervals are non-overlapping.
     let mut source_by_end = HashMap::new();
@@ -1042,7 +1057,34 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     slew_ns: config.slew_ns,
                     acquisition_ns: config.acquisition_ns,
                 });
-                if !scenario.optical_head_slew_actuators.is_empty() {
+                if !scenario.optical_body_following_samples.is_empty() {
+                    // Query an immutable follower snapshot at this candidate boundary.
+                    // This does not introduce a new rest-to-rest sample into its history.
+                    let snapshot = |head: &str| -> Result<([f64; 3], [f64; 3]), String> {
+                        let history = follower_history
+                            .get(head)
+                            .ok_or("missing predicted optical head history")?;
+                        let count = history.partition_point(|(at_ns, _)| *at_ns <= admitted_start);
+                        if count == 0 {
+                            return Err("missing predicted head state at PAT boundary".into());
+                        }
+                        history[count - 1].1.predicted_at(admitted_start)
+                    };
+                    let (from_direction, from_target) = snapshot(&config.from_head)?;
+                    let (to_direction, to_target) = snapshot(&config.to_head)?;
+                    candidate_slew_starts.push(PatSlewStart {
+                        link_id: contact.link_id.clone(),
+                        start_ns: admitted_start,
+                        from_direction_body: from_direction,
+                        to_direction_body: to_direction,
+                    });
+                    candidate_slew_targets.push(PatSlewTarget {
+                        link_id: contact.link_id.clone(),
+                        start_ns: admitted_start,
+                        from_target_body: from_target,
+                        to_target_body: to_target,
+                    });
+                } else if !scenario.optical_head_slew_actuators.is_empty() {
                     let target = slew_targets_by_contact
                         .get(&(contact.link_id.as_str(), contact.start_ns))
                         .ok_or("missing validated body-frame PAT target")?;
@@ -1071,7 +1113,16 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 settling_ns: actuator.settling_ns,
             })
             .collect();
-        plan_contacts_with_slew(&candidates, &actuators, &candidate_slew_targets)?
+        if candidate_slew_starts.is_empty() {
+            plan_contacts_with_slew(&candidates, &actuators, &candidate_slew_targets)?
+        } else {
+            plan_contacts_with_slew_starts(
+                &candidates,
+                &actuators,
+                &candidate_slew_targets,
+                &candidate_slew_starts,
+            )?
+        }
     };
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
@@ -1448,7 +1499,7 @@ mod tests {
             .filter(|event| event.state == "tracking")
             .map(|event| event.at_ns)
             .collect();
-        assert_eq!(tracking, vec![20_000_000, 110_000_000, 250_000_000]);
+        assert_eq!(tracking, vec![20_000_000, 110_000_000, 190_000_000]);
         assert!(report.pat_events.iter().any(|event| {
             event.at_ns == 30_000_000
                 && event.state == "lost"
@@ -1463,11 +1514,11 @@ mod tests {
         assert!(hops.iter().all(|hop| {
             (20_000_000..30_000_000).contains(&hop.transmit_started_ns)
                 || (110_000_000..120_000_000).contains(&hop.transmit_started_ns)
-                || (250_000_000..350_000_000).contains(&hop.transmit_started_ns)
+                || (190_000_000..350_000_000).contains(&hop.transmit_started_ns)
         }));
         assert!(hops
             .iter()
-            .any(|hop| hop.transmit_started_ns >= 250_000_000));
+            .any(|hop| hop.transmit_started_ns >= 190_000_000));
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
