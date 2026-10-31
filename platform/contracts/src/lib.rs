@@ -156,6 +156,28 @@ pub struct OpticalPatLink {
     pub acquisition_ns: u64,
 }
 
+/// Opt-in constant-rate body-frame slew model for one exclusive PAT head.
+/// Initial and target vectors are supplied unitless body-frame directions.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalHeadSlewActuator {
+    pub head_id: String,
+    pub initial_direction_body: [f64; 3],
+    pub max_slew_rate_deg_per_s: f64,
+}
+
+/// Fixed body-frame gimbal target for a geometric optical contact.
+/// The PAT planner retains the target through fault-split recovery segments.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpticalPatSlewTarget {
+    pub link_id: String,
+    pub at_ns: u64,
+    pub frame: String,
+    pub from_target_body: [f64; 3],
+    pub to_target_body: [f64; 3],
+}
+
 /// SYS-02 scheduled unavailability of one spacecraft-owned optical head.
 /// The half-open interval is in scenario-relative virtual nanoseconds.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -261,6 +283,12 @@ pub struct Scenario {
     /// Opt-in PAT gating for geometric optical contacts; absent means legacy behavior.
     #[serde(default)]
     pub optical_pat: Vec<OpticalPatLink>,
+    /// Optional exclusive-head body-frame actuator slew limits and initial direction.
+    #[serde(default)]
+    pub optical_head_slew_actuators: Vec<OpticalHeadSlewActuator>,
+    /// Optional fixed body-frame target per geometric PAT contact.
+    #[serde(default)]
+    pub optical_pat_slew_targets: Vec<OpticalPatSlewTarget>,
     /// Optional SYS-02 head maintenance/failure windows; only PAT heads are supported.
     #[serde(default)]
     pub optical_head_outages: Vec<OpticalHeadOutage>,
@@ -588,6 +616,52 @@ impl Scenario {
                     if owner != satellite {
                         return Err(format!("optical head shared across satellites: {head}"));
                     }
+                }
+            }
+        }
+        // The opt-in actuator model needs every head and every geometric PAT
+        // contact to be covered. No implied initial pointing is permitted.
+        if !self.optical_head_slew_actuators.is_empty()
+            || !self.optical_pat_slew_targets.is_empty()
+        {
+            if self.optical_head_slew_actuators.len() != head_owners.len() {
+                return Err("body-frame gimbal actuators must cover every PAT head".into());
+            }
+            let mut seen_heads = HashSet::new();
+            for actuator in &self.optical_head_slew_actuators {
+                if !head_owners.contains_key(actuator.head_id.as_str())
+                    || !seen_heads.insert(actuator.head_id.as_str())
+                    || !actuator.max_slew_rate_deg_per_s.is_finite()
+                    || actuator.max_slew_rate_deg_per_s <= 0.0
+                    || actuator.initial_direction_body.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
+                    || actuator.initial_direction_body.iter().all(|v| *v == 0.0)
+                {
+                    return Err(format!("invalid body-frame gimbal actuator: {}", actuator.head_id));
+                }
+            }
+            let contacts: HashSet<(&str, u64)> = self
+                .contacts
+                .iter()
+                .filter(|contact| pat_links.contains(&contact.link_id))
+                .map(|contact| (contact.link_id.as_str(), contact.start_ns))
+                .collect();
+            if self.optical_pat_slew_targets.len() != contacts.len() {
+                return Err("body-frame gimbal targets must cover every PAT contact".into());
+            }
+            let mut seen_targets = HashSet::new();
+            for target in &self.optical_pat_slew_targets {
+                if target.frame != "BODY"
+                    || !contacts.contains(&(target.link_id.as_str(), target.at_ns))
+                    || !seen_targets.insert((target.link_id.as_str(), target.at_ns))
+                    || [target.from_target_body, target.to_target_body].iter().any(|vector| {
+                        vector.iter().any(|v| !v.is_finite() || v.abs() > 1.0e12)
+                            || vector.iter().all(|v| *v == 0.0)
+                    })
+                {
+                    return Err(format!(
+                        "invalid body-frame gimbal target: {} at {}",
+                        target.link_id, target.at_ns
+                    ));
                 }
             }
         }
@@ -1240,6 +1314,61 @@ mod tests {
             to_max_off_axis_deg: 30.0,
         });
         assert!(s.validate().unwrap_err().contains("cannot mix"));
+    }
+
+    #[test]
+    fn body_frame_gimbal_contract_requires_explicit_head_and_contact_coverage() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-pat-acquisition.json"
+        ))
+        .unwrap();
+        scenario.optical_head_slew_actuators = vec![
+            OpticalHeadSlewActuator {
+                head_id: "sat-a/head-1".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+            },
+            OpticalHeadSlewActuator {
+                head_id: "sat-b/head-1".into(),
+                initial_direction_body: [-1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 3000.0,
+            },
+        ];
+        scenario.optical_pat_slew_targets = vec![
+            OpticalPatSlewTarget {
+                link_id: "isl-a-b".into(),
+                at_ns: 0,
+                frame: "BODY".into(),
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [-1.0, 0.0, 0.0],
+            },
+            OpticalPatSlewTarget {
+                link_id: "isl-a-b".into(),
+                at_ns: 120_000_000,
+                frame: "BODY".into(),
+                from_target_body: [0.0, 1.0, 0.0],
+                to_target_body: [0.0, -1.0, 0.0],
+            },
+        ];
+        scenario.validate().unwrap();
+        assert!(serde_json::to_string(&scenario).unwrap().contains("optical_pat_slew_targets"));
+        scenario.optical_pat_slew_targets.pop();
+        assert!(scenario.validate().unwrap_err().contains("cover every PAT contact"));
+        scenario.optical_pat_slew_targets.push(OpticalPatSlewTarget {
+            at_ns: 120_000_000,
+            ..scenario.optical_pat_slew_targets[0].clone()
+        });
+        scenario.optical_pat_slew_targets[1].frame = "ITRS".into();
+        assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal target"));
+        scenario.optical_pat_slew_targets[1].frame = "BODY".into();
+        scenario.optical_pat_slew_targets[1].from_target_body = [0.0; 3];
+        assert!(scenario.validate().is_err());
+        scenario.optical_pat_slew_targets[1].from_target_body = [0.0, 1.0, 0.0];
+        scenario.optical_head_slew_actuators[0].max_slew_rate_deg_per_s = 0.0;
+        assert!(scenario.validate().unwrap_err().contains("invalid body-frame gimbal actuator"));
+        scenario.optical_head_slew_actuators[0].max_slew_rate_deg_per_s = 3000.0;
+        scenario.optical_head_slew_actuators[0].head_id = "missing".into();
+        assert!(scenario.validate().is_err());
     }
 
     #[test]
