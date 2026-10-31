@@ -358,6 +358,22 @@ budget is bounded; no constellation-scale benchmark is claimed.
 
 # Implementation status and current fidelity
 
+## Active optical-head lease acquisition barrier
+
+SYS-02 now records the virtual-time start of each active link-scoped head
+lease. Commands and releases before that boundary fail without mutating
+ownership or follower state, including when no sample has yet been observed.
+The compatibility release operation honors the start of an unsampled lease;
+exact-timestamp handoff remains supported. Rust regression tests cover
+pre-acquisition operations, unchanged ownership after failure, legacy
+release and release/reacquire at one timestamp. Existing PAT/packet
+integration tests remain enabled.
+
+**Fidelity and performance:** O(L) additional active-lease timestamp storage
+for L leased links, constant expected-time validation per operation. This
+is a virtual-time correctness guard, not a single-pass PAT scheduler,
+shared-head predicted command arbitration, continuous servo or optical PHY.
+
 ## Optional sampled body-attitude angular-rate guard
 
 SYS-02 sampled body-to-ITRS head attitude inputs now accept an opt-in,
