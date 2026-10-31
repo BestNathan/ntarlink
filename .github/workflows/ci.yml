@@ -89,6 +89,29 @@ jobs:
           assert report["injected"] == report["delivered"] + report["dropped"], report
           print("Settling-aware PAT:", tracking, report["delivered"], "delivered")
           PY
+      - name: Verify sampled body-frame tracking error interrupts and reacquires PAT
+        run: |
+          python3 -m json.tool scenarios/optical-body-frame-tracking-error.json > /dev/null
+          cargo run -p ntarlink-cli -- validate scenarios/optical-body-frame-tracking-error.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-tracking-error.json --json > /tmp/ntarlink-body-tracking.json
+          cargo run -p ntarlink-cli -- simulate scenarios/optical-body-frame-tracking-error.json --json > /tmp/ntarlink-body-tracking-repeat.json
+          cmp /tmp/ntarlink-body-tracking.json /tmp/ntarlink-body-tracking-repeat.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/ntarlink-body-tracking.json"))
+          events = report["pat_events"]
+          tracking = [e["at_ns"] for e in events if e["state"] == "tracking"]
+          assert tracking == [20_000_000, 110_000_000, 190_000_000], tracking
+          assert any(e["at_ns"] == 30_000_000 and e["state"] == "lost" and e["reason"] == "sampled_pointing_loss" for e in events), events
+          hops = [h for p in report["packets"] for h in p["hops"] if h["link_id"] == "isl-a-b"]
+          windows = [(20_000_000, 30_000_000), (110_000_000, 120_000_000), (190_000_000, 260_000_000)]
+          assert hops and all(any(a <= h["transmit_started_ns"] < b for a, b in windows) for h in hops), hops
+          assert any(h["transmit_started_ns"] >= 190_000_000 for h in hops), hops
+          assert not any(e["kind"] == "contact_open" and e["link_id"] == "isl-a-b" and 40_000_000 <= e["at_ns"] < 90_000_000 for e in report["control_events"]), report["control_events"]
+          assert report["delivered"] > 0 and report["dropped"] > 0, report
+          assert report["injected"] == report["delivered"] + report["dropped"], report
+          print("Body-frame tracking error:", tracking, report["delivered"], "delivered")
+          PY
       - name: Verify optical PAT fault releases and reacquires tracking
         run: |
           python3 -m json.tool scenarios/optical-pat-link-fault.json > /dev/null
