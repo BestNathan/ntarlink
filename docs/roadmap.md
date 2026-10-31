@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Guard SYS-02 active optical-head leases against commands and releases before their acquisition timestamp, including unsampled leases and exact-boundary handoff; keep the SYS-03 offline PAT replay semantics (not single-pass arbitration). See [design](design/optical-body-frame-target-following.md).
+
 - [x] Canonical typed SYS-03 PAT lease boundary ordering and fail-closed overlapping-head validation, consumed by the offline SYS-02 lease replay with deterministic same-instant handoff and reversed-input regressions (not a live single-owner actuator scheduler). See [design](design/optical-body-frame-target-following.md).
 
 - [x] Replay accepted SYS-03 PAT reservations in virtual-time order as SYS-02 optical-head command leases, with atomic reservation start, timed release, same-instant handoff, and unleased target updates during faults; verify provisional and leased follower results agree (offline two-pass bridge, not shared-head predicted admission). See [design](design/optical-body-frame-target-following.md).
