@@ -1,3 +1,21 @@
+## Canonical SYS-03 PAT lease transition validation
+
+SYS-03 now validates and orders accepted half-open PAT head reservations
+before SYS-02 lease replay. Typed release/reserve transitions reject
+conflicting head ownership, duplicate active links, invalid head pairs and
+zero-length intervals. At equal virtual timestamps releases precede reserves;
+link IDs break ties deterministically. The packet adapter consumes these
+canonical edges, followed by sampled commands, instead of reconstructing
+PAT reservation edges itself. Rust tests cover reversed input, same-instant
+handoff, independent heads and invalid overlap; packet-runtime tests compare
+reversed-reservation follower projections and packet conservation.
+
+**Scope and cost:** O(A log A) validation/sorting and O(A) additional memory
+for A accepted reservations. This strengthens the offline two-pass bridge;
+it does not create a single mutable PAT/actuator runtime, admit shared-head
+predicted streams or model continuous servo behavior. See
+[design](design/optical-body-frame-target-following.md).
+
 ## Offline PAT reservation to optical-head command-lease lifecycle bridge
 
 The packet adapter now performs a provisional unleased SYS-02 sampled follower

@@ -180,3 +180,23 @@ SYS-03 does not yet schedule a single live actuator runtime, and shared-head
 predicted admission remains unsupported. A future single-pass event engine
 must arbitrate target commands during faults and model velocity-continuous
 servo dynamics without allowing unreserved commands to bypass ownership.
+
+## Canonical PAT lease boundary validation
+
+SYS-03 exports a typed, validated reservation-transition sequence. Each
+accepted half-open reservation emits a Reserve at its start and a Release at
+its exclusive end. At a shared virtual timestamp, releases precede reserves,
+then the packet adapter processes sampled commands. Ordering is independent
+of the input reservation vector and deterministic by link ID. Preflight
+rejects malformed intervals, duplicate active links and overlapping head
+occupancy before SYS-02 lease replay mutates actuator state.
+
+SYS-02 still owns actuator samples and command leases; SYS-03 owns the
+reservation plan and canonical boundary ordering. The packet adapter consumes
+typed edges instead of constructing its own reservation start/end events.
+Unit tests cover same-instant handoff, independent parallel heads, reversed
+input, invalid intervals and conflicting ownership. Packet-runtime tests
+also replay reversed reservations and verify identical follower projections,
+packet conservation and deterministic output. This adds an offline O(A log A)
+sort and O(A) memory for A accepted reservations; it is not a live single-pass
+arbiter or a servo model.
