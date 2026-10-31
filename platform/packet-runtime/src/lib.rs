@@ -1414,7 +1414,10 @@ mod tests {
                 .map(|window| (window.start_ns, window.end_ns))
                 .collect::<Vec<_>>()
         );
-        assert_eq!(admitted, vec![(20_000_000, 120_000_000), (140_000_000, 200_000_000)]);
+        assert_eq!(
+            admitted,
+            vec![(20_000_000, 120_000_000), (140_000_000, 200_000_000)]
+        );
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
     }
