@@ -1,3 +1,18 @@
+## Geometric contact range and elevation gate validation
+
+SYS-01 now validates optional link maximum range as finite and strictly
+positive, and RF minimum elevation as finite and within [-90, 90] degrees
+before evaluating link visibility. Previously a NaN maximum range bypassed
+the comparison and could admit an otherwise out-of-range RF or optical
+contact. Invalid elevation thresholds now raise a clear configuration error
+even when another range gate would reject the contact. Regression tests
+cover both RF and optical range gates, invalid RF thresholds, and unchanged
+valid contact admission/rejection.
+
+**Fidelity and cost:** constant-time scalar checks per geometry evaluation,
+with no new schema fields or dependencies. This is sampled contact geometry
+validation, not RF attenuation, an optical PHY or single-pass PAT arbitration.
+
 ## PAT deadline admission near the virtual-time limit
 
 SYS-03 now compares the remaining geometric contact interval against the

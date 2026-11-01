@@ -72,6 +72,46 @@ class OrbitalContactTests(unittest.TestCase):
             (False, None),
         )
 
+    def test_geometric_link_gate_limits_fail_closed(self):
+        nodes = {
+            "ue": {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+            "a": {"id": "a", "kind": "satellite"},
+            "b": {"id": "b", "kind": "satellite"},
+        }
+        position = lambda satellite, _time: (
+            (7e6, 0, 0) if satellite == "a" else (7e6, 7e6, 0)
+        )
+        rf = {"id": "rf", "kind": "user_rf", "from": "ue", "to": "a"}
+        optical = {"id": "isl", "kind": "optical_isl", "from": "a", "to": "b"}
+
+        for invalid in (float("nan"), float("inf"), -1.0, 0.0):
+            for link in (rf, optical):
+                with self.subTest(kind=link["kind"], max_range=invalid):
+                    with self.assertRaisesRegex(ValueError, "max_range_m"):
+                        link_geometry_at(
+                            {**link, "max_range_m": invalid},
+                            nodes, 0, position, {},
+                        )
+
+        # Invalid elevation thresholds must not be masked by a range miss.
+        for invalid in (float("nan"), float("inf"), -91.0, 91.0):
+            with self.subTest(elevation=invalid):
+                with self.assertRaisesRegex(ValueError, "min_elevation_deg"):
+                    link_geometry_at(
+                        {**rf, "max_range_m": 1.0},
+                        nodes, 0, position,
+                        {"min_elevation_deg": invalid},
+                    )
+
+        self.assertTrue(link_geometry_at(rf, nodes, 0, position, {})[0])
+        self.assertFalse(link_geometry_at(
+            {**rf, "max_range_m": 1.0}, nodes, 0, position, {}
+        )[0])
+        self.assertTrue(link_geometry_at(optical, nodes, 0, position, {})[0])
+        self.assertFalse(link_geometry_at(
+            {**optical, "max_range_m": 1.0}, nodes, 0, position, {}
+        )[0])
+
     def test_sampled_window_from_synthetic_earth_fixed_orbit(self):
         scenario = {
             "schema_version": 1,
