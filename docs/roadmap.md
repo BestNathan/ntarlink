@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Validate finite positive per-link geometric maximum range and finite bounded RF elevation thresholds before visibility admission, including NaN bypass and range-masked invalid settings. See [status](implementation-status.md).
+
 - [x] Reject PAT candidates whose remaining contact time cannot fit slew and acquisition before virtual-time addition, including shared-head waits through `u64::MAX` and independent late-contact acceptance (not live actuator arbitration). See [status](implementation-status.md).
 
 - [x] Replace fixed-dwell shared-head PAT slot conflict walks with two ordered predecessor lookups, preserving idle-gap admission and half-open reservation semantics; cover dense bookings and exhaustive two-head oracle comparisons (not a wall-clock benchmark or gimbal arbitration). See [status](implementation-status.md).

@@ -113,13 +113,25 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
         clearance = float(config.get("isl_clearance_m", 0.0))
         if not math.isfinite(clearance) or clearance < 0.0:
             raise ValueError("isl_clearance_m must be finite and nonnegative")
+    max_range_m = link.get("max_range_m")
+    if max_range_m is not None:
+        max_range_m = float(max_range_m)
+        if not math.isfinite(max_range_m) or max_range_m <= 0.0:
+            raise ValueError("max_range_m must be finite and positive")
+    min_elevation = None
+    if link["kind"] != "optical_isl":
+        min_elevation = float(
+            link.get("min_elevation_deg", config.get("min_elevation_deg", 10.0))
+        )
+        if not math.isfinite(min_elevation) or not -90.0 <= min_elevation <= 90.0:
+            raise ValueError("min_elevation_deg must be finite and within [-90, 90]")
     a, b = nodes[link["from"]], nodes[link["to"]]
     xyz_a = _geo_endpoint(a, time_ns, position)
     xyz_b = _geo_endpoint(b, time_ns, position)
     length = distance_m(xyz_a, xyz_b)
     if not math.isfinite(length) or length <= 1.0:
         return False, None
-    if link.get("max_range_m") is not None and length > float(link["max_range_m"]):
+    if max_range_m is not None and length > max_range_m:
         return False, None
     if link["kind"] == "optical_isl":
         if a["kind"] != "satellite" or b["kind"] != "satellite":
@@ -136,9 +148,6 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
             float(ground["longitude_deg"]),
             float(ground.get("height_m", 0.0)),
         )
-        min_elevation = float(link.get(
-            "min_elevation_deg", config.get("min_elevation_deg", 10.0)
-        ))
         visible = angle >= min_elevation
     return visible, geometric_delay_ns(length) if visible else None
 
