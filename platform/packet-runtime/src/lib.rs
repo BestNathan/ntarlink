@@ -840,7 +840,14 @@ fn audit_pat_head_leases(
             .ok_or("missing provisional BODY-frame observation")?;
         // Cross-check the trusted provisional result against SYS-02's actual
         // successful command history before any lease audit transition.
-        runtime.verify_sample_outcome(&pat.from_head, &pat.to_head, sample.at_ns, observed)?;
+        runtime.verify_sample_command(
+            &pat.from_head,
+            &pat.to_head,
+            sample.at_ns,
+            sample.from_target_body,
+            sample.to_target_body,
+            observed,
+        )?;
     }
 
     for event in timeline {
@@ -1976,6 +1983,26 @@ mod tests {
         assert_eq!(
             audit_pat_head_leases(&scenario, &reservations, &forged, &runtime).unwrap_err(),
             "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
+        // A target changed after the provisional pass can leave the
+        // instantaneous boresight unchanged while corrupting the next held
+        // command. Audit the committed target as well as the boresight.
+        let mut changed_command = scenario.clone();
+        let successful_index = changed_command
+            .optical_body_following_samples
+            .iter()
+            .position(|sample| {
+                expected
+                    .get(&(sample.link_id.clone(), sample.at_ns))
+                    .is_some_and(Result::is_ok)
+            })
+            .unwrap();
+        changed_command.optical_body_following_samples[successful_index].from_target_body =
+            [0.0, 0.0, 1.0];
+        assert_eq!(
+            audit_pat_head_leases(&changed_command, &reservations, &expected, &runtime)
+                .unwrap_err(),
+            "PAT provisional sample target disagrees with SYS-02 history"
         );
         assert!(replay_pat_head_leases(&scenario, &reservations, &expected).is_ok());
         let mut reversed = reservations.clone();

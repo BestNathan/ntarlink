@@ -427,6 +427,41 @@ impl BodyHeadRuntime {
         Ok(())
     }
 
+    /// Verify the complete successful PAT command against committed SYS-02
+    /// state, including the target latched for the *next* sample interval.
+    /// Predicted boresight at this instant depends on the previous target,
+    /// so boresight-only verification cannot detect a changed new command.
+    /// Failed commands have no committed target and retain outcome-only checks.
+    pub fn verify_sample_command(
+        &self,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+        observed: &Result<([f64; 3], [f64; 3]), String>,
+    ) -> Result<(), String> {
+        self.verify_sample_outcome(from_head_id, to_head_id, at_ns, observed)?;
+        if observed.is_err() {
+            return Ok(());
+        }
+        for (head_id, target) in [
+            (from_head_id, from_target_body),
+            (to_head_id, to_target_body),
+        ] {
+            let committed_target = self.history.get(head_id).and_then(|history| {
+                history
+                    .binary_search_by_key(&at_ns, |(sample_ns, _)| *sample_ns)
+                    .ok()
+                    .map(|index| history[index].1.held_target_body)
+            });
+            if body_unit(target).ok() != committed_target {
+                return Err("PAT provisional sample target disagrees with SYS-02 history".into());
+            }
+        }
+        Ok(())
+    }
+
     /// Build an independent lease-only audit from this runtime's real head
     /// registry; predicted boresight state remains owned by this runtime.
     pub fn lease_audit(&self) -> BodyHeadLeaseAudit {
@@ -1028,6 +1063,29 @@ mod tests {
         assert!(runtime
             .verify_sample_outcome("a", "b", 10, &Ok(observed))
             .is_ok());
+        assert!(runtime
+            .verify_sample_command(
+                "a",
+                "b",
+                10,
+                [2.0, 0.0, 0.0],
+                [0.0, 3.0, 0.0],
+                &Ok(observed),
+            )
+            .is_ok());
+        assert_eq!(
+            runtime
+                .verify_sample_command(
+                    "a",
+                    "b",
+                    10,
+                    [0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0],
+                    &Ok(observed),
+                )
+                .unwrap_err(),
+            "PAT provisional sample target disagrees with SYS-02 history"
+        );
         assert_eq!(
             runtime
                 .verify_sample_outcome("a", "b", 10, &Err("forged failure".into()))
