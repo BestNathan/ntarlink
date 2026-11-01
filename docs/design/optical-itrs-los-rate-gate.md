@@ -14,7 +14,10 @@ endpoint positions (meters) to form a unit LOS vector. The required angular
 displacement is computed with `atan2(|u × v|, u · v)` in degrees. It must
 not exceed `min(from_rate, to_rate) × elapsed_seconds`, with a 1e-9 degree
 numerical tolerance. Both endpoints see the same unsigned LOS displacement
-in ITRS. The first t=0 sample has no preceding rate requirement.
+in ITRS. The first t=0 sample has no preceding rate requirement. The standalone Rust
+rate predicate also requires exact directed link-ID equality between the two
+observations before evaluating their geometry; otherwise it fails closed.
+This prevents accidental cross-link comparisons outside scenario validation.
 
 A failed later sample marks the independent `sampled_pointing` fault domain
 down. A subsequent sample with a feasible angular change may restore it.

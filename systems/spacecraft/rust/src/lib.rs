@@ -601,7 +601,8 @@ pub fn geometry_los_rate_allowed(
     current: &OpticalGeometry,
     max_rate_deg_per_s: f64,
 ) -> bool {
-    if current.at_ns <= previous.at_ns
+    if previous.link_id != current.link_id
+        || current.at_ns <= previous.at_ns
         || !max_rate_deg_per_s.is_finite()
         || max_rate_deg_per_s < 0.0
         || previous.frame != "ITRS"
@@ -1309,6 +1310,21 @@ mod tests {
             from_max_off_axis_deg: 30.0,
             to_max_off_axis_deg: 30.0,
         };
+        // Cross-link observations must never be interpreted as a LOS
+        // trajectory, even if their geometry and timestamps are otherwise valid.
+        let mut other_link = initial.clone();
+        other_link.link_id = "isl-other".into();
+        other_link.at_ns = 30_000_000;
+        assert!(!geometry_los_rate_allowed(&initial, &other_link, 0.0));
+        let mut later_original = initial.clone();
+        later_original.at_ns = 60_000_000;
+        assert!(!geometry_los_rate_allowed(
+            &other_link,
+            &later_original,
+            0.0
+        ));
+        assert!(geometry_los_rate_allowed(&initial, &later_original, 0.0));
+
         let mut rotated = initial.clone();
         rotated.at_ns = 30_000_000;
         rotated.to_position_m = [7_000_000.0, 1000.0, 0.0];
