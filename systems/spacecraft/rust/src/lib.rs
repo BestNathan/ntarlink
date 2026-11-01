@@ -353,7 +353,7 @@ impl BodyHeadLeaseAudit {
     /// Check the canonical sample's lease projection and virtual-time order.
     /// Failed commands advance event chronology, not successful command
     /// chronology; successful paired commands advance both heads atomically.
-    pub fn sample(
+    fn sample(
         &mut self,
         link_id: &str,
         from: &str,
@@ -397,6 +397,32 @@ impl BodyHeadLeaseAudit {
         }
         self.record_transition(from, to, at_ns, LeaseAuditPhase::Sample);
         Ok(())
+    }
+
+    /// Verify the committed SYS-02 command before advancing lease chronology.
+    /// Failed provenance checks must leave ownership and virtual time unchanged.
+    /// The unchecked sample transition stays private to SYS-02.
+    pub fn sample_committed(
+        &mut self,
+        runtime: &BodyHeadRuntime,
+        link_id: &str,
+        from: &str,
+        to: &str,
+        at_ns: u64,
+        leased: bool,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+        observed: &Result<([f64; 3], [f64; 3]), String>,
+    ) -> Result<(), String> {
+        runtime.verify_sample_command(
+            from,
+            to,
+            at_ns,
+            from_target_body,
+            to_target_body,
+            observed,
+        )?;
+        self.sample(link_id, from, to, at_ns, leased, observed.is_ok())
     }
 }
 
@@ -1235,6 +1261,75 @@ mod tests {
         assert!(runtime
             .verify_sample_outcome("a", "b", 30, &Ok(observed))
             .is_err());
+    }
+
+    #[test]
+    fn committed_pat_samples_fail_closed_without_advancing_lease_time() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let observed = runtime
+            .observe_pair("a", "b", 10, target, target)
+            .unwrap();
+        let mut audit = runtime.lease_audit();
+        audit.reserve("isl", "a", "b", 10).unwrap();
+
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime, "isl", "a", "b", 20, true, target, target, &Ok(observed),
+                )
+                .unwrap_err(),
+            "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime, "isl", "a", "b", 10, true, [0.0, 1.0, 0.0],
+                    target, &Ok(observed),
+                )
+                .unwrap_err(),
+            "PAT provisional sample target disagrees with SYS-02 history"
+        );
+        audit
+            .sample_committed(
+                &runtime, "isl", "a", "b", 10, true, target, target, &Ok(observed),
+            )
+            .unwrap();
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime, "isl", "a", "b", 10, true, target, target, &Ok(observed),
+                )
+                .unwrap_err(),
+            "PAT head lease audit sample order mismatch"
+        );
+        audit.release("isl", "a", "b", 11).unwrap();
+
+        let bad_target = [f64::NAN, 0.0, 0.0];
+        let failure = runtime
+            .observe_pair("a", "b", 20, bad_target, target)
+            .unwrap_err();
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime, "isl", "a", "b", 20, false, bad_target, target,
+                    &Err("forged failure".into()),
+                )
+                .unwrap_err(),
+            "PAT provisional failed command disagrees with SYS-02 attempt ledger"
+        );
+        audit
+            .sample_committed(
+                &runtime, "isl", "a", "b", 20, false, bad_target, target, &Err(failure),
+            )
+            .unwrap();
     }
 
     #[test]
