@@ -15,6 +15,9 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Preflight all selected SYS-01 analytical Doppler contact intervals and geometric link gates before sidecar propagation; cap the optional midpoint observations at 100,000 with a configurable lower limit and regression coverage (not continuous Doppler or PHY recovery). See [status](implementation-status.md).
+
+
 - [x] Preflight SYS-01 numeric geometric gates and WGS84 ground coordinates across all links before propagation; reject nonfinite external ITRS positions and ranges instead of silently classifying them invisible. See [status](implementation-status.md).
 
 - [x] Preflight all SYS-01 geometric link endpoint kinds, references and TLE coverage before any position-provider call; reject range-masked malformed RF/optical topology and preserve valid reversed RF directions. See [status](implementation-status.md).
