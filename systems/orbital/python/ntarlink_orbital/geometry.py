@@ -31,7 +31,7 @@ def elevation_deg(satellite_ecef_m, latitude_deg: float, longitude_deg: float, h
 
 Positions are Earth-centered Earth-fixed (ITRS/ECEF) meters, not raw SGP4 TEME.
 """
-from math import sqrt
+from math import isfinite, sqrt
 
 EQUATORIAL_RADIUS_M = 6_378_137.0
 POLAR_RADIUS_M = 6_356_752.314245
@@ -48,8 +48,10 @@ def earth_occludes_segment(a, b, clearance_m=0.0):
     Tangency counts as occlusion. The clearance margin is a geometric
     approximation rather than an atmospheric/optical pointing model.
     """
-    if clearance_m < 0.0:
-        raise ValueError("clearance_m must be nonnegative")
+    if not isfinite(clearance_m) or clearance_m < 0.0:
+        raise ValueError("clearance_m must be finite and nonnegative")
+    if any(not isfinite(float(point[i])) for point in (a, b) for i in range(3)):
+        raise ValueError("segment endpoints must contain finite ECEF coordinates")
     radii = (
         EQUATORIAL_RADIUS_M + clearance_m,
         EQUATORIAL_RADIUS_M + clearance_m,
