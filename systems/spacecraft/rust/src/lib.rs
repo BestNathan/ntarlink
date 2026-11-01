@@ -1589,8 +1589,8 @@ mod tests {
         runtime
             .verify_sample_command("a", "b", 10, target, target, &Err(reason))
             .unwrap();
-        assert!(runtime.history.get("a").is_none());
-        assert!(runtime.history.get("b").is_none());
+        assert!(!runtime.history.contains_key("a"));
+        assert!(!runtime.history.contains_key("b"));
         assert!(runtime.owners.is_empty());
 
         runtime
@@ -1610,7 +1610,7 @@ mod tests {
         runtime
             .verify_sample_command("a", "b", 10, target, target, &Err(wrong_link))
             .unwrap();
-        assert!(runtime.history.get("a").is_none());
+        assert!(!runtime.history.contains_key("a"));
         assert_eq!(runtime.owners.get("a").map(String::as_str), Some("isl"));
 
         assert!(matches!(
