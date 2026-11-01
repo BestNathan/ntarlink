@@ -411,6 +411,9 @@ impl BodyHeadRuntime {
         {
             return Err("invalid or already active BODY-frame pair reservation".into());
         }
+        // A reservation at the same instant as an already committed
+        // sample would retroactively claim that head. The canonical
+        // PAT order is Release -> Reserve -> Sample.
         for head_id in [from_head_id, to_head_id] {
             if !self.heads.contains_key(head_id)
                 || self.owners.contains_key(head_id)
@@ -422,9 +425,6 @@ impl BodyHeadRuntime {
                     .history
                     .get(head_id)
                     .and_then(|samples| samples.last())
-                    // A reservation at the same instant as an already committed
-                    // sample would retroactively claim that head. The canonical
-                    // PAT order is Release -> Reserve -> Sample.
                     .is_some_and(|(sample_ns, _)| at_ns <= *sample_ns)
             {
                 return Err(
