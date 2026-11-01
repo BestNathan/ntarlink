@@ -1551,7 +1551,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_contacts_and_overflow_are_rejected() {
+    fn malformed_contacts_error_and_expired_deadlines_reject() {
         let base = contact("x", "a", "b", 0, 20);
         for invalid in [
             PatCandidate {
@@ -1582,11 +1582,16 @@ mod tests {
             contact("same", "a", "b", 10, 30)
         ])
         .is_err());
-        assert!(plan_contacts(&[PatCandidate {
+        let plan = plan_contacts(&[PatCandidate {
             start_ns: u64::MAX - 3,
             end_ns: u64::MAX,
             ..base
         }])
-        .is_err());
+        .unwrap();
+        assert!(plan.reservations.is_empty());
+        assert!(plan.events.iter().any(|event| {
+            event.state == PatState::Rejected
+                && event.reason == Some("contact_expires_before_acquisition")
+        }));
     }
 }
