@@ -1,5 +1,23 @@
 ## SYS-02 typed PAT actuator execution boundary
 
+## SYS-02 leased PAT commands require explicit reservation
+
+The typed SYS-02 actuator transition boundary now rejects a leased PAT Command
+unless a prior Reserve transition owns the exact ordered optical-head pair for
+the same link. Previously the command path could implicitly claim two unleased
+heads through the legacy pair-observation API, bypassing the canonical
+Release/Reserve/Command sequence. Rejected attempts preserve exact-input and
+error provenance without committing either head or acquiring a lease. An
+unleased fault-gap command retains its existing behavior.
+
+**Verification and limits:** a Rust regression covers unreserved commands,
+wrong-link commands against an active reservation, successful retry at the
+same timestamp after Reserve, and rejection after Release. The change adds
+constant-time map lookups and no new schema fields or dependencies. The
+offline provisional planning and lease audit remain separate; this is not
+single-pass shared-head arbitration or a continuous servo.
+
+
 The SYS-02 `BodyHeadRuntime` now accepts typed Release, Reserve and Command
 transitions through `apply_pat_transition`. The packet adapter uses this one
 entry point for both provisional commands and leased PAT timeline execution,
