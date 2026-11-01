@@ -1,6 +1,6 @@
 ## SYS-02 verified PAT lease sample transition
 
-The packet adapter now applies PAT lease samples through
+The packet adapter now applies typed `BodyHeadPatSample` events through
 `BodyHeadLeaseAudit::sample_committed`. SYS-02 authenticates the command
 against the provisional actuator's committed boresight and latched target,
 or its exact rejected-attempt ledger, before advancing lease chronology.
