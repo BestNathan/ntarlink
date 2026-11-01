@@ -15,6 +15,9 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Reject retroactive SYS-02 PAT pair reservations at a head's already-committed sample timestamp; preserve atomic failure, later admission and exact-time unsampled handoff (not single-pass arbitration). See [status](implementation-status.md).
+## P1 — physical contact and radio/link realism
+
 - [x] Reject cross-link sampled ITRS LOS angular-rate comparisons at the SYS-02 predicate boundary, including direct API regressions and unchanged same-link behavior (not continuous tracking). See [status](implementation-status.md).
 
 - [x] Reject PAT link optical-head endpoint rebinding across non-overlapping contacts and reservations before scheduling or lease replay, with deterministic reverse-input regressions (not live shared-head arbitration). See [status](implementation-status.md).
