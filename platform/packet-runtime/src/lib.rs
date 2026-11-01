@@ -13,7 +13,8 @@ use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
-    pointing_allowed, BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability,
+    pointing_allowed, BodyHeadPatCommand, BodyHeadPatRuntimeOutcome, BodyHeadPatRuntimeTransition,
+    BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -721,21 +722,21 @@ fn execute_pat_head_timeline(
         match event.kind {
             PatRuntimeTransitionKind::Release(index) => {
                 let reservation = &reservations[index];
-                runtime.release_pair_at(
-                    &reservation.link_id,
-                    &reservation.from_head,
-                    &reservation.to_head,
-                    reservation.end_ns,
-                )?;
+                runtime.apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                    link_id: &reservation.link_id,
+                    from_head: &reservation.from_head,
+                    to_head: &reservation.to_head,
+                    at_ns: reservation.end_ns,
+                })?;
             }
             PatRuntimeTransitionKind::Reserve(index) => {
                 let reservation = &reservations[index];
-                runtime.reserve_pair_for_link(
-                    &reservation.link_id,
-                    &reservation.from_head,
-                    &reservation.to_head,
-                    reservation.start_ns,
-                )?;
+                runtime.apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id: &reservation.link_id,
+                    from_head: &reservation.from_head,
+                    to_head: &reservation.to_head,
+                    at_ns: reservation.start_ns,
+                })?;
             }
             PatRuntimeTransitionKind::Sample {
                 index,
@@ -745,7 +746,7 @@ fn execute_pat_head_timeline(
                 let pat = pat_links
                     .get(sample.link_id.as_str())
                     .ok_or("unknown predicted PAT link")?;
-                let observed = if let Some(reservation_index) = reservation_index {
+                if let Some(reservation_index) = reservation_index {
                     let reservation = &reservations[reservation_index];
                     if reservation.link_id != sample.link_id
                         || reservation.from_head != pat.from_head
@@ -753,25 +754,23 @@ fn execute_pat_head_timeline(
                     {
                         return Err("PAT sample lease endpoint mismatch".into());
                     }
-                    runtime.observe_pair_for_link(
-                        &sample.link_id,
-                        &pat.from_head,
-                        &pat.to_head,
-                        sample.at_ns,
-                        sample.from_target_body,
-                        sample.to_target_body,
-                    )
-                } else {
-                    // Commands in fault gaps may update held targets only when
-                    // both heads are unleased. Shared-head predicted following
-                    // remains contract-rejected.
-                    runtime.observe_pair(
-                        &pat.from_head,
-                        &pat.to_head,
-                        sample.at_ns,
-                        sample.from_target_body,
-                        sample.to_target_body,
-                    )
+                }
+                // Lease changes and sampled commands now cross the same SYS-02
+                // actuator transition boundary, preserving failed attempts as
+                // observations for PAT planning and provenance verification.
+                let outcome = runtime.apply_pat_transition(
+                    BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                        link_id: &sample.link_id,
+                        from_head: &pat.from_head,
+                        to_head: &pat.to_head,
+                        at_ns: sample.at_ns,
+                        leased: reservation_index.is_some(),
+                        from_target_body: sample.from_target_body,
+                        to_target_body: sample.to_target_body,
+                    }),
+                )?;
+                let BodyHeadPatRuntimeOutcome::Command(observed) = outcome else {
+                    return Err("PAT actuator command returned a lease result".into());
                 };
                 if let Some(expected) = expected {
                     let provisional = expected
