@@ -625,9 +625,7 @@ pub fn plan_contacts_with_slew_starts(
         // remain booked until u64::MAX, and an impossible wait or dwell must
         // reject only this candidate rather than overflow the entire plan.
         let remaining_ns = candidate.end_ns.saturating_sub(available_ns);
-        if slew_ns >= remaining_ns
-            || candidate.acquisition_ns >= remaining_ns - slew_ns
-        {
+        if slew_ns >= remaining_ns || candidate.acquisition_ns >= remaining_ns - slew_ns {
             events.push(PatEvent {
                 link_id: candidate.link_id.clone(),
                 at_ns: candidate.start_ns,
