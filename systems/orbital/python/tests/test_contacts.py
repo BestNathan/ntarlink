@@ -112,6 +112,53 @@ class OrbitalContactTests(unittest.TestCase):
             {**optical, "max_range_m": 1.0}, nodes, 0, position, {}
         )[0])
 
+    def test_invalid_geometric_topology_is_not_masked_by_range(self):
+        nodes = {
+            "ue": {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+            "ground": {"id": "ground", "kind": "ground_station",
+                       "latitude_deg": 0, "longitude_deg": 0},
+            "a": {"id": "a", "kind": "satellite"},
+            "b": {"id": "b", "kind": "satellite"},
+        }
+        invalid_links = [
+            {"id": "bad-optical", "kind": "optical_isl", "from": "a", "to": "ue"},
+            {"id": "bad-rf-space", "kind": "user_rf", "from": "a", "to": "b"},
+            {"id": "bad-rf-ground", "kind": "feeder", "from": "ue", "to": "ground"},
+            {"id": "missing", "kind": "user_rf", "from": "ue", "to": "unknown"},
+        ]
+        for link in invalid_links:
+            with self.subTest(link=link["id"]), self.assertRaisesRegex(
+                ValueError, "optical ISL|user/feeder RF|unknown geometric"
+            ):
+                link_geometry_at(
+                    {**link, "max_range_m": 1.0}, nodes, 0,
+                    lambda *_args: self.fail("invalid topology reached position provider"), {},
+                )
+
+        # The complete scenario must be preflighted, not just each link when
+        # its sampling loop begins: a later invalid link must prevent all work.
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 100,
+            "nodes": list(nodes.values()),
+            "links": [
+                {"id": "valid", "kind": "user_rf", "from": "ue", "to": "a"},
+                {**invalid_links[0], "max_range_m": 1.0},
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "optical ISL"):
+            generate_contact_windows(
+                scenario, {"step_ns": 10, "satellites": [{"id": "a"}, {"id": "b"}]},
+                lambda *_args: self.fail("preflight must precede every geometry probe"),
+            )
+
+        # Reversed RF endpoints remain valid; only topology, not direction,
+        # is constrained by this guard.
+        self.assertTrue(link_geometry_at(
+            {"id": "feeder", "kind": "feeder", "from": "a", "to": "ground"},
+            nodes, 0, lambda *_args: (7e6, 0, 0), {},
+        )[0])
+
     def test_sampled_window_from_synthetic_earth_fixed_orbit(self):
         scenario = {
             "schema_version": 1,
