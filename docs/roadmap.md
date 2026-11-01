@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Bound all SYS-01 geometric evaluations (coarse visibility, trailing probe, boundary bisection, contact midpoint and delay samples) with one aggregate hard limit, default 1,000,000 probes and configurable downward for controlled workloads. Keep the earlier 500,000 coarse link-step preflight; this is an evaluation-count guard, not a wall-clock or SGP4-operation SLA. See [status](implementation-status.md).
+
 - [x] Cap aggregate SYS-01 coarse geometry preprocessing at 500,000 link-steps across RF/optical links and reject noninteger scenario duration before propagation; preserve existing per-link and delay-sample limits (not a total refinement-probe or wall-clock bound). See [status](implementation-status.md).
 
 - [x] Validate finite positive per-link geometric maximum range and finite bounded RF elevation thresholds before visibility admission, including NaN bypass and range-masked invalid settings. See [status](implementation-status.md).

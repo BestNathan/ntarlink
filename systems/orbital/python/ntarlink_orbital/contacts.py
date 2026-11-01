@@ -206,10 +206,26 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
         or delay_step_ns <= 0
     ):
         raise ValueError("propagation_delay_sample_step_ns must be positive integer nanoseconds")
+    # Include refinement, midpoint and delay probes in a hard execution budget.
+    # The coarse link-step preflight above remains a separate early guard.
+    max_evaluations = config.get("max_geometry_evaluations", 1_000_000)
+    if (type(max_evaluations) is not int
+            or not 1 <= max_evaluations <= 1_000_000):
+        raise ValueError("max_geometry_evaluations must be an integer within [1, 1,000,000]")
+    evaluation_count = 0
     delay_sample_total = 0
     nodes = {node["id"]: node for node in scenario["nodes"]}
     orbital_ids = {sat["id"] for sat in config["satellites"]}
     windows = []
+
+    def evaluate_geometry(link, time_ns):
+        nonlocal evaluation_count
+        if evaluation_count >= max_evaluations:
+            raise ValueError(
+                f"orbital geometry evaluation budget exceeded ({max_evaluations} probes)"
+            )
+        evaluation_count += 1
+        return link_geometry_at(link, nodes, time_ns, position, config)
 
     for link in scenario["links"]:
         if link["kind"] not in GEOMETRIC_LINKS:
@@ -223,14 +239,14 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
                 raise ValueError(f"TLE not provided for {node['id']}")
 
         def visible_at(time_ns):
-            return link_geometry_at(link, nodes, time_ns, position, config)[0]
+            return evaluate_geometry(link, time_ns)[0]
 
         def record_window(opened_ns, closed_ns):
             nonlocal delay_sample_total
             if opened_ns >= closed_ns:
                 return
             midpoint = opened_ns + (closed_ns - opened_ns) // 2
-            _, delay_ns = link_geometry_at(link, nodes, midpoint, position, config)
+            _, delay_ns = evaluate_geometry(link, midpoint)
             if delay_ns is None:
                 raise ValueError(f"invalid contact midpoint for {link['id']}")
             window = {
@@ -251,9 +267,7 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
                     sample_times.append(closed_ns - 1)
                 samples = []
                 for sample_ns in sample_times:
-                    visible, sampled_delay = link_geometry_at(
-                        link, nodes, sample_ns, position, config
-                    )
+                    visible, sampled_delay = evaluate_geometry(link, sample_ns)
                     if not visible or sampled_delay is None:
                         raise ValueError(
                             f"propagation delay sample outside contact visibility: {link['id']}"
