@@ -234,6 +234,16 @@ pub struct BodyHeadRuntime {
     lease_start_ns: HashMap<String, u64>,
     /// Earliest allowed time for a new command after a timed lease release.
     release_floor_ns: HashMap<String, u64>,
+    /// Rejected paired commands have no committed head snapshot. Preserve
+    /// their exact inputs and error reason for the offline PAT audit.
+    failed_pair_attempts: HashMap<(String, String, u64), Vec<FailedPairAttempt>>,
+}
+
+#[derive(Debug)]
+struct FailedPairAttempt {
+    from_target_bits: [u64; 3],
+    to_target_bits: [u64; 3],
+    reason: String,
 }
 
 /// Lease-only PAT command ownership state, initialized from the actual
@@ -431,7 +441,8 @@ impl BodyHeadRuntime {
     /// state, including the target latched for the *next* sample interval.
     /// Predicted boresight at this instant depends on the previous target,
     /// so boresight-only verification cannot detect a changed new command.
-    /// Failed commands have no committed target and retain outcome-only checks.
+    /// Failed commands have no committed target; compare their exact attempted
+    /// inputs (including NaN bits) and error against the SYS-02 rejection ledger.
     pub fn verify_sample_command(
         &self,
         from_head_id: &str,
@@ -442,7 +453,22 @@ impl BodyHeadRuntime {
         observed: &Result<([f64; 3], [f64; 3]), String>,
     ) -> Result<(), String> {
         self.verify_sample_outcome(from_head_id, to_head_id, at_ns, observed)?;
-        if observed.is_err() {
+        if let Err(reason) = observed {
+            let matches_attempt = self
+                .failed_pair_attempts
+                .get(&(from_head_id.to_owned(), to_head_id.to_owned(), at_ns))
+                .is_some_and(|attempts| {
+                    attempts.iter().any(|attempt| {
+                        attempt.from_target_bits == from_target_body.map(f64::to_bits)
+                            && attempt.to_target_bits == to_target_body.map(f64::to_bits)
+                            && attempt.reason == *reason
+                    })
+                });
+            if !matches_attempt {
+                return Err(
+                    "PAT provisional failed command disagrees with SYS-02 attempt ledger".into(),
+                );
+            }
             return Ok(());
         }
         for (head_id, target) in [
@@ -491,7 +517,29 @@ impl BodyHeadRuntime {
             link_heads: HashMap::new(),
             lease_start_ns: HashMap::new(),
             release_floor_ns: HashMap::new(),
+            failed_pair_attempts: HashMap::new(),
         })
+    }
+
+    fn record_failed_pair_attempt(
+        &mut self,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+        result: &Result<([f64; 3], [f64; 3]), String>,
+    ) {
+        if let Err(reason) = result {
+            self.failed_pair_attempts
+                .entry((from_head_id.to_owned(), to_head_id.to_owned(), at_ns))
+                .or_default()
+                .push(FailedPairAttempt {
+                    from_target_bits: from_target_body.map(f64::to_bits),
+                    to_target_bits: to_target_body.map(f64::to_bits),
+                    reason: reason.clone(),
+                });
+        }
     }
 
     fn staged_observation(
@@ -558,22 +606,62 @@ impl BodyHeadRuntime {
         from_target_body: [f64; 3],
         to_target_body: [f64; 3],
     ) -> Result<([f64; 3], [f64; 3]), String> {
-        if self.owners.contains_key(from_head_id) || self.owners.contains_key(to_head_id) {
-            return Err("BODY-frame runtime head has a link command owner".into());
-        }
-        self.observe_pair_unchecked(
+        let result = if self.owners.contains_key(from_head_id)
+            || self.owners.contains_key(to_head_id)
+        {
+            Err("BODY-frame runtime head has a link command owner".into())
+        } else {
+            self.observe_pair_unchecked(
+                from_head_id,
+                to_head_id,
+                at_ns,
+                from_target_body,
+                to_target_body,
+            )
+        };
+        self.record_failed_pair_attempt(
             from_head_id,
             to_head_id,
             at_ns,
             from_target_body,
             to_target_body,
-        )
+            &result,
+        );
+        result
     }
 
     /// Atomically claim both heads for one link and commit a sampled command.
     /// A conflicting link or invalid endpoint leaves both leases and follower
     /// histories unchanged. A link may continue to command its own heads.
     pub fn observe_pair_for_link(
+        &mut self,
+        link_id: &str,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        from_target_body: [f64; 3],
+        to_target_body: [f64; 3],
+    ) -> Result<([f64; 3], [f64; 3]), String> {
+        let result = self.observe_pair_for_link_unrecorded(
+            link_id,
+            from_head_id,
+            to_head_id,
+            at_ns,
+            from_target_body,
+            to_target_body,
+        );
+        self.record_failed_pair_attempt(
+            from_head_id,
+            to_head_id,
+            at_ns,
+            from_target_body,
+            to_target_body,
+            &result,
+        );
+        result
+    }
+
+    fn observe_pair_for_link_unrecorded(
         &mut self,
         link_id: &str,
         from_head_id: &str,
@@ -1102,6 +1190,44 @@ mod tests {
         assert!(runtime
             .verify_sample_outcome("a", "b", 20, &Err("invalid target".into()))
             .is_ok());
+        let failed_reason = runtime
+            .observe_pair("a", "b", 20, [1.0, 0.0, 0.0], [f64::NAN, 0.0, 0.0])
+            .unwrap_err();
+        assert!(runtime
+            .verify_sample_command(
+                "a",
+                "b",
+                20,
+                [1.0, 0.0, 0.0],
+                [f64::NAN, 0.0, 0.0],
+                &Err(failed_reason.clone()),
+            )
+            .is_ok());
+        for (from, to, reason) in [
+            ([0.0, 1.0, 0.0], [f64::NAN, 0.0, 0.0], failed_reason.clone()),
+            ([1.0, 0.0, 0.0], [0.0, 0.0, 0.0], failed_reason.clone()),
+            ([1.0, 0.0, 0.0], [f64::NAN, 0.0, 0.0], "forged reason".into()),
+        ] {
+            assert_eq!(
+                runtime
+                    .verify_sample_command("a", "b", 20, from, to, &Err(reason))
+                    .unwrap_err(),
+                "PAT provisional failed command disagrees with SYS-02 attempt ledger"
+            );
+        }
+        assert_eq!(
+            runtime
+                .verify_sample_command(
+                    "a",
+                    "b",
+                    21,
+                    [1.0, 0.0, 0.0],
+                    [f64::NAN, 0.0, 0.0],
+                    &Err(failed_reason),
+                )
+                .unwrap_err(),
+            "PAT provisional failed command disagrees with SYS-02 attempt ledger"
+        );
         runtime.observe("a", 30, [1.0, 0.0, 0.0]).unwrap();
         assert!(runtime
             .verify_sample_outcome("a", "b", 30, &Ok(observed))
