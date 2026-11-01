@@ -1274,16 +1274,22 @@ mod tests {
         });
         let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
         let target = [1.0, 0.0, 0.0];
-        let observed = runtime
-            .observe_pair("a", "b", 10, target, target)
-            .unwrap();
+        let observed = runtime.observe_pair("a", "b", 10, target, target).unwrap();
         let mut audit = runtime.lease_audit();
         audit.reserve("isl", "a", "b", 10).unwrap();
 
         assert_eq!(
             audit
                 .sample_committed(
-                    &runtime, "isl", "a", "b", 20, true, target, target, &Ok(observed),
+                    &runtime,
+                    "isl",
+                    "a",
+                    "b",
+                    20,
+                    true,
+                    target,
+                    target,
+                    &Ok(observed),
                 )
                 .unwrap_err(),
             "PAT provisional sample outcome disagrees with SYS-02 history"
@@ -1291,21 +1297,44 @@ mod tests {
         assert_eq!(
             audit
                 .sample_committed(
-                    &runtime, "isl", "a", "b", 10, true, [0.0, 1.0, 0.0],
-                    target, &Ok(observed),
+                    &runtime,
+                    "isl",
+                    "a",
+                    "b",
+                    10,
+                    true,
+                    [0.0, 1.0, 0.0],
+                    target,
+                    &Ok(observed),
                 )
                 .unwrap_err(),
             "PAT provisional sample target disagrees with SYS-02 history"
         );
         audit
             .sample_committed(
-                &runtime, "isl", "a", "b", 10, true, target, target, &Ok(observed),
+                &runtime,
+                "isl",
+                "a",
+                "b",
+                10,
+                true,
+                target,
+                target,
+                &Ok(observed),
             )
             .unwrap();
         assert_eq!(
             audit
                 .sample_committed(
-                    &runtime, "isl", "a", "b", 10, true, target, target, &Ok(observed),
+                    &runtime,
+                    "isl",
+                    "a",
+                    "b",
+                    10,
+                    true,
+                    target,
+                    target,
+                    &Ok(observed),
                 )
                 .unwrap_err(),
             "PAT head lease audit sample order mismatch"
@@ -1319,7 +1348,14 @@ mod tests {
         assert_eq!(
             audit
                 .sample_committed(
-                    &runtime, "isl", "a", "b", 20, false, bad_target, target,
+                    &runtime,
+                    "isl",
+                    "a",
+                    "b",
+                    20,
+                    false,
+                    bad_target,
+                    target,
                     &Err("forged failure".into()),
                 )
                 .unwrap_err(),
@@ -1327,7 +1363,15 @@ mod tests {
         );
         audit
             .sample_committed(
-                &runtime, "isl", "a", "b", 20, false, bad_target, target, &Err(failure),
+                &runtime,
+                "isl",
+                "a",
+                "b",
+                20,
+                false,
+                bad_target,
+                target,
+                &Err(failure),
             )
             .unwrap();
     }
