@@ -1,3 +1,20 @@
+## PAT deadline admission near the virtual-time limit
+
+SYS-03 now compares the remaining geometric contact interval against the
+combined slew and acquisition dwell before adding virtual timestamps. When a
+shared head remains reserved through the candidate's exclusive end, or a
+contact is too short near `u64::MAX`, the candidate is rejected with the
+existing `contact_expires_before_acquisition` reason rather than aborting
+the entire plan on timestamp overflow. The check applies to fixed-dwell and
+gimbal scheduling and preserves deterministic admission of independent
+contacts.
+
+**Verification and limits:** a Rust regression covers a head booked through
+`u64::MAX`, a short late contact, an independent valid late contact, and
+reversed input order. The guard is O(1) per candidate, introduces no new
+scenario fields or allocations, and does not implement single-pass actuator
+arbitration, a continuous servo, or an optical PHY.
+
 ## Fixed-dwell PAT reservation lookup complexity
 
 SYS-03 fixed-dwell scheduling now finds the earliest admissible shared-head
