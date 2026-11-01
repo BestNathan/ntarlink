@@ -1,3 +1,22 @@
+## Fixed-dwell PAT reservation lookup complexity
+
+SYS-03 fixed-dwell scheduling now finds the earliest admissible shared-head
+reservation start using the last booking that begins before the candidate's
+geometric end on each head. Because each head's bookings are non-overlapping
+and a candidate reserves through its fixed end, earlier bookings cannot
+interfere after that predecessor's end. This replaces repeated conflict
+scanning with two B-tree predecessor lookups per candidate, while preserving
+half-open boundaries, deterministic priority and the ability to fill an idle
+gap before a future reservation. Gimbal-mode scheduling remains unchanged.
+
+**Verification and limits:** Rust regressions exercise 4,096 sparse bookings
+and exhaustively compare the resulting admission decision and start time
+against a brute-force discrete-slot oracle for small two-head schedules.
+Each lookup is O(log B) for B bookings per head; overall candidate sorting
+and B-tree insertion remain O(C log C) for C accepted candidates. No
+wall-clock benchmark, continuous actuator arbitration or optical PHY
+performance claim is implied.
+
 ## Optical ISL occlusion input safety
 
 SYS-01 now rejects nonfinite or negative optical ISL clearance before
