@@ -246,6 +246,17 @@ pub struct BodyHeadLeaseAudit {
     owners: HashMap<String, String>,
     link_heads: HashMap<String, (String, String)>,
     last_success_ns: HashMap<String, u64>,
+    last_transition: HashMap<String, (u64, LeaseAuditPhase)>,
+}
+
+/// Same-time transitions must follow the canonical PAT order. Failed sampled
+/// commands still consume their position in virtual time, but never advance
+/// the successful actuator-command history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LeaseAuditPhase {
+    Release,
+    Reserve,
+    Sample,
 }
 
 impl BodyHeadLeaseAudit {
@@ -253,8 +264,39 @@ impl BodyHeadLeaseAudit {
         self.known_heads.contains(head_id)
     }
 
-    /// Claim both configured heads atomically; a failed claim changes nothing.
-    pub fn reserve(&mut self, link_id: &str, from: &str, to: &str) -> Result<(), String> {
+    fn check_transition(
+        &self,
+        from: &str,
+        to: &str,
+        at_ns: u64,
+        phase: LeaseAuditPhase,
+    ) -> Result<(), String> {
+        if [from, to].into_iter().any(|head| {
+            self.last_transition
+                .get(head)
+                .is_some_and(|previous| *previous > (at_ns, phase))
+        }) {
+            return Err("PAT head lease audit transition order mismatch".into());
+        }
+        Ok(())
+    }
+
+    fn record_transition(&mut self, from: &str, to: &str, at_ns: u64, phase: LeaseAuditPhase) {
+        self.last_transition
+            .insert(from.to_owned(), (at_ns, phase));
+        self.last_transition
+            .insert(to.to_owned(), (at_ns, phase));
+    }
+
+    /// Claim both configured heads atomically at a virtual-time boundary.
+    /// A failed claim changes neither ownership nor transition chronology.
+    pub fn reserve(
+        &mut self,
+        link_id: &str,
+        from: &str,
+        to: &str,
+        at_ns: u64,
+    ) -> Result<(), String> {
         if link_id.trim().is_empty()
             || from == to
             || self.link_heads.contains_key(link_id)
@@ -264,16 +306,25 @@ impl BodyHeadLeaseAudit {
         {
             return Err("PAT head lease audit ownership conflict".into());
         }
+        self.check_transition(from, to, at_ns, LeaseAuditPhase::Reserve)?;
         self.owners.insert(from.to_owned(), link_id.to_owned());
         self.owners.insert(to.to_owned(), link_id.to_owned());
         self.link_heads
             .insert(link_id.to_owned(), (from.to_owned(), to.to_owned()));
+        self.record_transition(from, to, at_ns, LeaseAuditPhase::Reserve);
         Ok(())
     }
 
-    /// Release exactly the active ordered pair, without partially releasing
-    /// either head when the link or endpoint identity is incorrect.
-    pub fn release(&mut self, link_id: &str, from: &str, to: &str) -> Result<(), String> {
+    /// Release exactly the active ordered pair at the supplied boundary.
+    /// An invalid identity or retroactive release cannot partially mutate
+    /// either head or its virtual-time history.
+    pub fn release(
+        &mut self,
+        link_id: &str,
+        from: &str,
+        to: &str,
+        at_ns: u64,
+    ) -> Result<(), String> {
         if self
             .link_heads
             .get(link_id)
@@ -283,14 +334,17 @@ impl BodyHeadLeaseAudit {
         {
             return Err("PAT head lease audit release mismatch".into());
         }
+        self.check_transition(from, to, at_ns, LeaseAuditPhase::Release)?;
         self.owners.remove(from);
         self.owners.remove(to);
         self.link_heads.remove(link_id);
+        self.record_transition(from, to, at_ns, LeaseAuditPhase::Release);
         Ok(())
     }
 
-    /// Check the canonical sample's lease projection. Failed commands do not
-    /// advance head chronology; successful paired commands advance both.
+    /// Check the canonical sample's lease projection and virtual-time order.
+    /// Failed commands advance event chronology, not successful command
+    /// chronology; successful paired commands advance both heads atomically.
     pub fn sample(
         &mut self,
         link_id: &str,
@@ -328,10 +382,12 @@ impl BodyHeadLeaseAudit {
                 return Err("PAT head lease audit sample order mismatch".into());
             }
         }
+        self.check_transition(from, to, at_ns, LeaseAuditPhase::Sample)?;
         if succeeded {
             self.last_success_ns.insert(from.to_owned(), at_ns);
             self.last_success_ns.insert(to.to_owned(), at_ns);
         }
+        self.record_transition(from, to, at_ns, LeaseAuditPhase::Sample);
         Ok(())
     }
 }
@@ -918,20 +974,53 @@ mod tests {
         let mut audit = runtime.lease_audit();
         assert!(audit.contains_head("a"));
         assert!(!audit.contains_head("missing"));
-        audit.reserve("first", "a", "b").unwrap();
-        assert!(audit.reserve("second", "a", "c").is_err());
-        assert!(audit.release("first", "a", "c").is_err());
+        audit.reserve("first", "a", "b", 10).unwrap();
+        assert!(audit.reserve("second", "a", "c", 10).is_err());
+        assert!(audit.release("first", "a", "c", 11).is_err());
         assert!(audit.sample("second", "a", "c", 10, false, true).is_err());
         audit.sample("first", "a", "b", 10, true, true).unwrap();
         assert!(audit.sample("first", "a", "b", 10, true, true).is_err());
-        audit.release("first", "a", "b").unwrap();
-        audit.reserve("second", "a", "c").unwrap();
-        audit.sample("second", "a", "c", 10, true, false).unwrap();
-        assert!(audit.sample("second", "a", "c", 10, true, true).is_err());
+        assert!(audit.release("first", "a", "b", 10).is_err());
+        audit.release("first", "a", "b", 11).unwrap();
+        audit.reserve("second", "a", "c", 11).unwrap();
+        assert!(audit.sample("second", "a", "c", 10, true, false).is_err());
+        audit.sample("second", "a", "c", 11, true, false).unwrap();
         audit.sample("second", "a", "c", 11, true, true).unwrap();
-        audit.release("second", "a", "c").unwrap();
+        assert!(audit.release("second", "a", "c", 11).is_err());
+        audit.release("second", "a", "c", 12).unwrap();
         audit.sample("second", "a", "c", 12, false, true).unwrap();
         assert!(audit.sample("second", "a", "c", 12, false, true).is_err());
+    }
+
+    #[test]
+    fn lease_audit_rejects_retroactive_transitions_without_partial_mutation() {
+        let actuators = ["a", "b", "c"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let mut audit = runtime.lease_audit();
+
+        audit.reserve("first", "a", "b", 20).unwrap();
+        assert_eq!(
+            audit.release("first", "a", "b", 19).unwrap_err(),
+            "PAT head lease audit transition order mismatch"
+        );
+        assert!(audit.sample("first", "a", "b", 19, true, false).is_err());
+        audit.sample("first", "a", "b", 20, true, false).unwrap();
+        assert!(audit.release("first", "a", "b", 20).is_err());
+        audit.release("first", "a", "b", 21).unwrap();
+
+        assert!(audit.reserve("second", "a", "c", 20).is_err());
+        audit.reserve("second", "a", "c", 21).unwrap();
+        audit.sample("second", "a", "c", 21, true, true).unwrap();
+        assert!(audit.reserve("third", "b", "c", 21).is_err());
+        audit.release("second", "a", "c", 22).unwrap();
+        audit.reserve("third", "b", "c", 22).unwrap();
+        audit.sample("third", "b", "c", 22, true, true).unwrap();
     }
 
     #[test]
