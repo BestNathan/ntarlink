@@ -1,6 +1,5 @@
 # Engineering roadmap
 
-
 ## P0 — deterministic packet-transport vertical slice
 
 - [x] Subsystem-oriented workspace layout and English-only engineering documentation.
