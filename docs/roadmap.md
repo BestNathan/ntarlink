@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Route executable SYS-02 PAT Release/Reserve/Command events through a typed actuator runtime transition API, preserving atomic leases and rejected-command provenance in packet/PAT acceptance. Provisional planning and the separate lease audit remain offline. See [status](implementation-status.md).
+
 - [x] Route PAT Release/Reserve/authenticated Sample through one typed SYS-02 lease transition API, keeping direct lease mutations private and testing mixed virtual-time chronology. Offline planning and audit remain separate. See [status](implementation-status.md).
 
 - [x] Make SYS-02 PAT lease sample transitions verify committed boresight, latched target and rejected-attempt provenance before advancing lease ownership chronology. Restrict unchecked sample mutation to SYS-02 and retain packet-runtime tamper regressions. This is still offline planning plus audit, not single-pass fault/actuator arbitration. See [status](implementation-status.md).

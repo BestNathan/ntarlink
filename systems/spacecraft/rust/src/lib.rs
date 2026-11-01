@@ -279,6 +279,46 @@ pub enum BodyHeadPatTransition<'a> {
     Sample(BodyHeadPatSample<'a>),
 }
 
+/// One typed command submitted to the SYS-02 actuator runtime. Commands
+/// retain their observed success/failure outcome for deterministic PAT planning.
+#[derive(Debug)]
+pub struct BodyHeadPatCommand<'a> {
+    pub link_id: &'a str,
+    pub from_head: &'a str,
+    pub to_head: &'a str,
+    pub at_ns: u64,
+    pub leased: bool,
+    pub from_target_body: [f64; 3],
+    pub to_target_body: [f64; 3],
+}
+
+/// The executable counterpart of the offline PAT lease audit timeline.
+/// All actuator lease and sampled-command mutations share this entry point.
+#[derive(Debug)]
+pub enum BodyHeadPatRuntimeTransition<'a> {
+    Release {
+        link_id: &'a str,
+        from_head: &'a str,
+        to_head: &'a str,
+        at_ns: u64,
+    },
+    Reserve {
+        link_id: &'a str,
+        from_head: &'a str,
+        to_head: &'a str,
+        at_ns: u64,
+    },
+    Command(BodyHeadPatCommand<'a>),
+}
+
+/// A lease error rejects the transition; a rejected actuator command remains
+/// an observed result, not a fatal timeline error.
+#[derive(Debug)]
+pub enum BodyHeadPatRuntimeOutcome {
+    Lease,
+    Command(Result<([f64; 3], [f64; 3]), String>),
+}
+
 /// Lease-only PAT command ownership state, initialized from the actual
 /// SYS-02 actuator registry. It audits a canonical virtual-time timeline
 /// without replaying or modifying the provisional follower's motion history.
@@ -591,6 +631,56 @@ impl BodyHeadRuntime {
             release_floor_ns: HashMap::new(),
             failed_pair_attempts: HashMap::new(),
         })
+    }
+
+    /// Execute one canonical PAT lease or command event through the actual
+    /// SYS-02 actuator owner. Lease failures are fatal to the timeline, while
+    /// rejected sampled commands are recorded as ordinary observations.
+    pub fn apply_pat_transition(
+        &mut self,
+        transition: BodyHeadPatRuntimeTransition<'_>,
+    ) -> Result<BodyHeadPatRuntimeOutcome, String> {
+        match transition {
+            BodyHeadPatRuntimeTransition::Release {
+                link_id,
+                from_head,
+                to_head,
+                at_ns,
+            } => {
+                self.release_pair_at(link_id, from_head, to_head, at_ns)?;
+                Ok(BodyHeadPatRuntimeOutcome::Lease)
+            }
+            BodyHeadPatRuntimeTransition::Reserve {
+                link_id,
+                from_head,
+                to_head,
+                at_ns,
+            } => {
+                self.reserve_pair_for_link(link_id, from_head, to_head, at_ns)?;
+                Ok(BodyHeadPatRuntimeOutcome::Lease)
+            }
+            BodyHeadPatRuntimeTransition::Command(command) => {
+                let observed = if command.leased {
+                    self.observe_pair_for_link(
+                        command.link_id,
+                        command.from_head,
+                        command.to_head,
+                        command.at_ns,
+                        command.from_target_body,
+                        command.to_target_body,
+                    )
+                } else {
+                    self.observe_pair(
+                        command.from_head,
+                        command.to_head,
+                        command.at_ns,
+                        command.from_target_body,
+                        command.to_target_body,
+                    )
+                };
+                Ok(BodyHeadPatRuntimeOutcome::Command(observed))
+            }
+        }
     }
 
     fn record_failed_pair_attempt(
@@ -1431,6 +1521,93 @@ mod tests {
                     observed: &Err(failure),
                 },
             )
+            .unwrap();
+    }
+
+    #[test]
+    fn typed_pat_runtime_executes_atomic_leases_and_fault_gap_commands() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .unwrap();
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "competing",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .is_err());
+        let observed = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+                leased: true,
+                from_target_body: target,
+                to_target_body: target,
+            }))
+            .unwrap();
+        assert!(matches!(
+            observed,
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 9,
+            })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 11,
+            })
+            .unwrap();
+
+        let invalid_target = [f64::NAN, 0.0, 0.0];
+        let failed = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 12,
+                leased: false,
+                from_target_body: invalid_target,
+                to_target_body: target,
+            }))
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = failed else {
+            panic!("invalid fault-gap target must be an observed command failure");
+        };
+        runtime
+            .verify_sample_command("a", "b", 12, invalid_target, target, &Err(reason))
+            .unwrap();
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "next",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 13,
+            })
             .unwrap();
     }
 
