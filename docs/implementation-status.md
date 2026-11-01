@@ -1,3 +1,20 @@
+## SYS-02 rejected PAT command provenance
+
+The provisional SYS-02 runtime now records rejected paired command attempts
+with their ordered head IDs, virtual timestamp, exact target bit patterns,
+and original error reason. The lease-only PAT audit verifies each failed
+sample against this ledger before changing lease ownership. This rejects
+invented failures, changed rejected inputs (including nonfinite values), and
+substituted error messages without replaying actuator motion. Successful
+samples continue to be verified against committed boresight and latched
+target history.
+
+**Verification and limits:** Rust regression tests cover genuine failed
+commands, changed inputs, changed error reasons and missing attempts.
+The ledger uses O(F) memory for F rejected attempts, with hash-indexed
+lookups by ordered head pair and timestamp; it is not a continuous
+servo, live shared-head arbiter, or a second motion integration.
+
 ## SYS-02 provisional PAT command target integrity
 
 The lease-only audit now checks each successful command's normalized, newly
