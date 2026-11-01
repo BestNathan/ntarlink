@@ -1958,14 +1958,14 @@ mod tests {
             (120_000_000, 350_000_000),
         ]
         .into_iter()
-            .map(|(start_ns, end_ns)| PatReservation {
-                link_id: pat.link_id.clone(),
-                from_head: pat.from_head.clone(),
-                to_head: pat.to_head.clone(),
-                start_ns,
-                end_ns,
-            })
-            .collect();
+        .map(|(start_ns, end_ns)| PatReservation {
+            link_id: pat.link_id.clone(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns,
+            end_ns,
+        })
+        .collect();
         let (_, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
         assert!(audit_pat_head_leases(&scenario, &reservations, &expected).is_ok());
         assert!(replay_pat_head_leases(&scenario, &reservations, &expected).is_ok());
