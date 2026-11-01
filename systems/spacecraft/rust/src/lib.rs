@@ -260,6 +260,25 @@ pub struct BodyHeadPatSample<'a> {
     pub observed: &'a Result<([f64; 3], [f64; 3]), String>,
 }
 
+/// A canonical SYS-02 lease event. All PAT lease changes cross one typed
+/// transition boundary; only authenticated samples may advance chronology.
+#[derive(Debug)]
+pub enum BodyHeadPatTransition<'a> {
+    Release {
+        link_id: &'a str,
+        from_head: &'a str,
+        to_head: &'a str,
+        at_ns: u64,
+    },
+    Reserve {
+        link_id: &'a str,
+        from_head: &'a str,
+        to_head: &'a str,
+        at_ns: u64,
+    },
+    Sample(BodyHeadPatSample<'a>),
+}
+
 /// Lease-only PAT command ownership state, initialized from the actual
 /// SYS-02 actuator registry. It audits a canonical virtual-time timeline
 /// without replaying or modifying the provisional follower's motion history.
@@ -284,6 +303,31 @@ enum LeaseAuditPhase {
 }
 
 impl BodyHeadLeaseAudit {
+    /// Apply one canonical virtual-time PAT transition. Lease edges and
+    /// authenticated commands share the same state and chronology checks.
+    /// A rejected transition leaves the audit state unchanged.
+    pub fn apply_transition(
+        &mut self,
+        runtime: &BodyHeadRuntime,
+        transition: BodyHeadPatTransition<'_>,
+    ) -> Result<(), String> {
+        match transition {
+            BodyHeadPatTransition::Release {
+                link_id,
+                from_head,
+                to_head,
+                at_ns,
+            } => self.release(link_id, from_head, to_head, at_ns),
+            BodyHeadPatTransition::Reserve {
+                link_id,
+                from_head,
+                to_head,
+                at_ns,
+            } => self.reserve(link_id, from_head, to_head, at_ns),
+            BodyHeadPatTransition::Sample(sample) => self.sample_committed(runtime, sample),
+        }
+    }
+
     pub fn contains_head(&self, head_id: &str) -> bool {
         self.known_heads.contains(head_id)
     }
@@ -312,7 +356,7 @@ impl BodyHeadLeaseAudit {
 
     /// Claim both configured heads atomically at a virtual-time boundary.
     /// A failed claim changes neither ownership nor transition chronology.
-    pub fn reserve(
+    fn reserve(
         &mut self,
         link_id: &str,
         from: &str,
@@ -340,7 +384,7 @@ impl BodyHeadLeaseAudit {
     /// Release exactly the active ordered pair at the supplied boundary.
     /// An invalid identity or retroactive release cannot partially mutate
     /// either head or its virtual-time history.
-    pub fn release(
+    fn release(
         &mut self,
         link_id: &str,
         from: &str,
@@ -416,7 +460,7 @@ impl BodyHeadLeaseAudit {
     /// Verify the committed SYS-02 command before advancing lease chronology.
     /// Failed provenance checks must leave ownership and virtual time unchanged.
     /// The unchecked sample transition stays private to SYS-02.
-    pub fn sample_committed(
+    fn sample_committed(
         &mut self,
         runtime: &BodyHeadRuntime,
         sample: BodyHeadPatSample<'_>,
@@ -1397,6 +1441,101 @@ mod tests {
                     from_target_body: bad_target,
                     to_target_body: target,
                     observed: &Err(failure),
+                },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn typed_pat_transition_boundary_rejects_tampering_without_consuming_time() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let observed = runtime.observe_pair("a", "b", 10, target, target).unwrap();
+        let mut audit = runtime.lease_audit();
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Reserve {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                },
+            )
+            .unwrap();
+        assert!(audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Reserve {
+                    link_id: "competing",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                },
+            )
+            .is_err());
+        assert_eq!(
+            audit
+                .apply_transition(
+                    &runtime,
+                    BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 11,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                        observed: &Ok(observed),
+                    }),
+                )
+                .unwrap_err(),
+            "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &Ok(observed),
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            audit
+                .apply_transition(
+                    &runtime,
+                    BodyHeadPatTransition::Release {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 10,
+                    },
+                )
+                .unwrap_err(),
+            "PAT head lease audit transition order mismatch"
+        );
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Release {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 11,
                 },
             )
             .unwrap();
