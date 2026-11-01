@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Reject duplicate/overlapping selected SYS-01 Doppler windows per directed link before propagation and canonicalize output by virtual sample time; preserve adjacent half-open windows and independent simultaneous links. See [status](implementation-status.md).
+
 - [x] Preflight all selected SYS-01 analytical Doppler contact intervals and geometric link gates before sidecar propagation; cap the optional midpoint observations at 100,000 with a configurable lower limit and regression coverage (not continuous Doppler or PHY recovery). See [status](implementation-status.md).
 
 

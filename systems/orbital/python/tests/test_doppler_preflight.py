@@ -81,6 +81,65 @@ class DopplerPreflightTests(unittest.TestCase):
         self.assertEqual(calls, [4_500_000_000, 5_500_000_000])
         self.assertAlmostEqual(samples[0]["range_rate_mps"], 1000.0, places=4)
 
+    def test_duplicate_and_overlapping_windows_fail_before_propagation(self):
+        overlapping = (
+            self.window,
+            {"link_id": "access", "start_ns": 1_000_000_000,
+             "end_ns": 3_000_000_000},
+            {"link_id": "access", "start_ns": 5_000_000_000,
+             "end_ns": 10_000_000_000},
+        )
+        for invalid in overlapping:
+            with self.subTest(window=invalid), self.assertRaisesRegex(
+                ValueError, "overlapping Doppler contact intervals"
+            ):
+                generate_contact_kinematics(
+                    self.scenario, self.config, self.fail_position,
+                    [self.window, invalid],
+                )
+
+    def test_adjacent_windows_are_accepted_in_canonical_time_order(self):
+        windows = [
+            {"link_id": "access", "start_ns": 0, "end_ns": 5_000_000_000},
+            {"link_id": "access", "start_ns": 5_000_000_000,
+             "end_ns": 10_000_000_000},
+        ]
+        position = lambda _satellite, at_ns: (
+            6_378_137 + 550_000 + at_ns / 1_000_000, 0, 0
+        )
+        ordered = generate_contact_kinematics(
+            self.scenario, self.config, position, windows
+        )
+        reversed_order = generate_contact_kinematics(
+            self.scenario, self.config, position, list(reversed(windows))
+        )
+        self.assertEqual(ordered, reversed_order)
+        self.assertEqual(
+            [sample["sample_ns"] for sample in ordered],
+            [2_500_000_000, 7_500_000_000],
+        )
+        self.assertTrue(all(
+            abs(sample["range_rate_mps"] - 1000.0) < 1e-4
+            for sample in ordered
+        ))
+
+    def test_simultaneous_contacts_on_distinct_links_are_valid(self):
+        self.scenario["links"].append({
+            "id": "access-two", "kind": "user_rf", "from": "ue", "to": "sat"
+        })
+        self.config["doppler_reference_frequencies_hz"]["access-two"] = 12_000_000_000
+        other = {**self.window, "link_id": "access-two"}
+        position = lambda _satellite, at_ns: (
+            6_378_137 + 550_000 + at_ns / 1_000_000, 0, 0
+        )
+        samples = generate_contact_kinematics(
+            self.scenario, self.config, position, [other, self.window]
+        )
+        self.assertEqual(
+            [sample["link_id"] for sample in samples],
+            ["access", "access-two"],
+        )
+
     def test_invalid_budget_is_rejected_without_propagation(self):
         for invalid in (0, -1, True, 1.5, "10", None, 100_001):
             with self.subTest(value=invalid), self.assertRaisesRegex(
