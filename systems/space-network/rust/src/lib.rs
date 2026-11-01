@@ -1059,9 +1059,7 @@ mod tests {
             40_958
         );
         // No valid slot exists when the final booking ends at the deadline.
-        assert!(
-            first_idle_head_slot(8, 40_958, "from", "to", &booked) >= 40_958
-        );
+        assert!(first_idle_head_slot(8, 40_958, "from", "to", &booked) >= 40_958);
     }
 
     #[test]
@@ -1085,14 +1083,12 @@ mod tests {
                         // candidate occupies [slot, end_ns) on both heads.
                         let expected = (start_ns..end_ns).find(|slot| {
                             booked.values().all(|intervals| {
-                                intervals.iter().all(|(start, end)| {
-                                    *end <= *slot || *start >= end_ns
-                                })
+                                intervals
+                                    .iter()
+                                    .all(|(start, end)| *end <= *slot || *start >= end_ns)
                             })
                         });
-                        let actual = first_idle_head_slot(
-                            start_ns, end_ns, "from", "to", &booked,
-                        );
+                        let actual = first_idle_head_slot(start_ns, end_ns, "from", "to", &booked);
                         assert_eq!(
                             (actual < end_ns).then_some(actual),
                             expected,
