@@ -1,3 +1,25 @@
+## Total orbital geometry evaluation budget
+
+SYS-01 contact prediction now enforces an aggregate hard cap on calls to
+`link_geometry_at()` across every geometric link and every stage: coarse
+visibility samples, the final partial-interval probe, optional bisection
+refinement, contact midpoint delay and optional time-resolved delay samples.
+The default cap is 1,000,000 evaluations. Offline orbit configuration may
+lower it using integer `max_geometry_evaluations` within [1, 1,000,000];
+invalid values fail before propagation. When exhausted, the next evaluation
+raises `ValueError` before calling the position provider, and no completed
+contact artifact is returned. The earlier 500,000 coarse link-step preflight
+and 500,000 delay-sample cap remain independent guards.
+
+**Verification and limits:** Synthetic Python regressions cover exact-limit
+acceptance, final partial-interval and midpoint accounting, aggregate use
+across links, refined edges, delay samples and invalid configuration.
+Counter overhead is O(1) per geometry evaluation with O(1) extra memory;
+existing geometry and boundary algorithms are unchanged. This is not a
+wall-clock limit or a bound on the internal SGP4 calls performed by one
+geometry evaluation, and coarse-grid sampling can still miss multiple
+visibility transitions between sample instants.
+
 ## Global orbital contact sampling budget
 
 SYS-01 now limits the total coarse geometric sampling workload across all
