@@ -1330,18 +1330,18 @@ mod tests {
         );
         audit
             .sample_committed(
-                    &runtime,
-                    BodyHeadPatSample {
-                        link_id: "isl",
-                        from_head: "a",
-                        to_head: "b",
-                        at_ns: 10,
-                        leased: true,
-                        from_target_body: target,
-                        to_target_body: target,
-                        observed: &Ok(observed),
-                    },
-                )
+                &runtime,
+                BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &Ok(observed),
+                },
+            )
             .unwrap();
         assert_eq!(
             audit
@@ -1387,18 +1387,18 @@ mod tests {
         );
         audit
             .sample_committed(
-                    &runtime,
-                    BodyHeadPatSample {
-                        link_id: "isl",
-                        from_head: "a",
-                        to_head: "b",
-                        at_ns: 20,
-                        leased: false,
-                        from_target_body: bad_target,
-                        to_target_body: target,
-                        observed: &Err(failure),
-                    },
-                )
+                &runtime,
+                BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: false,
+                    from_target_body: bad_target,
+                    to_target_body: target,
+                    observed: &Err(failure),
+                },
+            )
             .unwrap();
     }
 
