@@ -246,6 +246,20 @@ struct FailedPairAttempt {
     reason: String,
 }
 
+/// One typed, authenticated PAT command submitted to the SYS-02 lease audit.
+/// The observation is the provisional SYS-02 outcome, not a caller assertion.
+#[derive(Debug)]
+pub struct BodyHeadPatSample<'a> {
+    pub link_id: &'a str,
+    pub from_head: &'a str,
+    pub to_head: &'a str,
+    pub at_ns: u64,
+    pub leased: bool,
+    pub from_target_body: [f64; 3],
+    pub to_target_body: [f64; 3],
+    pub observed: &'a Result<([f64; 3], [f64; 3]), String>,
+}
+
 /// Lease-only PAT command ownership state, initialized from the actual
 /// SYS-02 actuator registry. It audits a canonical virtual-time timeline
 /// without replaying or modifying the provisional follower's motion history.
@@ -353,7 +367,7 @@ impl BodyHeadLeaseAudit {
     /// Check the canonical sample's lease projection and virtual-time order.
     /// Failed commands advance event chronology, not successful command
     /// chronology; successful paired commands advance both heads atomically.
-    pub fn sample(
+    fn sample(
         &mut self,
         link_id: &str,
         from: &str,
@@ -397,6 +411,32 @@ impl BodyHeadLeaseAudit {
         }
         self.record_transition(from, to, at_ns, LeaseAuditPhase::Sample);
         Ok(())
+    }
+
+    /// Verify the committed SYS-02 command before advancing lease chronology.
+    /// Failed provenance checks must leave ownership and virtual time unchanged.
+    /// The unchecked sample transition stays private to SYS-02.
+    pub fn sample_committed(
+        &mut self,
+        runtime: &BodyHeadRuntime,
+        sample: BodyHeadPatSample<'_>,
+    ) -> Result<(), String> {
+        runtime.verify_sample_command(
+            sample.from_head,
+            sample.to_head,
+            sample.at_ns,
+            sample.from_target_body,
+            sample.to_target_body,
+            sample.observed,
+        )?;
+        self.sample(
+            sample.link_id,
+            sample.from_head,
+            sample.to_head,
+            sample.at_ns,
+            sample.leased,
+            sample.observed.is_ok(),
+        )
     }
 }
 
@@ -1235,6 +1275,131 @@ mod tests {
         assert!(runtime
             .verify_sample_outcome("a", "b", 30, &Ok(observed))
             .is_err());
+    }
+
+    #[test]
+    fn committed_pat_samples_fail_closed_without_advancing_lease_time() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let observed = runtime.observe_pair("a", "b", 10, target, target).unwrap();
+        let mut audit = runtime.lease_audit();
+        audit.reserve("isl", "a", "b", 10).unwrap();
+
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime,
+                    BodyHeadPatSample {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 20,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                        observed: &Ok(observed),
+                    },
+                )
+                .unwrap_err(),
+            "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime,
+                    BodyHeadPatSample {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 10,
+                        leased: true,
+                        from_target_body: [0.0, 1.0, 0.0],
+                        to_target_body: target,
+                        observed: &Ok(observed),
+                    },
+                )
+                .unwrap_err(),
+            "PAT provisional sample target disagrees with SYS-02 history"
+        );
+        audit
+            .sample_committed(
+                &runtime,
+                BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &Ok(observed),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime,
+                    BodyHeadPatSample {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 10,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                        observed: &Ok(observed),
+                    },
+                )
+                .unwrap_err(),
+            "PAT head lease audit sample order mismatch"
+        );
+        audit.release("isl", "a", "b", 11).unwrap();
+
+        let bad_target = [f64::NAN, 0.0, 0.0];
+        let failure = runtime
+            .observe_pair("a", "b", 20, bad_target, target)
+            .unwrap_err();
+        assert_eq!(
+            audit
+                .sample_committed(
+                    &runtime,
+                    BodyHeadPatSample {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 20,
+                        leased: false,
+                        from_target_body: bad_target,
+                        to_target_body: target,
+                        observed: &Err("forged failure".into()),
+                    },
+                )
+                .unwrap_err(),
+            "PAT provisional failed command disagrees with SYS-02 attempt ledger"
+        );
+        audit
+            .sample_committed(
+                &runtime,
+                BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: false,
+                    from_target_body: bad_target,
+                    to_target_body: target,
+                    observed: &Err(failure),
+                },
+            )
+            .unwrap();
     }
 
     #[test]
