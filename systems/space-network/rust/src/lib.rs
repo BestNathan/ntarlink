@@ -621,13 +621,13 @@ pub fn plan_contacts_with_slew_starts(
         } else {
             candidate.slew_ns
         };
-        let acquiring_ns = available_ns
-            .checked_add(slew_ns)
-            .ok_or("PAT slew timestamp overflow")?;
-        let tracking_ns = acquiring_ns
-            .checked_add(candidate.acquisition_ns)
-            .ok_or("PAT acquisition timestamp overflow")?;
-        if tracking_ns >= candidate.end_ns {
+        // Reject infeasible contacts before timestamp addition. A head may
+        // remain booked until u64::MAX, and an impossible wait or dwell must
+        // reject only this candidate rather than overflow the entire plan.
+        let remaining_ns = candidate.end_ns.saturating_sub(available_ns);
+        if slew_ns >= remaining_ns
+            || candidate.acquisition_ns >= remaining_ns - slew_ns
+        {
             events.push(PatEvent {
                 link_id: candidate.link_id.clone(),
                 at_ns: candidate.start_ns,
@@ -1150,6 +1150,36 @@ mod tests {
                 && event.state == PatState::Rejected
                 && event.reason == Some("contact_expires_before_acquisition")
         }));
+    }
+
+    #[test]
+    fn pat_deadline_rejection_does_not_overflow_virtual_time() {
+        let max = u64::MAX;
+        let candidates = [
+            contact("a-long", "a", "b", 0, max),
+            contact("b-waiting", "a", "c", 10, max),
+            contact("c-too-short", "d", "e", max - 2, max),
+            contact("d-near-limit", "f", "g", max - 20, max),
+        ];
+        let plan = plan_contacts(&candidates).unwrap();
+        let mut reversed = candidates.to_vec();
+        reversed.reverse();
+        assert_eq!(plan, plan_contacts(&reversed).unwrap());
+        assert_eq!(plan.reservations.len(), 2);
+        assert_eq!(
+            plan.windows
+                .iter()
+                .map(|window| (window.link_id.as_str(), window.start_ns))
+                .collect::<Vec<_>>(),
+            vec![("a-long", 5), ("d-near-limit", max - 15)]
+        );
+        for link in ["b-waiting", "c-too-short"] {
+            assert!(plan.events.iter().any(|event| {
+                event.link_id == link
+                    && event.state == PatState::Rejected
+                    && event.reason == Some("contact_expires_before_acquisition")
+            }));
+        }
     }
 
     #[test]
