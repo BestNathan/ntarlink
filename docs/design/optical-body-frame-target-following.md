@@ -24,6 +24,15 @@ servo model is implied.
 
 ## Contract and reference frame
 
+A PAT link ID identifies one ordered optical-head pair for its entire contact
+history. SYS-03 checks this invariant both when scheduling geometric contacts
+and when validating an externally supplied reservation timeline. Even a
+non-overlapping later reservation may not rebind the same link ID to different
+heads. Same-endpoint reacquisition at a half-open boundary remains valid.
+These checks run before the canonical lease replay and do not authorize
+shared-head predicted command streams.
+
+
 `optical_body_following_samples[]` supplies ordered target commands for each
 PAT link, beginning at scenario-relative virtual time zero and covering every
 geometric contact start. Each command has `link_id`, `at_ns`,
