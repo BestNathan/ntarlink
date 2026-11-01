@@ -1,3 +1,22 @@
+## SYS-02 verified PAT lease sample transition
+
+The packet adapter now applies PAT lease samples through
+`BodyHeadLeaseAudit::sample_committed`. SYS-02 authenticates the command
+against the provisional actuator's committed boresight and latched target,
+or its exact rejected-attempt ledger, before advancing lease chronology.
+The unchecked `sample` operation is private to SYS-02. Invalid provenance
+cannot consume a virtual-time slot or mutate lease ownership; the packet
+adapter also retains its all-sample preflight before replaying reservations.
+
+**Verification and limits:** a SYS-02 Rust regression checks forged success
+timestamps, changed latched targets, duplicate success, forged failure
+reasons, and subsequent valid transitions. Existing packet-runtime tests
+exercise successful and tampered PAT lease timelines. Each verified
+successful sample adds two O(log S) historical lookups, while rejected
+samples use the existing hash-indexed O(F) rejection ledger. This remains
+an offline provisional planning and lease-audit pipeline; faults and live
+actuator commands do not yet share one single-pass state owner.
+
 ## SYS-02 rejected PAT command provenance
 
 The provisional SYS-02 runtime now records rejected paired command attempts
