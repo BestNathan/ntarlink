@@ -1,3 +1,10 @@
+# SYS-02 sampled BODY-frame optical-head target follower
+
+This opt-in deterministic approximation predicts optical-head boresight from
+previous actuator state and target commands instead of trusting externally
+supplied boresight. It is a sampled rest-to-rest target follower, not a
+closed-loop servo, calibrated torque model or continuous pointing proof.
+
 ## Lease-only audit without a second follower integration
 
 The packet adapter executes the provisional SYS-02 follower once and retains
@@ -15,13 +22,6 @@ planning-then-audit boundary. The lease audit is not a live shared-head arbiter,
 does not independently verify a tampered provisional error ledger, and does
 not make the PAT planner and SYS-02 actuator a single mutable state owner.
 Cross-subsystem deterministic packet and reacquisition tests remain required.
-
-# SYS-02 sampled BODY-frame optical-head target follower
-
-This opt-in deterministic approximation predicts optical-head boresight from
-previous actuator state and target commands instead of trusting externally
-supplied boresight. It is a sampled rest-to-rest target follower, not a
-closed-loop servo, calibrated torque model or continuous pointing proof.
 
 ## Shared virtual-time command execution
 
