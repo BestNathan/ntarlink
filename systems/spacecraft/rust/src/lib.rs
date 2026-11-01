@@ -356,13 +356,7 @@ impl BodyHeadLeaseAudit {
 
     /// Claim both configured heads atomically at a virtual-time boundary.
     /// A failed claim changes neither ownership nor transition chronology.
-    fn reserve(
-        &mut self,
-        link_id: &str,
-        from: &str,
-        to: &str,
-        at_ns: u64,
-    ) -> Result<(), String> {
+    fn reserve(&mut self, link_id: &str, from: &str, to: &str, at_ns: u64) -> Result<(), String> {
         if link_id.trim().is_empty()
             || from == to
             || self.link_heads.contains_key(link_id)
@@ -384,13 +378,7 @@ impl BodyHeadLeaseAudit {
     /// Release exactly the active ordered pair at the supplied boundary.
     /// An invalid identity or retroactive release cannot partially mutate
     /// either head or its virtual-time history.
-    fn release(
-        &mut self,
-        link_id: &str,
-        from: &str,
-        to: &str,
-        at_ns: u64,
-    ) -> Result<(), String> {
+    fn release(&mut self, link_id: &str, from: &str, to: &str, at_ns: u64) -> Result<(), String> {
         if self
             .link_heads
             .get(link_id)
