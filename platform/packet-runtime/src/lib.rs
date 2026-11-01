@@ -1325,7 +1325,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     if let Some(runtime) = follower_runtime.as_ref() {
         // SYS-02 owns the lease audit state as well as the single provisional
         // actuator history; the audit never re-integrates follower motion.
-        audit_pat_head_leases(scenario, &plan.reservations, &predicted_observations, runtime)?;
+        audit_pat_head_leases(
+            scenario,
+            &plan.reservations,
+            &predicted_observations,
+            runtime,
+        )?;
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
