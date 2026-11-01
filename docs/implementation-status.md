@@ -12,8 +12,9 @@ adapter also retains its all-sample preflight before replaying reservations.
 timestamps, changed latched targets, duplicate success, forged failure
 reasons, and subsequent valid transitions. Existing packet-runtime tests
 exercise successful and tampered PAT lease timelines. Each verified
-successful sample adds two O(log S) historical lookups, while rejected
-samples use the existing hash-indexed O(F) rejection ledger. This remains
+successful sample performs four O(log S) historical lookups (two boresights
+and two latched targets); rejected samples use the existing hash-indexed
+O(F) rejection ledger. This remains
 an offline provisional planning and lease-audit pipeline; faults and live
 actuator commands do not yet share one single-pass state owner.
 
