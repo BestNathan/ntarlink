@@ -1,3 +1,23 @@
+## SYS-02 PAT lease audit virtual-time chronology
+
+The SYS-02 `BodyHeadLeaseAudit` now receives explicit reservation start and
+release end timestamps from the canonical SYS-03 transition stream. Each
+head tracks the latest accepted virtual-time transition, ordered
+Release -> Reserve -> Sample at equal timestamps. A retroactive lease edge,
+a release after a sampled command at the same instant, or a new reservation
+after that command is rejected atomically. Failed sampled commands still
+advance event chronology but never advance successful actuator history, so
+same-timestamp failed-command retries retain the previous success semantics.
+The audit retains the exact head registry supplied by `BodyHeadRuntime`.
+
+**Verification and limits:** SYS-02 regressions cover retroactive release,
+reservation and sampled command rejection, atomic failed transitions,
+same-instant unsampled handoff, failed-command retry and successful command
+chronology. The packet adapter passes actual reservation boundaries into the
+existing deterministic PAT/packet acceptance path. This strengthens offline
+audit invariants; it is not a live single-owner PAT executor, shared-head
+predicted arbitration, continuous servo or optical PHY.
+
 ## SYS-02-owned PAT lease audit state
 
 The lease-only PAT audit now uses a dedicated SYS-02 `BodyHeadLeaseAudit`
