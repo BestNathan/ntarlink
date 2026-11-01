@@ -282,10 +282,8 @@ impl BodyHeadLeaseAudit {
     }
 
     fn record_transition(&mut self, from: &str, to: &str, at_ns: u64, phase: LeaseAuditPhase) {
-        self.last_transition
-            .insert(from.to_owned(), (at_ns, phase));
-        self.last_transition
-            .insert(to.to_owned(), (at_ns, phase));
+        self.last_transition.insert(from.to_owned(), (at_ns, phase));
+        self.last_transition.insert(to.to_owned(), (at_ns, phase));
     }
 
     /// Claim both configured heads atomically at a virtual-time boundary.
