@@ -1,3 +1,22 @@
+## SYS-02 typed PAT actuator execution boundary
+
+The SYS-02 `BodyHeadRuntime` now accepts typed Release, Reserve and Command
+transitions through `apply_pat_transition`. The packet adapter uses this one
+entry point for both provisional commands and leased PAT timeline execution,
+so the executable lease and actuator state changes have a single typed API.
+Lease errors abort the timeline, while rejected sampled commands remain
+observed results and retain their exact-input failure provenance. The separate
+lease-only audit still authenticates provisional results without a second
+follower integration.
+
+**Verification and limits:** a Rust regression covers conflicting atomic
+reservations, a rejected retroactive release, a successful leased command,
+an unleased fault-gap failure and subsequent handoff. Existing packet/PAT
+accounting scenarios remain the cross-subsystem acceptance baseline. The
+planner still computes provisional samples before reservations, and the
+lease audit is still a second offline pass; this is not a single-pass live
+fault/actuator owner, shared-head arbiter or continuous servo.
+
 ## SYS-02 typed PAT lease transition boundary
 
 The offline PAT lease audit now exposes a single typed
