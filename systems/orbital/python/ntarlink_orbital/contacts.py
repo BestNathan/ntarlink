@@ -180,7 +180,9 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
     """
     if scenario.get("schema_version") != 1:
         raise ValueError("scenario schema_version must be 1")
-    duration_ns = int(scenario["duration_ns"])
+    duration_ns = scenario["duration_ns"]
+    if isinstance(duration_ns, bool) or not isinstance(duration_ns, int):
+        raise ValueError("duration_ns must be an integer nanosecond count")
     step_ns = config["step_ns"]
     tolerance_ns = config.get("refine_tolerance_ns", step_ns)
     if any(isinstance(value, bool) or not isinstance(value, int)
@@ -190,8 +192,14 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
         raise ValueError("duration_ns and step_ns must be positive")
     if not 0 < tolerance_ns <= step_ns:
         raise ValueError("refine_tolerance_ns must be within (0, step_ns]")
-    if (duration_ns + step_ns - 1) // step_ns > 500_000:
+    coarse_steps = (duration_ns + step_ns - 1) // step_ns
+    if coarse_steps > 500_000:
         raise ValueError("orbital sampling budget exceeded (500,000 steps)")
+    geometric_link_count = sum(
+        link["kind"] in GEOMETRIC_LINKS for link in scenario["links"]
+    )
+    if coarse_steps * geometric_link_count > 500_000:
+        raise ValueError("orbital geometric sampling budget exceeded (500,000 link-steps)")
     delay_step_ns = config.get("propagation_delay_sample_step_ns")
     if delay_step_ns is not None and (
         isinstance(delay_step_ns, bool) or not isinstance(delay_step_ns, int)

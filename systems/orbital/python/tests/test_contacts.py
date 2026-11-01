@@ -193,6 +193,58 @@ class OrbitalContactTests(unittest.TestCase):
             [(225, 250)],
         )
 
+    def test_sampling_budget_counts_all_geometric_links(self):
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 500,
+            "nodes": [
+                {"id": "ue", "kind": "terminal", "latitude_deg": 0, "longitude_deg": 0},
+                {"id": "sat", "kind": "satellite"},
+            ],
+            "links": [
+                {"id": f"access-{index}", "kind": "user_rf", "from": "ue", "to": "sat"}
+                for index in range(1001)
+            ],
+        }
+        config = {"step_ns": 1, "satellites": [{"id": "sat"}]}
+        def unexpected_position(*_args):
+            self.fail("the global budget must be checked before propagation")
+
+        with self.assertRaisesRegex(ValueError, "500,000 link-steps"):
+            generate_contact_windows(scenario, config, unexpected_position)
+
+        # Non-geometric links do not consume orbital geometry probes.
+        scenario["links"] = [
+            {"id": "access", "kind": "user_rf", "from": "ue", "to": "sat"},
+            {"id": "terrestrial", "kind": "terrestrial", "from": "ue", "to": "ue"},
+        ]
+        windows = generate_contact_windows(
+            scenario, {"step_ns": 500, "satellites": [{"id": "sat"}]},
+            lambda *_args: (7e6, 0, 0),
+        )
+        self.assertEqual(
+            [(window["link_id"], window["start_ns"], window["end_ns"])
+             for window in windows],
+            [("access", 0, 500)],
+        )
+
+    def test_contact_duration_requires_integer_nanoseconds(self):
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 100,
+            "nodes": [],
+            "links": [],
+        }
+        config = {"step_ns": 10, "satellites": []}
+        for invalid in (True, 100.5, "100"):
+            with self.subTest(duration=invalid), self.assertRaisesRegex(
+                ValueError, "duration_ns must be an integer"
+            ):
+                generate_contact_windows(
+                    {**scenario, "duration_ns": invalid},
+                    config, lambda *_args: self.fail("unexpected propagation"),
+                )
+
     def test_refinement_configuration_is_validated(self):
         scenario = {
             "schema_version": 1,
