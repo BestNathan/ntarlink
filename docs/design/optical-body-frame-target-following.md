@@ -32,7 +32,6 @@ heads. Same-endpoint reacquisition at a half-open boundary remains valid.
 These checks run before the canonical lease replay and do not authorize
 shared-head predicted command streams.
 
-
 `optical_body_following_samples[]` supplies ordered target commands for each
 PAT link, beginning at scenario-relative virtual time zero and covering every
 geometric contact start. Each command has `link_id`, `at_ns`,
