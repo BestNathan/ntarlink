@@ -1,3 +1,21 @@
+## SYS-02 provisional PAT command target integrity
+
+The lease-only audit now checks each successful command's normalized, newly
+latched BODY-frame target against SYS-02's committed per-head snapshot in
+addition to the predicted boresight and success/failure outcome. The follower
+integrates the *previous* held target before latching the new one; a changed
+current command can therefore preserve the immediate boresight while changing
+future motion. The audit rejects this divergence before any lease mutation.
+
+**Verification and limits:** SYS-02 Rust tests cover a changed target and
+equivalent positive-magnitude direction vectors. Packet-runtime regression
+changes a successful sampled target after provisional execution and checks
+that the lease audit rejects it. Historical lookups remain O(log S) per head
+and do not perform another motion integration. Failed commands have no
+committed target to compare, so their input and error reason are not
+independently authenticated. This is still offline planning plus audit,
+not live shared-head arbitration or a continuous servo.
+
 ## SYS-02 provisional PAT ledger integrity
 
 The offline PAT lease audit now cross-checks every provisional command result
