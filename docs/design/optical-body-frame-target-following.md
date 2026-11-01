@@ -9,8 +9,11 @@ closed-loop servo, calibrated torque model or continuous pointing proof.
 
 Before lease transitions, SYS-02 now validates the provisional success/error
 ledger against its committed per-head snapshots. A successful paired sample
-must match both stored boresights at its timestamp; a failed sample must have
-no committed head at that instant. This rejects forged results and partial
+must match both stored boresights and both normalized newly latched targets
+at its timestamp; a failed sample must have no committed head at that instant.
+Because boresight at a sample reflects the previous held target, checking
+the newly latched target also prevents a changed command from passing the
+audit while silently altering future motion. This rejects forged results and partial
 commits without another motion integration. Failure reasons themselves are
 not independently recomputed; the design remains offline planning plus audit.
 
