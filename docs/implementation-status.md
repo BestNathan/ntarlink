@@ -1,3 +1,20 @@
+## SYS-01 Doppler contact-window integrity and canonical ordering
+
+The optional analytical Doppler sidecar now rejects duplicate and overlapping
+selected contact windows for the same directed link before any position-provider
+call. Exact half-open end/start adjacency is allowed, as are simultaneous
+contacts on distinct links. Admitted observations are emitted in stable
+(midpoint timestamp, link ID, start timestamp) order even when a caller supplies
+the contact list in reverse order. This prevents duplicate or ambiguous
+per-link Doppler observations from entering reproducible artifacts.
+
+**Verification and limits:** Python regressions cover duplicate, nested and
+partially overlapping windows with a fail-on-call provider, exact adjacency,
+reversed input and independent links. Validation is O(C log C) time and O(C)
+temporary memory for C selected windows (bounded by the existing 100,000
+observation cap). It does not alter the finite-difference Doppler formula,
+propagation model or PHY fidelity.
+
 ## SYS-01 Doppler sidecar preflight and bounded propagation
 
 The optional analytical Doppler sidecar now validates every selected contact

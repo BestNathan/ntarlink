@@ -425,6 +425,16 @@ def generate_contact_kinematics(
             raise ValueError(f"contact too short to estimate Doppler: {link_id}")
         prepared.append((link_id, start_ns, end_ns, midpoint_ns, half_span_ns))
 
+    # One directed link cannot have duplicate or overlapping contact windows.
+    # Validate the complete selected workload before any orbital propagation.
+    by_link = sorted(prepared, key=lambda item: (item[0], item[1], item[2]))
+    for previous, current in zip(by_link, by_link[1:]):
+        if previous[0] == current[0] and current[1] < previous[2]:
+            raise ValueError(f"overlapping Doppler contact intervals for {current[0]}")
+
+    # Emit a canonical virtual-time order even for unsorted caller input.
+    prepared.sort(key=lambda item: (item[3], item[0], item[1]))
+
     samples = []
     for link_id, start_ns, end_ns, midpoint_ns, half_span_ns in prepared:
         link = links[link_id]
