@@ -94,6 +94,7 @@ pub fn reservation_transitions(
         return Err("PAT reservation budget exceeded".into());
     }
     let mut timeline = Vec::with_capacity(reservations.len() * 2);
+    let mut link_heads = HashMap::new();
     for (index, reservation) in reservations.iter().enumerate() {
         if reservation.link_id.trim().is_empty()
             || reservation.from_head.trim().is_empty()
@@ -102,6 +103,12 @@ pub fn reservation_transitions(
             || reservation.start_ns >= reservation.end_ns
         {
             return Err("invalid PAT head reservation interval or identifiers".into());
+        }
+        let endpoints = (reservation.from_head.as_str(), reservation.to_head.as_str());
+        if let Some(previous) = link_heads.insert(reservation.link_id.as_str(), endpoints) {
+            if previous != endpoints {
+                return Err("PAT link reservation changes optical-head endpoints".into());
+            }
         }
         timeline.push(PatLeaseTransition {
             at_ns: reservation.start_ns,
@@ -519,7 +526,7 @@ pub fn plan_contacts_with_slew_starts(
         (a.start_ns, a.link_id.as_str(), a.end_ns).cmp(&(b.start_ns, b.link_id.as_str(), b.end_ns))
     });
 
-    let mut last_link_end: HashMap<&str, u64> = HashMap::new();
+    let mut last_link_end: HashMap<&str, (u64, &str, &str)> = HashMap::new();
     for candidate in &sorted {
         if candidate.link_id.trim().is_empty()
             || candidate.from_head.trim().is_empty()
@@ -538,9 +545,20 @@ pub fn plan_contacts_with_slew_starts(
         {
             return Err("PAT acquisition duration overflow".into());
         }
-        if let Some(previous_end) =
-            last_link_end.insert(candidate.link_id.as_str(), candidate.end_ns)
-        {
+        if let Some((previous_end, previous_from, previous_to)) = last_link_end.insert(
+            candidate.link_id.as_str(),
+            (
+                candidate.end_ns,
+                candidate.from_head.as_str(),
+                candidate.to_head.as_str(),
+            ),
+        ) {
+            if previous_from != candidate.from_head || previous_to != candidate.to_head {
+                return Err(format!(
+                    "PAT link {} changes optical-head endpoints",
+                    candidate.link_id
+                ));
+            }
             if candidate.start_ns < previous_end {
                 return Err(format!(
                     "overlapping geometric contacts for link {}",
@@ -782,6 +800,47 @@ mod tests {
 
         assert_eq!(reservation_transitions(&[]).unwrap(), vec![]);
         assert_eq!(reservation_transitions(&[valid]).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn link_head_identity_is_stable_across_separate_reservations() {
+        let first = PatReservation {
+            link_id: "same".into(),
+            from_head: "a".into(),
+            to_head: "b".into(),
+            start_ns: 0,
+            end_ns: 20,
+        };
+        let mut changed = first.clone();
+        changed.from_head = "c".into();
+        changed.to_head = "d".into();
+        changed.start_ns = 20;
+        changed.end_ns = 40;
+        let expected = "PAT link reservation changes optical-head endpoints";
+        assert_eq!(
+            reservation_transitions(&[first.clone(), changed.clone()]).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            reservation_transitions(&[changed.clone(), first.clone()]).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            pat_runtime_transitions(&[first, changed], &[]).unwrap_err(),
+            expected
+        );
+    }
+
+    #[test]
+    fn planner_rejects_link_endpoint_rebinding_between_contacts() {
+        let first = contact("same", "a", "b", 0, 20);
+        let changed = contact("same", "c", "d", 20, 40);
+        let expected = "PAT link same changes optical-head endpoints";
+        assert_eq!(
+            plan_contacts(&[first.clone(), changed.clone()]).unwrap_err(),
+            expected
+        );
+        assert_eq!(plan_contacts(&[changed, first]).unwrap_err(), expected);
     }
 
     #[test]
