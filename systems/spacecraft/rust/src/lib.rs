@@ -391,6 +391,42 @@ impl BodyHeadLeaseAudit {
 }
 
 impl BodyHeadRuntime {
+    /// Verify that a provisional PAT result matches this runtime's committed
+    /// per-head history. Failed paired commands commit neither head; successful
+    /// commands commit both at the same timestamp. This checks the ledger
+    /// without replaying actuator motion or trusting caller-supplied boresights.
+    pub fn verify_sample_outcome(
+        &self,
+        from_head_id: &str,
+        to_head_id: &str,
+        at_ns: u64,
+        observed: &Result<([f64; 3], [f64; 3]), String>,
+    ) -> Result<(), String> {
+        if from_head_id == to_head_id
+            || !self.heads.contains_key(from_head_id)
+            || !self.heads.contains_key(to_head_id)
+        {
+            return Err("unknown BODY-frame runtime head".into());
+        }
+        let committed = |head_id: &str| {
+            self.history.get(head_id).and_then(|history| {
+                history
+                    .binary_search_by_key(&at_ns, |(sample_ns, _)| *sample_ns)
+                    .ok()
+                    .map(|index| history[index].1.boresight_body)
+            })
+        };
+        let actual = (committed(from_head_id), committed(to_head_id));
+        let matches_history = match observed {
+            Ok((from, to)) => actual == (Some(*from), Some(*to)),
+            Err(_) => actual == (None, None),
+        };
+        if !matches_history {
+            return Err("PAT provisional sample outcome disagrees with SYS-02 history".into());
+        }
+        Ok(())
+    }
+
     /// Build an independent lease-only audit from this runtime's real head
     /// registry; predicted boresight state remains owned by this runtime.
     pub fn lease_audit(&self) -> BodyHeadLeaseAudit {
@@ -957,6 +993,64 @@ mod tests {
             start_ns: start,
             end_ns: end,
         }
+    }
+
+    #[test]
+    fn provisional_pat_ledger_matches_committed_pair_history() {
+        let actuators = [
+            OpticalHeadSlewActuator {
+                head_id: "a".into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            },
+            OpticalHeadSlewActuator {
+                head_id: "b".into(),
+                initial_direction_body: [0.0, 1.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            },
+        ];
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let uncommitted = Ok(([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
+        assert!(runtime.verify_sample_outcome("a", "b", 10, &uncommitted).is_err());
+        assert!(runtime
+            .verify_sample_outcome("a", "b", 10, &Err("failed".into()))
+            .is_ok());
+
+        let observed = runtime
+            .observe_pair("a", "b", 10, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+            .unwrap();
+        assert!(runtime
+            .verify_sample_outcome("a", "b", 10, &Ok(observed))
+            .is_ok());
+        assert_eq!(
+            runtime
+                .verify_sample_outcome("a", "b", 10, &Err("forged failure".into()))
+                .unwrap_err(),
+            "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
+        assert!(runtime
+            .verify_sample_outcome(
+                "a",
+                "b",
+                10,
+                &Ok(([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]))
+            )
+            .is_err());
+
+        assert!(runtime
+            .observe_pair("a", "b", 20, [1.0, 0.0, 0.0], [f64::NAN, 0.0, 0.0])
+            .is_err());
+        assert!(runtime
+            .verify_sample_outcome("a", "b", 20, &Err("invalid target".into()))
+            .is_ok());
+        runtime.observe("a", 30, [1.0, 0.0, 0.0]).unwrap();
+        assert!(runtime
+            .verify_sample_outcome("a", "b", 30, &Ok(observed))
+            .is_err());
     }
 
     #[test]

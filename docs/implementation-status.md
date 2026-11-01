@@ -1,3 +1,21 @@
+## SYS-02 provisional PAT ledger integrity
+
+The offline PAT lease audit now cross-checks every provisional command result
+against the actual SYS-02 committed head history before processing any lease
+transition. A successful pair must have both heads committed at the sample
+timestamp with exactly the reported predicted boresights; a failed pair must
+have neither head committed there. Forged success, forged failure, altered
+boresight and partial pair commits fail closed. The check uses indexed historical
+snapshots without integrating follower motion a second time.
+
+**Verification and limits:** SYS-02 unit tests exercise committed/uncommitted,
+failed and partial pair observations. Packet-runtime regressions tamper with
+the provisional success/error ledger and boresight output while retaining the
+existing deterministic lease and packet acceptance. The check is O(S log S)
+in the worst case for S samples per head, without extra motion integration.
+It does not independently reproduce error messages, implement shared-head
+predicted streams or replace offline planning plus audit with a live arbiter.
+
 ## SYS-02 PAT lease audit virtual-time chronology
 
 The SYS-02 `BodyHeadLeaseAudit` now receives explicit reservation start and

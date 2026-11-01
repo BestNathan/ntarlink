@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Cross-check every provisional SYS-02 PAT success/failure and boresight against actual committed per-head sample history before the lease-only audit; reject forged or partial results without a second follower integration (offline, not live arbitration). See [status](implementation-status.md).
+
 - [x] Enforce per-head virtual-time Release/Reserve/Sample ordering in the SYS-02 PAT lease audit using explicit reservation boundaries, atomic retroactive-transition rejection and failed-command chronology; preserve deterministic packet/PAT regressions. This remains an offline audit, not live arbitration. See [status](implementation-status.md).
 
 - [x] Move the lease-only PAT ownership audit into a SYS-02 state type built from the provisional actuator registry, with atomic head-pair transitions, success-only chronology and Rust/packet regression coverage. Still offline planning plus audit, not live single-owner arbitration. See [status](implementation-status.md).
