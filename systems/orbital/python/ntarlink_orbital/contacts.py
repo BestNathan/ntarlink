@@ -396,18 +396,37 @@ def generate_contact_kinematics(
             or requested_span_ns <= 0):
         raise ValueError("doppler_half_span_ns must be positive integer nanoseconds")
 
-    samples = []
+    # Validate the complete selected sidecar workload before propagating any
+    # position. Every Doppler observation requires two range evaluations.
+    max_samples = config.get("max_doppler_samples", 100_000)
+    if type(max_samples) is not int or not 1 <= max_samples <= 100_000:
+        raise ValueError("max_doppler_samples must be an integer within [1, 100,000]")
+    duration_ns = scenario.get("duration_ns")
+    prepared = []
     for window in contacts:
         link_id = window["link_id"]
         if link_id not in frequencies:
             continue
+        if len(prepared) >= max_samples:
+            raise ValueError(f"Doppler sample budget exceeded ({max_samples} samples)")
         start_ns, end_ns = window["start_ns"], window["end_ns"]
+        if (type(start_ns) is not int or type(end_ns) is not int
+                or start_ns < 0 or end_ns <= start_ns
+                or (duration_ns is not None and end_ns > duration_ns)):
+            raise ValueError(f"invalid Doppler contact interval for {link_id}")
+        link = links[link_id]
+        _validate_geometric_link_gates(link, config)
+        _validate_geometric_link_endpoints(link, nodes)
         midpoint_ns = start_ns + (end_ns - start_ns) // 2
         half_span_ns = min(
             requested_span_ns, midpoint_ns - start_ns, end_ns - 1 - midpoint_ns
         )
         if half_span_ns <= 0:
             raise ValueError(f"contact too short to estimate Doppler: {link_id}")
+        prepared.append((link_id, start_ns, end_ns, midpoint_ns, half_span_ns))
+
+    samples = []
+    for link_id, start_ns, end_ns, midpoint_ns, half_span_ns in prepared:
         link = links[link_id]
 
         def range_at(time_ns):
