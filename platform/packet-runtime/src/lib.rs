@@ -13,7 +13,7 @@ use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
-    pointing_allowed, BodyHeadRuntime, HeadAvailability,
+    pointing_allowed, BodyHeadPatSample, BodyHeadRuntime, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -895,14 +895,16 @@ fn audit_pat_head_leases(
                 // the packet-runtime boundary.
                 leases.sample_committed(
                     runtime,
-                    &sample.link_id,
-                    &pat.from_head,
-                    &pat.to_head,
-                    sample.at_ns,
-                    reservation_index.is_some(),
-                    sample.from_target_body,
-                    sample.to_target_body,
-                    result,
+                    BodyHeadPatSample {
+                        link_id: &sample.link_id,
+                        from_head: &pat.from_head,
+                        to_head: &pat.to_head,
+                        at_ns: sample.at_ns,
+                        leased: reservation_index.is_some(),
+                        from_target_body: sample.from_target_body,
+                        to_target_body: sample.to_target_body,
+                        observed: result,
+                    },
                 )?;
             }
         }
