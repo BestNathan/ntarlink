@@ -1576,8 +1576,9 @@ mod tests {
             })
         }
 
-        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) =
-            runtime.apply_pat_transition(command("isl", 10, target)).unwrap()
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = runtime
+            .apply_pat_transition(command("isl", 10, target))
+            .unwrap()
         else {
             panic!("unreserved PAT command must fail");
         };
@@ -1600,8 +1601,9 @@ mod tests {
                 at_ns: 10,
             })
             .unwrap();
-        let BodyHeadPatRuntimeOutcome::Command(Err(wrong_link)) =
-            runtime.apply_pat_transition(command("other", 10, target)).unwrap()
+        let BodyHeadPatRuntimeOutcome::Command(Err(wrong_link)) = runtime
+            .apply_pat_transition(command("other", 10, target))
+            .unwrap()
         else {
             panic!("wrong-link PAT command must fail");
         };
@@ -1612,7 +1614,9 @@ mod tests {
         assert_eq!(runtime.owners.get("a").map(String::as_str), Some("isl"));
 
         assert!(matches!(
-            runtime.apply_pat_transition(command("isl", 10, target)).unwrap(),
+            runtime
+                .apply_pat_transition(command("isl", 10, target))
+                .unwrap(),
             BodyHeadPatRuntimeOutcome::Command(Ok(_))
         ));
         runtime
@@ -1623,8 +1627,9 @@ mod tests {
                 at_ns: 11,
             })
             .unwrap();
-        let BodyHeadPatRuntimeOutcome::Command(Err(after_release)) =
-            runtime.apply_pat_transition(command("isl", 12, target)).unwrap()
+        let BodyHeadPatRuntimeOutcome::Command(Err(after_release)) = runtime
+            .apply_pat_transition(command("isl", 12, target))
+            .unwrap()
         else {
             panic!("released PAT command must fail");
         };
