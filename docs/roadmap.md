@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Enforce per-head virtual-time Release/Reserve/Sample ordering in the SYS-02 PAT lease audit using explicit reservation boundaries, atomic retroactive-transition rejection and failed-command chronology; preserve deterministic packet/PAT regressions. This remains an offline audit, not live arbitration. See [status](implementation-status.md).
+
 - [x] Move the lease-only PAT ownership audit into a SYS-02 state type built from the provisional actuator registry, with atomic head-pair transitions, success-only chronology and Rust/packet regression coverage. Still offline planning plus audit, not live single-owner arbitration. See [status](implementation-status.md).
 
 - [x] Replace the packet adapter's second predicted BODY-frame follower integration with a canonical lease-only PAT timeline audit; retain deterministic fault-gap, handoff and packet-accounting acceptance. This is still offline two-phase planning, not a single live actuator/lease state owner. See [design](design/optical-body-frame-target-following.md).

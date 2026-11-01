@@ -848,6 +848,7 @@ fn audit_pat_head_leases(
                     &reservation.link_id,
                     &reservation.from_head,
                     &reservation.to_head,
+                    reservation.start_ns,
                 )?;
             }
             PatRuntimeTransitionKind::Release(index) => {
@@ -856,6 +857,7 @@ fn audit_pat_head_leases(
                     &reservation.link_id,
                     &reservation.from_head,
                     &reservation.to_head,
+                    reservation.end_ns,
                 )?;
             }
             PatRuntimeTransitionKind::Sample {
