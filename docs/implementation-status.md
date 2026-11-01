@@ -1,3 +1,18 @@
+## Cross-link ITRS LOS rate comparison guard
+
+The SYS-02 sampled ITRS LOS angular-rate predicate now rejects consecutive
+observations with different directed PAT link IDs. Previously the standalone
+predicate checked timestamps, frame and geometry but could report a feasible
+rate for unrelated links with coincident vectors. The scenario adapter already
+indexes observations by link; this guard also protects direct library callers
+and future subsystem integrations. Unit regressions cover both cross-link
+directions and a same-link stationary control.
+
+**Fidelity and cost:** constant-time link-ID comparison before existing
+O(1) vector arithmetic; no new allocations, schema fields or packet-runtime
+behavior for valid inputs. This is an identity safety check, not continuous
+tracking, a servo, or single-pass PAT/actuator arbitration.
+
 ## Stable PAT link optical-head identity across contacts
 
 SYS-03 now rejects a logical PAT link that changes its ordered from/to
