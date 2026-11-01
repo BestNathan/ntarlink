@@ -1599,14 +1599,7 @@ mod tests {
             panic!("invalid fault-gap target must be an observed command failure");
         };
         runtime
-            .verify_sample_command(
-                "a",
-                "b",
-                12,
-                invalid_target,
-                target,
-                &Err(reason),
-            )
+            .verify_sample_command("a", "b", 12, invalid_target, target, &Err(reason))
             .unwrap();
         runtime
             .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
