@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Reject PAT link optical-head endpoint rebinding across non-overlapping contacts and reservations before scheduling or lease replay, with deterministic reverse-input regressions (not live shared-head arbitration). See [status](implementation-status.md).
+
 - [x] Admit fixed-dwell PAT candidates into idle head gaps before earlier candidates' future reservations, with deterministic non-overlap, three-link packet acceptance and explicit gimbal-mode exclusion. See [status](implementation-status.md).
 
 - [x] Consolidate provisional and leased SYS-02 head-command application into one canonical SYS-03 event executor with fail-closed endpoint preflight and result parity regression; still two offline executions, not single-pass arbitration. See [status](implementation-status.md).
