@@ -1952,8 +1952,12 @@ mod tests {
         ))
         .unwrap();
         let pat = &scenario.optical_pat[0];
-        let reservations: Vec<_> = [(0, 30_000_000), (90_000_000, 120_000_000), (120_000_000, 350_000_000)]
-            .into_iter()
+        let reservations: Vec<_> = [
+            (0, 30_000_000),
+            (90_000_000, 120_000_000),
+            (120_000_000, 350_000_000),
+        ]
+        .into_iter()
             .map(|(start_ns, end_ns)| PatReservation {
                 link_id: pat.link_id.clone(),
                 from_head: pat.from_head.clone(),
@@ -1976,7 +1980,7 @@ mod tests {
         // A different link cannot issue an unleased command on a reserved
         // head, even when the provisional observation itself was successful.
         let mut shared = scenario.clone();
-        let mut other = pat.clone();
+        let mut other = (*pat).clone();
         other.link_id = "other-isl".into();
         shared.optical_pat.push(other);
         let conflicting = [PatReservation {
