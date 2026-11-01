@@ -636,6 +636,9 @@ pub fn plan_contacts_with_slew_starts(
             });
             continue;
         }
+        // The strict remaining-time guard makes both additions safe.
+        let acquiring_ns = available_ns + slew_ns;
+        let tracking_ns = acquiring_ns + candidate.acquisition_ns;
         if slew_ns > 0 {
             events.push(PatEvent {
                 link_id: candidate.link_id.clone(),
