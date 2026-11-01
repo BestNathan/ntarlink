@@ -33,6 +33,45 @@ class OrbitalContactTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             geometric_delay_ns(0)
 
+    def test_optical_occlusion_rejects_nonfinite_geometry_and_clearance(self):
+        a, b = (7e6, 0, 0), (-7e6, 0, 0)
+        self.assertTrue(earth_occludes_segment(a, b, 0.0))
+        for invalid in (float("nan"), float("inf"), -1.0):
+            with self.subTest(clearance=invalid), self.assertRaisesRegex(
+                ValueError, "clearance_m"
+            ):
+                earth_occludes_segment(a, b, invalid)
+        for invalid in (float("nan"), float("inf")):
+            with self.subTest(coordinate=invalid), self.assertRaisesRegex(
+                ValueError, "finite ECEF coordinates"
+            ):
+                earth_occludes_segment((invalid, 0, 0), b)
+
+        nodes = {
+            "a": {"id": "a", "kind": "satellite"},
+            "b": {"id": "b", "kind": "satellite"},
+        }
+        link = {
+            "id": "isl",
+            "kind": "optical_isl",
+            "from": "a",
+            "to": "b",
+            "max_range_m": 1.0,
+        }
+        position = lambda satellite, _time: a if satellite == "a" else b
+        for invalid in (float("nan"), float("inf"), -1.0):
+            with self.subTest(config_clearance=invalid), self.assertRaisesRegex(
+                ValueError, "isl_clearance_m"
+            ):
+                link_geometry_at(
+                    link, nodes, 0, position, {"isl_clearance_m": invalid}
+                )
+        # Valid configuration still uses the ordinary geometric range gate.
+        self.assertEqual(
+            link_geometry_at(link, nodes, 0, position, {"isl_clearance_m": 0.0}),
+            (False, None),
+        )
+
     def test_sampled_window_from_synthetic_earth_fixed_orbit(self):
         scenario = {
             "schema_version": 1,

@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Fail closed on nonfinite or negative optical ISL clearance and nonfinite WGS84 segment endpoints before geometric contact admission; preserve valid range-gate behavior (not a continuous optical PHY). See [status](implementation-status.md).
+
 - [x] Reject retroactive SYS-02 PAT pair reservations at a head's already-committed sample timestamp; preserve atomic failure, later admission and exact-time unsampled handoff (not single-pass arbitration). See [status](implementation-status.md).
 
 - [x] Reject cross-link sampled ITRS LOS angular-rate comparisons at the SYS-02 predicate boundary, including direct API regressions and unchanged same-link behavior (not continuous tracking). See [status](implementation-status.md).

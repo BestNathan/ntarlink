@@ -1,3 +1,19 @@
+## Optical ISL occlusion input safety
+
+SYS-01 now rejects nonfinite or negative optical ISL clearance before
+evaluating contact range, and the WGS84 segment-occlusion helper rejects
+nonfinite clearance or ECEF endpoints. Previously a NaN clearance could
+propagate through the ellipsoid intersection comparison and report no Earth
+occlusion, falsely admitting a blocked optical link. A clearance error is
+reported even when a separate range gate would reject the link. Python
+regressions cover NaN, infinity, negative clearance, nonfinite endpoints,
+and the unchanged valid range gate.
+
+**Fidelity and cost:** O(1) checks for the two 3D endpoints and the
+clearance scalar; no new scenario fields or dependencies. This is geometric
+input validation, not atmospheric attenuation, a continuous optical PHY,
+or single-pass PAT/actuator arbitration.
+
 ## PAT reservation admission after same-time samples
 
 SYS-02 now rejects a new optical-head pair reservation if either head has

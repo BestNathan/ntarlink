@@ -108,6 +108,11 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
     """Return (visible, propagation_delay_ns) for a geometric link."""
     if link["kind"] not in GEOMETRIC_LINKS:
         raise ValueError(f"unsupported geometry link: {link['kind']}")
+    clearance = None
+    if link["kind"] == "optical_isl":
+        clearance = float(config.get("isl_clearance_m", 0.0))
+        if not math.isfinite(clearance) or clearance < 0.0:
+            raise ValueError("isl_clearance_m must be finite and nonnegative")
     a, b = nodes[link["from"]], nodes[link["to"]]
     xyz_a = _geo_endpoint(a, time_ns, position)
     xyz_b = _geo_endpoint(b, time_ns, position)
@@ -119,7 +124,6 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
     if link["kind"] == "optical_isl":
         if a["kind"] != "satellite" or b["kind"] != "satellite":
             raise ValueError("optical ISL must join two satellites")
-        clearance = float(config.get("isl_clearance_m", 0.0))
         visible = not earth_occludes_segment(xyz_a, xyz_b, clearance)
     else:
         satellite, ground = (a, b) if a["kind"] == "satellite" else (b, a)
