@@ -1,5 +1,3 @@
-## SYS-02 typed PAT actuator execution boundary
-
 ## SYS-02 leased PAT commands require explicit reservation
 
 The typed SYS-02 actuator transition boundary now rejects a leased PAT Command
@@ -17,6 +15,7 @@ constant-time map lookups and no new schema fields or dependencies. The
 offline provisional planning and lease audit remain separate; this is not
 single-pass shared-head arbitration or a continuous servo.
 
+## SYS-02 typed PAT actuator execution boundary
 
 The SYS-02 `BodyHeadRuntime` now accepts typed Release, Reserve and Command
 transitions through `apply_pat_transition`. The packet adapter uses this one
