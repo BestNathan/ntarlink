@@ -1974,7 +1974,8 @@ mod tests {
         assert!(audit_pat_head_leases(&scenario, &reversed, &expected).is_ok());
 
         let mut swapped = reservations.clone();
-        std::mem::swap(&mut swapped[0].from_head, &mut swapped[0].to_head);
+        let first = &mut swapped[0];
+        std::mem::swap(&mut first.from_head, &mut first.to_head);
         assert!(audit_pat_head_leases(&scenario, &swapped, &expected).is_err());
 
         // A different link cannot issue an unleased command on a reserved
