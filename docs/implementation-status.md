@@ -1,3 +1,23 @@
+## SYS-01 Doppler sidecar preflight and bounded propagation
+
+The optional analytical Doppler sidecar now validates every selected contact
+interval, referenced geometric link topology, ground coordinates and numeric
+visibility gates before requesting any satellite positions. A malformed later
+window or link cannot trigger partial propagation of earlier Doppler samples.
+Selected contact windows must have integer, nonnegative half-open boundaries
+within the scenario duration when supplied, and must support an interior
+central-difference span. An optional integer `max_doppler_samples` in the
+orbit configuration caps observations at 100,000 (default 100,000), rejecting
+excess work before any position-provider call.
+
+**Verification and limits:** Synthetic Python regressions cover malformed
+later windows, invalid later-link gates, exact-budget acceptance, budget
+exhaustion, invalid budget settings and nonfinite range propagation. Preflight
+cost is O(C) time and O(S) temporary memory for C contacts and S selected
+observations. Each admitted sample performs two range evaluations, not a
+continuous Doppler trace or carrier synchronization; this limit is not a
+wall-clock or SGP4-operation SLA.
+
 ## SYS-01 geometric input preflight and finite ITRS safety
 
 The offline contact compiler now validates every geometric link's range,
