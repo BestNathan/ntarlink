@@ -128,6 +128,17 @@ separate geometric contact reservations. The offline replay aligns lease acquisi
 fault/contact boundaries; shared-head predicted scenarios remain forbidden. This step adds constant
 expected-time ownership checks per pair and O(H) owner storage.
 
+## Same-timestamp reservation causality
+
+A SYS-02 pair reservation may not be acquired at or before either head's
+last committed sample timestamp. The canonical SYS-03 order is Release,
+Reserve, then Sample, so accepting a reservation after a sample at the same
+instant would retroactively change command ownership. Admission checks both
+heads before mutation and leaves leases and history unchanged on failure.
+A release and new reservation at one timestamp remain legal when no command
+was previously committed at that timestamp. This guards the standalone
+runtime API and does not replace offline two-pass PAT planning.
+
 ## Acceptance and fidelity
 
 `scenarios/optical-body-frame-target-following.json` commands a 90-degree
