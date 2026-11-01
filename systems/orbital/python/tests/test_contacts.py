@@ -159,6 +159,114 @@ class OrbitalContactTests(unittest.TestCase):
             nodes, 0, lambda *_args: (7e6, 0, 0), {},
         )[0])
 
+    def test_ground_coordinates_are_validated_before_satellite_propagation(self):
+        base_nodes = {
+            "ue": {"id": "ue", "kind": "terminal", "latitude_deg": 0,
+                   "longitude_deg": 0},
+            "sat": {"id": "sat", "kind": "satellite"},
+        }
+        link = {"id": "rf", "kind": "user_rf", "from": "sat", "to": "ue"}
+        invalid_sites = (
+            {"latitude_deg": float("nan")},
+            {"latitude_deg": 91},
+            {"longitude_deg": -181},
+            {"longitude_deg": float("inf")},
+            {"height_m": float("nan")},
+            {"height_m": float("inf")},
+            {"latitude_deg": None},
+        )
+        for bad_site in invalid_sites:
+            with self.subTest(site=bad_site), self.assertRaisesRegex(
+                ValueError, "invalid WGS84 ground coordinates"
+            ):
+                link_geometry_at(
+                    {**link, "max_range_m": 1.0},
+                    {**base_nodes, "ue": {**base_nodes["ue"], **bad_site}},
+                    0,
+                    lambda *_: self.fail("invalid site reached satellite provider"),
+                    {},
+                )
+
+        # A malformed later link must fail before the earlier link propagates.
+        scenario = {
+            "schema_version": 1,
+            "duration_ns": 10,
+            "nodes": [
+                *base_nodes.values(),
+                {"id": "bad-site", "kind": "ground_station",
+                 "latitude_deg": 0, "longitude_deg": float("nan")},
+            ],
+            "links": [
+                link,
+                {"id": "bad", "kind": "feeder", "from": "sat", "to": "bad-site"},
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "invalid WGS84 ground coordinates"):
+            generate_contact_windows(
+                scenario, {"step_ns": 5, "satellites": [{"id": "sat"}]},
+                lambda *_: self.fail("scenario preflight reached satellite provider"),
+            )
+
+        # WGS84 domain boundaries remain valid.
+        valid_site = {**base_nodes["ue"], "latitude_deg": 0, "longitude_deg": 180}
+        self.assertTrue(link_geometry_at(
+            link, {**base_nodes, "ue": valid_site}, 0,
+            lambda *_: (-7_000_000, 0, 0), {},
+        )[0])
+
+    def test_later_geometric_gate_failure_precedes_all_propagation(self):
+        nodes = [
+            {"id": "ue", "kind": "terminal", "latitude_deg": 0,
+             "longitude_deg": 0},
+            {"id": "sat", "kind": "satellite"},
+            {"id": "sat-b", "kind": "satellite"},
+        ]
+        good = {"id": "good", "kind": "user_rf", "from": "ue", "to": "sat"}
+        invalid_cases = (
+            ({"id": "bad-range", "kind": "feeder", "from": "sat", "to": "ue",
+              "max_range_m": float("nan")}, {}, "max_range_m"),
+            ({"id": "bad-elevation", "kind": "feeder", "from": "sat", "to": "ue",
+              "min_elevation_deg": float("inf")}, {}, "min_elevation_deg"),
+            ({"id": "bad-clearance", "kind": "optical_isl",
+              "from": "sat", "to": "sat-b"},
+             {"isl_clearance_m": float("nan")}, "isl_clearance_m"),
+        )
+        for bad_link, extra_config, error in invalid_cases:
+            with self.subTest(link=bad_link["id"]), self.assertRaisesRegex(
+                ValueError, error
+            ):
+                generate_contact_windows(
+                    {"schema_version": 1, "duration_ns": 10,
+                     "nodes": nodes, "links": [good, bad_link]},
+                    {"step_ns": 5, "satellites": [{"id": "sat"}, {"id": "sat-b"}],
+                     **extra_config},
+                    lambda *_: self.fail("later invalid gate reached position provider"),
+                )
+
+    def test_nonfinite_itrs_provider_output_is_not_silent_invisibility(self):
+        nodes = {
+            "ue": {"id": "ue", "kind": "terminal",
+                   "latitude_deg": 0, "longitude_deg": 0},
+            "sat": {"id": "sat", "kind": "satellite"},
+            "sat-b": {"id": "sat-b", "kind": "satellite"},
+        }
+        links = (
+            {"id": "rf", "kind": "user_rf", "from": "ue", "to": "sat"},
+            {"id": "isl", "kind": "optical_isl", "from": "sat", "to": "sat-b"},
+        )
+        for invalid in (float("nan"), float("inf")):
+            for link in links:
+                with self.subTest(link=link["id"], coordinate=invalid):
+                    with self.assertRaisesRegex(
+                        ValueError, "geometric ITRS positions must be finite"
+                    ):
+                        link_geometry_at(
+                            {**link, "max_range_m": 1.0}, nodes, 0,
+                            lambda sat, _: (invalid, 0, 0) if sat == "sat"
+                            else (7_000_000, 0, 0),
+                            {},
+                        )
+
     def test_sampled_window_from_synthetic_earth_fixed_orbit(self):
         scenario = {
             "schema_version": 1,
