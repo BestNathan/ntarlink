@@ -15,6 +15,9 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Authenticate failed provisional SYS-02 PAT commands against an exact-input and error-reason rejection ledger before the lease-only audit; preserve successful-command history checks without replaying motion (offline, not live arbitration). See [status](implementation-status.md).
+
+
 - [x] Validate the normalized latched target of every successful provisional SYS-02 PAT command against committed head history, preventing boresight-preserving command tampering before the offline lease audit. Failed-command inputs remain unauthenticated. See [status](implementation-status.md).
 
 - [x] Cross-check every provisional SYS-02 PAT success/failure and boresight against actual committed per-head sample history before the lease-only audit; reject forged or partial results without a second follower integration (offline, not live arbitration). See [status](implementation-status.md).
