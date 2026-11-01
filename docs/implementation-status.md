@@ -1,3 +1,20 @@
+## SYS-01 geometric input preflight and finite ITRS safety
+
+The offline contact compiler now validates every geometric link's range,
+elevation and optical clearance gates, as well as referenced WGS84 ground
+coordinates, before invoking any satellite position provider. A malformed
+later link therefore cannot trigger partial propagation of earlier links.
+Standalone geometry calls also reject invalid ground latitude/longitude,
+nonfinite geodetic height, nonfinite ITRS provider coordinates and nonfinite
+computed ranges instead of treating them as ordinary invisibility.
+
+**Verification and limits:** Python regressions cover range-masked invalid
+ground sites, malformed later-link gates, invalid external ITRS provider
+outputs, and a valid antimeridian ground site. Validation uses O(L) preflight
+work for L geometric links plus constant-time coordinate checks per geometry
+evaluation. No schema fields, dependencies, orbit models or PHY behavior
+change; the existing sampled-contact and evaluation-budget limitations remain.
+
 ## Geometric link topology preflight
 
 SYS-01 now validates every geometric link's endpoint kinds and node references

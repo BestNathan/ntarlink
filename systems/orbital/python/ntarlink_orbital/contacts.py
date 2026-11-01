@@ -104,6 +104,22 @@ def _geo_endpoint(node: dict, time_ns: int, position):
     raise ValueError(f"unsupported orbital endpoint kind: {kind}")
 
 
+def _validate_ground_geodetic(node: dict):
+    """Reject malformed WGS84 sites before requesting any satellite position."""
+    try:
+        latitude = float(node["latitude_deg"])
+        longitude = float(node["longitude_deg"])
+        height = float(node.get("height_m", 0.0))
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"invalid WGS84 ground coordinates for {node['id']}") from exc
+    if (
+        not all(math.isfinite(value) for value in (latitude, longitude, height))
+        or not -90.0 <= latitude <= 90.0
+        or not -180.0 <= longitude <= 180.0
+    ):
+        raise ValueError(f"invalid WGS84 ground coordinates for {node['id']}")
+
+
 def _validate_geometric_link_endpoints(link: dict, nodes: dict):
     """Validate link topology before any orbital position-provider call."""
     try:
@@ -118,13 +134,14 @@ def _validate_geometric_link_endpoints(link: dict, nodes: dict):
         or (b["kind"] == "satellite" and a["kind"] in GROUND_KINDS)
     ):
         raise ValueError("user/feeder RF link requires satellite and ground endpoint")
+    for node in (a, b):
+        if node["kind"] in GROUND_KINDS:
+            _validate_ground_geodetic(node)
     return a, b
 
 
-def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: dict):
-    """Return (visible, propagation_delay_ns) for a geometric link."""
-    if link["kind"] not in GEOMETRIC_LINKS:
-        raise ValueError(f"unsupported geometry link: {link['kind']}")
+def _validate_geometric_link_gates(link: dict, config: dict):
+    """Validate numeric visibility gates independently of orbital propagation."""
     clearance = None
     if link["kind"] == "optical_isl":
         clearance = float(config.get("isl_clearance_m", 0.0))
@@ -142,11 +159,23 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
         )
         if not math.isfinite(min_elevation) or not -90.0 <= min_elevation <= 90.0:
             raise ValueError("min_elevation_deg must be finite and within [-90, 90]")
+    return clearance, max_range_m, min_elevation
+
+
+def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: dict):
+    """Return (visible, propagation_delay_ns) for a geometric link."""
+    if link["kind"] not in GEOMETRIC_LINKS:
+        raise ValueError(f"unsupported geometry link: {link['kind']}")
+    clearance, max_range_m, min_elevation = _validate_geometric_link_gates(link, config)
     a, b = _validate_geometric_link_endpoints(link, nodes)
     xyz_a = _geo_endpoint(a, time_ns, position)
     xyz_b = _geo_endpoint(b, time_ns, position)
+    if any(not math.isfinite(float(value)) for point in (xyz_a, xyz_b) for value in point):
+        raise ValueError("geometric ITRS positions must be finite")
     length = distance_m(xyz_a, xyz_b)
-    if not math.isfinite(length) or length <= 1.0:
+    if not math.isfinite(length):
+        raise ValueError("geometric range must be finite")
+    if length <= 1.0:
         return False, None
     if max_range_m is not None and length > max_range_m:
         return False, None
@@ -234,6 +263,7 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
     for link in scenario["links"]:
         if link["kind"] not in GEOMETRIC_LINKS:
             continue
+        _validate_geometric_link_gates(link, config)
         a, b = _validate_geometric_link_endpoints(link, nodes)
         for node in (a, b):
             if node["kind"] == "satellite" and node["id"] not in orbital_ids:
