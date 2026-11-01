@@ -411,6 +411,9 @@ impl BodyHeadRuntime {
         {
             return Err("invalid or already active BODY-frame pair reservation".into());
         }
+        // A reservation at the same instant as an already committed
+        // sample would retroactively claim that head. The canonical
+        // PAT order is Release -> Reserve -> Sample.
         for head_id in [from_head_id, to_head_id] {
             if !self.heads.contains_key(head_id)
                 || self.owners.contains_key(head_id)
@@ -422,7 +425,7 @@ impl BodyHeadRuntime {
                     .history
                     .get(head_id)
                     .and_then(|samples| samples.last())
-                    .is_some_and(|(sample_ns, _)| at_ns < *sample_ns)
+                    .is_some_and(|(sample_ns, _)| at_ns <= *sample_ns)
             {
                 return Err(
                     "BODY-frame pair reservation conflicts with head history or owner".into(),
@@ -1135,6 +1138,45 @@ mod tests {
         runtime.release_pair_at("second", "a", "c", 40).unwrap();
         assert!(runtime.observe("a", 39, [1.0, 0.0, 0.0]).is_err());
         assert!(runtime.observe("a", 40, [1.0, 0.0, 0.0]).is_ok());
+    }
+
+    #[test]
+    fn pat_pair_reservation_rejects_retroactive_same_time_sample_ownership() {
+        let actuators = ["a", "b", "c"].map(|id| OpticalHeadSlewActuator {
+            head_id: id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+
+        runtime.observe("a", 10, target).unwrap();
+        assert_eq!(
+            runtime
+                .reserve_pair_for_link("first", "a", "b", 10)
+                .unwrap_err(),
+            "BODY-frame pair reservation conflicts with head history or owner"
+        );
+        // Failed admission must not acquire either head or alter the sample.
+        assert!(runtime.predicted_at("b", 10).is_err());
+        assert_eq!(runtime.predicted_at("a", 10).unwrap().1, target);
+        runtime.observe("b", 10, target).unwrap();
+
+        // A later acquisition remains valid, including a release/reacquire
+        // handoff at one timestamp when no command has been committed there.
+        runtime
+            .reserve_pair_for_link("first", "a", "b", 11)
+            .unwrap();
+        runtime
+            .observe_pair_for_link("first", "a", "b", 11, target, target)
+            .unwrap();
+        runtime.release_pair_at("first", "a", "b", 12).unwrap();
+        runtime
+            .reserve_pair_for_link("second", "a", "c", 12)
+            .unwrap();
+        runtime.release_pair_at("second", "a", "c", 12).unwrap();
     }
 
     #[test]
