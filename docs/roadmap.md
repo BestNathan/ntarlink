@@ -1,7 +1,5 @@
 # Engineering roadmap
 
-- [x] Replace the packet adapter's second predicted BODY-frame follower integration with a canonical lease-only PAT timeline audit; retain deterministic fault-gap, handoff and packet-accounting acceptance. This is still offline two-phase planning, not a single live actuator/lease state owner. See [design](design/optical-body-frame-target-following.md).
-
 
 ## P0 — deterministic packet-transport vertical slice
 
@@ -17,6 +15,9 @@
 P0 is **static-contact, packet-level simulation**, not physical radio or orbital simulation. See [status](implementation-status.md).
 
 ## P1 — physical contact and radio/link realism
+
+- [x] Replace the packet adapter's second predicted BODY-frame follower integration with a canonical lease-only PAT timeline audit; retain deterministic fault-gap, handoff and packet-accounting acceptance. This is still offline two-phase planning, not a single live actuator/lease state owner. See [design](design/optical-body-frame-target-following.md).
+
 
 - [x] Reject duplicate/overlapping selected SYS-01 Doppler windows per directed link before propagation and canonicalize output by virtual sample time; preserve adjacent half-open windows and independent simultaneous links. See [status](implementation-status.md).
 
