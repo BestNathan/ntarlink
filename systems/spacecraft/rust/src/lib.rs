@@ -606,19 +606,18 @@ impl BodyHeadRuntime {
         from_target_body: [f64; 3],
         to_target_body: [f64; 3],
     ) -> Result<([f64; 3], [f64; 3]), String> {
-        let result = if self.owners.contains_key(from_head_id)
-            || self.owners.contains_key(to_head_id)
-        {
-            Err("BODY-frame runtime head has a link command owner".into())
-        } else {
-            self.observe_pair_unchecked(
-                from_head_id,
-                to_head_id,
-                at_ns,
-                from_target_body,
-                to_target_body,
-            )
-        };
+        let result =
+            if self.owners.contains_key(from_head_id) || self.owners.contains_key(to_head_id) {
+                Err("BODY-frame runtime head has a link command owner".into())
+            } else {
+                self.observe_pair_unchecked(
+                    from_head_id,
+                    to_head_id,
+                    at_ns,
+                    from_target_body,
+                    to_target_body,
+                )
+            };
         self.record_failed_pair_attempt(
             from_head_id,
             to_head_id,
@@ -1206,7 +1205,11 @@ mod tests {
         for (from, to, reason) in [
             ([0.0, 1.0, 0.0], [f64::NAN, 0.0, 0.0], failed_reason.clone()),
             ([1.0, 0.0, 0.0], [0.0, 0.0, 0.0], failed_reason.clone()),
-            ([1.0, 0.0, 0.0], [f64::NAN, 0.0, 0.0], "forged reason".into()),
+            (
+                [1.0, 0.0, 0.0],
+                [f64::NAN, 0.0, 0.0],
+                "forged reason".into(),
+            ),
         ] {
             assert_eq!(
                 runtime
