@@ -621,13 +621,11 @@ pub fn plan_contacts_with_slew_starts(
         } else {
             candidate.slew_ns
         };
-        let acquiring_ns = available_ns
-            .checked_add(slew_ns)
-            .ok_or("PAT slew timestamp overflow")?;
-        let tracking_ns = acquiring_ns
-            .checked_add(candidate.acquisition_ns)
-            .ok_or("PAT acquisition timestamp overflow")?;
-        if tracking_ns >= candidate.end_ns {
+        // Reject infeasible contacts before timestamp addition. A head may
+        // remain booked until u64::MAX, and an impossible wait or dwell must
+        // reject only this candidate rather than overflow the entire plan.
+        let remaining_ns = candidate.end_ns.saturating_sub(available_ns);
+        if slew_ns >= remaining_ns || candidate.acquisition_ns >= remaining_ns - slew_ns {
             events.push(PatEvent {
                 link_id: candidate.link_id.clone(),
                 at_ns: candidate.start_ns,
@@ -636,6 +634,9 @@ pub fn plan_contacts_with_slew_starts(
             });
             continue;
         }
+        // The strict remaining-time guard makes both additions safe.
+        let acquiring_ns = available_ns + slew_ns;
+        let tracking_ns = acquiring_ns + candidate.acquisition_ns;
         if slew_ns > 0 {
             events.push(PatEvent {
                 link_id: candidate.link_id.clone(),
@@ -1153,6 +1154,36 @@ mod tests {
     }
 
     #[test]
+    fn pat_deadline_rejection_does_not_overflow_virtual_time() {
+        let max = u64::MAX;
+        let candidates = [
+            contact("a-long", "a", "b", 0, max),
+            contact("b-waiting", "a", "c", 10, max),
+            contact("c-too-short", "d", "e", max - 2, max),
+            contact("d-near-limit", "f", "g", max - 20, max),
+        ];
+        let plan = plan_contacts(&candidates).unwrap();
+        let mut reversed = candidates.to_vec();
+        reversed.reverse();
+        assert_eq!(plan, plan_contacts(&reversed).unwrap());
+        assert_eq!(plan.reservations.len(), 2);
+        assert_eq!(
+            plan.windows
+                .iter()
+                .map(|window| (window.link_id.as_str(), window.start_ns))
+                .collect::<Vec<_>>(),
+            vec![("a-long", 5), ("d-near-limit", max - 15)]
+        );
+        for link in ["b-waiting", "c-too-short"] {
+            assert!(plan.events.iter().any(|event| {
+                event.link_id == link
+                    && event.state == PatState::Rejected
+                    && event.reason == Some("contact_expires_before_acquisition")
+            }));
+        }
+    }
+
+    #[test]
     fn conflict_that_outlasts_contact_is_rejected() {
         let plan = plan_contacts(&[
             contact("first", "a", "b", 0, 20),
@@ -1520,7 +1551,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_contacts_and_overflow_are_rejected() {
+    fn malformed_contacts_error_and_expired_deadlines_reject() {
         let base = contact("x", "a", "b", 0, 20);
         for invalid in [
             PatCandidate {
@@ -1551,11 +1582,16 @@ mod tests {
             contact("same", "a", "b", 10, 30)
         ])
         .is_err());
-        assert!(plan_contacts(&[PatCandidate {
+        let plan = plan_contacts(&[PatCandidate {
             start_ns: u64::MAX - 3,
             end_ns: u64::MAX,
             ..base
         }])
-        .is_err());
+        .unwrap();
+        assert!(plan.reservations.is_empty());
+        assert!(plan.events.iter().any(|event| {
+            event.state == PatState::Rejected
+                && event.reason == Some("contact_expires_before_acquisition")
+        }));
     }
 }
