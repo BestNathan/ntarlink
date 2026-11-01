@@ -1,3 +1,20 @@
+## PAT reservation admission after same-time samples
+
+SYS-02 now rejects a new optical-head pair reservation if either head has
+already committed a command at the exact proposed acquisition timestamp.
+Previously the reservation guard only rejected strictly earlier timestamps,
+allowing a caller to retroactively claim a head after a same-time unleased
+sample. This violated the canonical SYS-03 virtual-time order of Release,
+Reserve, then Sample. The preflight is atomic: a failed pair acquisition
+leaves both heads unowned and preserves their command histories. Rust
+regression coverage verifies rejection, successful next-instant admission,
+and a release/reacquire handoff at one timestamp without a prior sample.
+
+**Scope and cost:** a constant-time boundary comparison per head, without
+new state or allocations. This protects the standalone SYS-02 lease API;
+it does not remove the offline provisional PAT pass or introduce shared-head
+predicted arbitration, continuous servo, or physical calibration.
+
 ## Cross-link ITRS LOS rate comparison guard
 
 The SYS-02 sampled ITRS LOS angular-rate predicate now rejects consecutive
