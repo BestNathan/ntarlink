@@ -13,7 +13,7 @@ use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
-    pointing_allowed, BodyHeadPatSample, BodyHeadRuntime, HeadAvailability,
+    pointing_allowed, BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -851,24 +851,24 @@ fn audit_pat_head_leases(
     }
 
     for event in timeline {
-        match event.kind {
+        let transition = match event.kind {
             PatRuntimeTransitionKind::Reserve(index) => {
                 let reservation = &reservations[index];
-                leases.reserve(
-                    &reservation.link_id,
-                    &reservation.from_head,
-                    &reservation.to_head,
-                    reservation.start_ns,
-                )?;
+                BodyHeadPatTransition::Reserve {
+                    link_id: &reservation.link_id,
+                    from_head: &reservation.from_head,
+                    to_head: &reservation.to_head,
+                    at_ns: reservation.start_ns,
+                }
             }
             PatRuntimeTransitionKind::Release(index) => {
                 let reservation = &reservations[index];
-                leases.release(
-                    &reservation.link_id,
-                    &reservation.from_head,
-                    &reservation.to_head,
-                    reservation.end_ns,
-                )?;
+                BodyHeadPatTransition::Release {
+                    link_id: &reservation.link_id,
+                    from_head: &reservation.from_head,
+                    to_head: &reservation.to_head,
+                    at_ns: reservation.end_ns,
+                }
             }
             PatRuntimeTransitionKind::Sample {
                 index,
@@ -890,24 +890,21 @@ fn audit_pat_head_leases(
                 let result = expected
                     .get(&(sample.link_id.clone(), sample.at_ns))
                     .ok_or("missing provisional BODY-frame observation")?;
-                // SYS-02 authenticates the command and advances the lease
-                // chronology atomically; no unchecked audit sample crosses
-                // the packet-runtime boundary.
-                leases.sample_committed(
-                    runtime,
-                    BodyHeadPatSample {
-                        link_id: &sample.link_id,
-                        from_head: &pat.from_head,
-                        to_head: &pat.to_head,
-                        at_ns: sample.at_ns,
-                        leased: reservation_index.is_some(),
-                        from_target_body: sample.from_target_body,
-                        to_target_body: sample.to_target_body,
-                        observed: result,
-                    },
-                )?;
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: &sample.link_id,
+                    from_head: &pat.from_head,
+                    to_head: &pat.to_head,
+                    at_ns: sample.at_ns,
+                    leased: reservation_index.is_some(),
+                    from_target_body: sample.from_target_body,
+                    to_target_body: sample.to_target_body,
+                    observed: result,
+                })
             }
-        }
+        };
+        // SYS-02 owns the entire lease transition boundary. The adapter
+        // only translates the canonical SYS-03 timeline into typed events.
+        leases.apply_transition(runtime, transition)?;
     }
     Ok(())
 }

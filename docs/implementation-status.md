@@ -1,3 +1,19 @@
+## SYS-02 typed PAT lease transition boundary
+
+The offline PAT lease audit now exposes a single typed
+`BodyHeadPatTransition` entry point for Release, Reserve and authenticated
+Sample events. The packet adapter translates the canonical SYS-03 timeline
+into these events but no longer calls three separate lease mutation methods.
+SYS-02 keeps the individual mutation operations private and validates sample
+provenance against the provisional runtime before changing lease chronology.
+
+**Verification and limits:** Rust regression exercises mixed lease edges,
+conflicting reservations, forged sample timestamps, successful samples and
+retroactive releases. Existing packet-runtime and CI scenarios remain the
+cross-subsystem acceptance baseline. This refactor does not yet merge the
+provisional follower and lease audit into a single live mutable state owner,
+nor does it model continuous servo or shared-head dynamic arbitration.
+
 ## SYS-02 verified PAT lease sample transition
 
 The packet adapter now applies typed `BodyHeadPatSample` events through
