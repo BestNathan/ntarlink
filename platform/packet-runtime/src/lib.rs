@@ -835,9 +835,12 @@ fn audit_pat_head_leases(
         if !leases.contains_head(&pat.from_head) || !leases.contains_head(&pat.to_head) {
             return Err("unknown BODY-frame runtime head".into());
         }
-        if !expected.contains_key(&(sample.link_id.clone(), sample.at_ns)) {
-            return Err("missing provisional BODY-frame observation".into());
-        }
+        let observed = expected
+            .get(&(sample.link_id.clone(), sample.at_ns))
+            .ok_or("missing provisional BODY-frame observation")?;
+        // Cross-check the trusted provisional result against SYS-02's actual
+        // successful command history before any lease audit transition.
+        runtime.verify_sample_outcome(&pat.from_head, &pat.to_head, sample.at_ns, observed)?;
     }
 
     for event in timeline {
@@ -1956,6 +1959,24 @@ mod tests {
         .collect();
         let (runtime, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
         assert!(audit_pat_head_leases(&scenario, &reservations, &expected, &runtime).is_ok());
+        // A forged provisional success or failure must not bypass the actual
+        // SYS-02 committed history merely because the lease timeline is valid.
+        let successful_key = expected
+            .iter()
+            .find(|(_, result)| result.is_ok())
+            .map(|(key, _)| key.clone())
+            .unwrap();
+        let mut forged = expected.clone();
+        forged.insert(successful_key.clone(), Err("forged failure".into()));
+        assert_eq!(
+            audit_pat_head_leases(&scenario, &reservations, &forged, &runtime).unwrap_err(),
+            "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
+        forged.insert(successful_key, Ok(([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])));
+        assert_eq!(
+            audit_pat_head_leases(&scenario, &reservations, &forged, &runtime).unwrap_err(),
+            "PAT provisional sample outcome disagrees with SYS-02 history"
+        );
         assert!(replay_pat_head_leases(&scenario, &reservations, &expected).is_ok());
         let mut reversed = reservations.clone();
         reversed.reverse();

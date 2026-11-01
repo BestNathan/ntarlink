@@ -7,6 +7,13 @@ closed-loop servo, calibrated torque model or continuous pointing proof.
 
 ## Lease-only audit without a second follower integration
 
+Before lease transitions, SYS-02 now validates the provisional success/error
+ledger against its committed per-head snapshots. A successful paired sample
+must match both stored boresights at its timestamp; a failed sample must have
+no committed head at that instant. This rejects forged results and partial
+commits without another motion integration. Failure reasons themselves are
+not independently recomputed; the design remains offline planning plus audit.
+
 The packet adapter executes the provisional SYS-02 follower once and retains
 its successful command history for immutable PAT boundary projections. Once
 SYS-03 has planned exclusive reservations, the canonical Release/Reserve/Sample
