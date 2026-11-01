@@ -1,3 +1,23 @@
+## Global orbital contact sampling budget
+
+SYS-01 now limits the total coarse geometric sampling workload across all
+configured RF and optical links, not only the per-link step count. A scenario
+with at most 500,000 time steps per link can still exceed the practical
+preprocessing budget when many links are sampled; the compiler now rejects
+more than 500,000 geometric link-steps before invoking the position provider.
+Non-geometric links do not consume this budget. Scenario duration must also
+be an integer nanosecond count, preventing silent truncation of fractional
+or boolean values at the Python API boundary.
+
+**Verification and limits:** Python regressions cover a 500,500-link-step
+rejection before propagation, a valid mixed geometric/non-geometric scenario,
+and invalid duration types. The preflight is O(L) for L configured links and
+does not change geometric visibility, refinement tolerance, packet accounting
+or the existing 500,000 propagation-delay sample budget. Bisection probes
+and the final partial-interval probe are not counted in the coarse link-step
+limit; this is a conservative coarse-workload cap, not a total evaluation
+or wall-clock bound. No new dependencies or scenario fields are introduced.
+
 ## Geometric contact range and elevation gate validation
 
 SYS-01 now validates optional link maximum range as finite and strictly
