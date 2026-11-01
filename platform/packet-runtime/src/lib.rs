@@ -2035,6 +2035,35 @@ mod tests {
     }
 
     #[test]
+    fn pat_audit_authenticates_rejected_provisional_command_inputs_and_reason() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        scenario.optical_body_following_samples.truncate(1);
+        scenario.optical_body_following_samples[0].to_target_body = [f64::NAN, 0.0, 0.0];
+        let (runtime, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        assert!(expected.values().all(Result::is_err));
+        assert!(audit_pat_head_leases(&scenario, &[], &expected, &runtime).is_ok());
+
+        let sample = &scenario.optical_body_following_samples[0];
+        let key = (sample.link_id.clone(), sample.at_ns);
+        let mut forged = expected.clone();
+        forged.insert(key, Err("forged failure reason".into()));
+        assert_eq!(
+            audit_pat_head_leases(&scenario, &[], &forged, &runtime).unwrap_err(),
+            "PAT provisional failed command disagrees with SYS-02 attempt ledger"
+        );
+
+        let mut changed = scenario.clone();
+        changed.optical_body_following_samples[0].to_target_body = [0.0, 0.0, 0.0];
+        assert_eq!(
+            audit_pat_head_leases(&changed, &[], &expected, &runtime).unwrap_err(),
+            "PAT provisional failed command disagrees with SYS-02 attempt ledger"
+        );
+    }
+
+    #[test]
     fn predicted_pat_leases_release_at_fault_and_contact_boundaries() {
         let scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
