@@ -788,6 +788,130 @@ fn execute_pat_head_timeline(
     Ok((runtime, observations))
 }
 
+/// Audit PAT command ownership using the already-computed provisional results.
+/// This is a lease-only virtual-time pass: it never integrates a second
+/// follower or copies its actuator history. The provisional SYS-02 runtime
+/// remains the sole owner of predicted boresight and held-target state.
+/// The current scenario contract forbids shared-head predicted streams.
+fn audit_pat_head_leases(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: &PredictedObservations,
+) -> Result<(), String> {
+    let samples: Vec<_> = scenario
+        .optical_body_following_samples
+        .iter()
+        .map(|sample| (sample.at_ns, sample.link_id.as_str()))
+        .collect();
+    let timeline = pat_runtime_transitions(reservations, &samples)?;
+    let pat_links: HashMap<_, _> = scenario
+        .optical_pat
+        .iter()
+        .map(|pat| (pat.link_id.as_str(), pat))
+        .collect();
+    let known_heads: HashSet<_> = scenario
+        .optical_head_slew_actuators
+        .iter()
+        .map(|head| head.head_id.as_str())
+        .collect();
+
+    // Check the complete reservation and command topology before auditing
+    // the ordered lease edges. No actuator state is mutated by this audit.
+    for reservation in reservations {
+        let pat = pat_links
+            .get(reservation.link_id.as_str())
+            .ok_or("unknown PAT reservation link")?;
+        if reservation.from_head != pat.from_head || reservation.to_head != pat.to_head {
+            return Err("PAT reservation endpoint mismatch".into());
+        }
+        if !known_heads.contains(reservation.from_head.as_str())
+            || !known_heads.contains(reservation.to_head.as_str())
+        {
+            return Err("unknown BODY-frame runtime head".into());
+        }
+    }
+    for sample in &scenario.optical_body_following_samples {
+        let pat = pat_links
+            .get(sample.link_id.as_str())
+            .ok_or("unknown predicted PAT link")?;
+        if !known_heads.contains(pat.from_head.as_str())
+            || !known_heads.contains(pat.to_head.as_str())
+        {
+            return Err("unknown BODY-frame runtime head".into());
+        }
+        if !expected.contains_key(&(sample.link_id.clone(), sample.at_ns)) {
+            return Err("missing provisional BODY-frame observation".into());
+        }
+    }
+
+    let mut head_owners: HashMap<&str, &str> = HashMap::new();
+    let mut last_success: HashMap<&str, u64> = HashMap::new();
+    for event in timeline {
+        match event.kind {
+            PatRuntimeTransitionKind::Reserve(index) => {
+                let reservation = &reservations[index];
+                for head in [&reservation.from_head, &reservation.to_head] {
+                    if head_owners
+                        .insert(head.as_str(), reservation.link_id.as_str())
+                        .is_some()
+                    {
+                        return Err("PAT head lease audit ownership conflict".into());
+                    }
+                }
+            }
+            PatRuntimeTransitionKind::Release(index) => {
+                let reservation = &reservations[index];
+                for head in [&reservation.from_head, &reservation.to_head] {
+                    if head_owners.remove(head.as_str()) != Some(reservation.link_id.as_str()) {
+                        return Err("PAT head lease audit release mismatch".into());
+                    }
+                }
+            }
+            PatRuntimeTransitionKind::Sample {
+                index,
+                reservation_index,
+            } => {
+                let sample = &scenario.optical_body_following_samples[index];
+                let pat = pat_links
+                    .get(sample.link_id.as_str())
+                    .ok_or("unknown predicted PAT link")?;
+                if let Some(reservation_index) = reservation_index {
+                    let reservation = &reservations[reservation_index];
+                    if reservation.link_id != sample.link_id
+                        || reservation.from_head != pat.from_head
+                        || reservation.to_head != pat.to_head
+                    {
+                        return Err("PAT sample lease endpoint mismatch".into());
+                    }
+                }
+                let expected_owner = reservation_index.map(|_| sample.link_id.as_str());
+                let result = expected
+                    .get(&(sample.link_id.clone(), sample.at_ns))
+                    .ok_or("missing provisional BODY-frame observation")?;
+                for head in [pat.from_head.as_str(), pat.to_head.as_str()] {
+                    if head_owners.get(head).copied() != expected_owner {
+                        return Err("PAT head lease audit command ownership mismatch".into());
+                    }
+                    if last_success
+                        .get(head)
+                        .is_some_and(|previous| *previous >= sample.at_ns)
+                        && result.is_ok()
+                    {
+                        return Err("PAT head lease audit sample order mismatch".into());
+                    }
+                }
+                // Failed provisional commands do not advance either head.
+                if result.is_ok() {
+                    last_success.insert(pat.from_head.as_str(), sample.at_ns);
+                    last_success.insert(pat.to_head.as_str(), sample.at_ns);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 /// Validate the planned PAT reservations against the provisional observations
 /// without maintaining a second implementation of the command event loop.
 fn replay_pat_head_leases(
@@ -1218,9 +1342,9 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         }
     };
     if follower_runtime.is_some() {
-        // Verify lease acquisition/release against the actual PAT reservations.
-        // The provisional pass remains the source of immutable PAT projections.
-        replay_pat_head_leases(scenario, &plan.reservations, &predicted_observations)?;
+        // Audit the accepted lease timeline against the one provisional
+        // follower execution; do not integrate a second actuator history.
+        audit_pat_head_leases(scenario, &plan.reservations, &predicted_observations)?;
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
@@ -1819,6 +1943,59 @@ mod tests {
         let (_, reordered) =
             execute_pat_head_timeline(&scenario, &reversed, Some(&expected)).unwrap();
         assert_eq!(reordered, expected);
+    }
+
+    #[test]
+    fn lease_only_pat_audit_matches_legacy_replay_and_rejects_conflicting_commands() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let pat = &scenario.optical_pat[0];
+        let reservations: Vec<_> = [
+            (0, 30_000_000),
+            (90_000_000, 120_000_000),
+            (120_000_000, 350_000_000),
+        ]
+        .into_iter()
+        .map(|(start_ns, end_ns)| PatReservation {
+            link_id: pat.link_id.clone(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns,
+            end_ns,
+        })
+        .collect();
+        let (_, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        assert!(audit_pat_head_leases(&scenario, &reservations, &expected).is_ok());
+        assert!(replay_pat_head_leases(&scenario, &reservations, &expected).is_ok());
+        let mut reversed = reservations.clone();
+        reversed.reverse();
+        assert!(audit_pat_head_leases(&scenario, &reversed, &expected).is_ok());
+
+        let mut swapped = reservations.clone();
+        let first = &mut swapped[0];
+        std::mem::swap(&mut first.from_head, &mut first.to_head);
+        assert!(audit_pat_head_leases(&scenario, &swapped, &expected).is_err());
+
+        // A different link cannot issue an unleased command on a reserved
+        // head, even when the provisional observation itself was successful.
+        let mut shared = scenario.clone();
+        let mut other = (*pat).clone();
+        other.link_id = "other-isl".into();
+        shared.optical_pat.push(other);
+        let conflicting = [PatReservation {
+            link_id: "other-isl".into(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns: 0,
+            end_ns: 30_000_000,
+        }];
+        assert_eq!(
+            audit_pat_head_leases(&shared, &conflicting, &expected).unwrap_err(),
+            "PAT head lease audit command ownership mismatch"
+        );
+        assert!(replay_pat_head_leases(&shared, &conflicting, &expected).is_err());
     }
 
     #[test]

@@ -5,6 +5,24 @@ previous actuator state and target commands instead of trusting externally
 supplied boresight. It is a sampled rest-to-rest target follower, not a
 closed-loop servo, calibrated torque model or continuous pointing proof.
 
+## Lease-only audit without a second follower integration
+
+The packet adapter executes the provisional SYS-02 follower once and retains
+its successful command history for immutable PAT boundary projections. Once
+SYS-03 has planned exclusive reservations, the canonical Release/Reserve/Sample
+timeline is audited for configured head identities, lease ownership and
+successful-command timestamp order. This audit consumes the trusted provisional
+success/error ledger; it does not recompute actuator motion or produce a
+second predicted boresight history. Invalid commands do not advance either
+head. The legacy full lease replay remains available in regression tests as
+an independent comparison oracle.
+
+This reduces duplicate physical-state computation while retaining an offline
+planning-then-audit boundary. The lease audit is not a live shared-head arbiter,
+does not independently verify a tampered provisional error ledger, and does
+not make the PAT planner and SYS-02 actuator a single mutable state owner.
+Cross-subsystem deterministic packet and reacquisition tests remain required.
+
 ## Shared virtual-time command execution
 
 Both the provisional follower pass and the later lease-checked replay now use
