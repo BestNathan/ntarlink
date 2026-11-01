@@ -661,14 +661,39 @@ impl BodyHeadRuntime {
             }
             BodyHeadPatRuntimeTransition::Command(command) => {
                 let observed = if command.leased {
-                    self.observe_pair_for_link(
-                        command.link_id,
-                        command.from_head,
-                        command.to_head,
-                        command.at_ns,
-                        command.from_target_body,
-                        command.to_target_body,
-                    )
+                    // A PAT command must not implicitly acquire a pair lease.
+                    // Only a preceding Reserve transition may establish ownership.
+                    if self
+                        .link_heads
+                        .get(command.link_id)
+                        .is_none_or(|(from, to)| from != command.from_head || to != command.to_head)
+                        || self.owners.get(command.from_head).map(String::as_str)
+                            != Some(command.link_id)
+                        || self.owners.get(command.to_head).map(String::as_str)
+                            != Some(command.link_id)
+                    {
+                        let rejected = Err(
+                            "BODY-frame PAT command requires an active pair reservation".into(),
+                        );
+                        self.record_failed_pair_attempt(
+                            command.from_head,
+                            command.to_head,
+                            command.at_ns,
+                            command.from_target_body,
+                            command.to_target_body,
+                            &rejected,
+                        );
+                        rejected
+                    } else {
+                        self.observe_pair_for_link(
+                            command.link_id,
+                            command.from_head,
+                            command.to_head,
+                            command.at_ns,
+                            command.from_target_body,
+                            command.to_target_body,
+                        )
+                    }
                 } else {
                     self.observe_pair(
                         command.from_head,
@@ -1522,6 +1547,98 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn typed_pat_commands_require_explicit_matching_reservations() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        fn command(
+            link_id: &str,
+            at_ns: u64,
+            target: [f64; 3],
+        ) -> BodyHeadPatRuntimeTransition<'_> {
+            BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id,
+                from_head: "a",
+                to_head: "b",
+                at_ns,
+                leased: true,
+                from_target_body: target,
+                to_target_body: target,
+            })
+        }
+
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = runtime
+            .apply_pat_transition(command("isl", 10, target))
+            .unwrap()
+        else {
+            panic!("unreserved PAT command must fail");
+        };
+        assert_eq!(
+            reason,
+            "BODY-frame PAT command requires an active pair reservation"
+        );
+        runtime
+            .verify_sample_command("a", "b", 10, target, target, &Err(reason))
+            .unwrap();
+        assert!(!runtime.history.contains_key("a"));
+        assert!(!runtime.history.contains_key("b"));
+        assert!(runtime.owners.is_empty());
+
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(wrong_link)) = runtime
+            .apply_pat_transition(command("other", 10, target))
+            .unwrap()
+        else {
+            panic!("wrong-link PAT command must fail");
+        };
+        runtime
+            .verify_sample_command("a", "b", 10, target, target, &Err(wrong_link))
+            .unwrap();
+        assert!(!runtime.history.contains_key("a"));
+        assert_eq!(runtime.owners.get("a").map(String::as_str), Some("isl"));
+
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(command("isl", 10, target))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 11,
+            })
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(after_release)) = runtime
+            .apply_pat_transition(command("isl", 12, target))
+            .unwrap()
+        else {
+            panic!("released PAT command must fail");
+        };
+        runtime
+            .verify_sample_command("a", "b", 12, target, target, &Err(after_release))
+            .unwrap();
+        assert_eq!(runtime.history.get("a").unwrap().len(), 1);
+        assert_eq!(runtime.history.get("b").unwrap().len(), 1);
+        assert!(runtime.owners.is_empty());
     }
 
     #[test]
