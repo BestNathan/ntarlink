@@ -1,3 +1,21 @@
+## Stable PAT link optical-head identity across contacts
+
+SYS-03 now rejects a logical PAT link that changes its ordered from/to
+optical-head endpoints between non-overlapping geometric contacts or accepted
+reservations. Previously, temporal non-overlap alone was sufficient for the
+standalone planner and lease transition validator, so the same link ID could
+silently migrate to unrelated head resources. Both entry points now fail closed
+before scheduling or replaying leases; the canonical runtime event builder
+inherits the reservation preflight. Rust tests cover non-overlapping endpoint
+rebinding and reversed input, while existing exact-boundary reacquisition with
+unchanged endpoints remains valid.
+
+**Scope and cost:** O(C + A) expected additional identity checks and O(L)
+temporary memory for C candidates, A reservations and L distinct PAT links.
+The scenario-level endpoint contract is unchanged. This hardens offline
+resource identity; it does not implement live single-pass arbitration,
+shared-head predicted following or continuous servo.
+
 ## Fixed-dwell PAT admission into idle optical-head gaps
 
 SYS-03 now keeps interval-indexed head reservations in the fixed-dwell
