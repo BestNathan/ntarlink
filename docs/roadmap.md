@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Cap aggregate SYS-01 coarse geometry preprocessing at 500,000 link-steps across RF/optical links and reject noninteger scenario duration before propagation; preserve existing per-link and delay-sample limits (not a total refinement-probe or wall-clock bound). See [status](implementation-status.md).
+
 - [x] Validate finite positive per-link geometric maximum range and finite bounded RF elevation thresholds before visibility admission, including NaN bypass and range-masked invalid settings. See [status](implementation-status.md).
 
 - [x] Reject PAT candidates whose remaining contact time cannot fit slew and acquisition before virtual-time addition, including shared-head waits through `u64::MAX` and independent late-contact acceptance (not live actuator arbitration). See [status](implementation-status.md).
