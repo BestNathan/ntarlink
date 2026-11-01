@@ -379,9 +379,11 @@ fn state_order(state: PatState) -> u8 {
 
 /// Find the earliest slot that does not overlap an already booked head.
 ///
-/// The reservation lasts until the candidate's geometric end, so a gap is
-/// usable only if it extends all the way to that end. Earlier candidates may
-/// have booked future starts; a later candidate can still use an idle gap.
+/// A candidate reserves [slot, end_ns), so it cannot precede any booking
+/// whose start is before end_ns. Per-head bookings never overlap; their
+/// ends therefore increase with their starts. Only the latest such booking
+/// on each head matters, even when an earlier candidate booked the future.
+/// Two ordered predecessor lookups replace a linear walk through conflicts.
 fn first_idle_head_slot(
     start_ns: u64,
     end_ns: u64,
@@ -389,27 +391,16 @@ fn first_idle_head_slot(
     to_head: &str,
     booked: &HashMap<&str, BTreeMap<u64, u64>>,
 ) -> u64 {
-    let mut start = start_ns;
-    while start < end_ns {
-        let mut next = start;
-        for head in [from_head, to_head] {
-            if let Some(intervals) = booked.get(head) {
-                if let Some((_, &previous_end)) = intervals.range(..=start).next_back() {
-                    if previous_end > start {
-                        next = next.max(previous_end);
-                    }
-                }
-                if let Some((_, &future_end)) = intervals.range(start..end_ns).next() {
-                    next = next.max(future_end);
-                }
-            }
+    let mut available_ns = start_ns;
+    for head in [from_head, to_head] {
+        if let Some((_, &last_end)) = booked
+            .get(head)
+            .and_then(|intervals| intervals.range(..end_ns).next_back())
+        {
+            available_ns = available_ns.max(last_end);
         }
-        if next == start {
-            break;
-        }
-        start = next;
     }
-    start
+    available_ns
 }
 
 /// Schedule nonpreemptive, exclusive optical-head reservations.
@@ -1041,6 +1032,76 @@ mod tests {
             .events
             .iter()
             .any(|e| { e.link_id == "second" && e.state == PatState::Slewing && e.at_ns == 20 }));
+    }
+
+    #[test]
+    fn fixed_dwell_slot_lookup_handles_dense_future_bookings() {
+        let mut booked = HashMap::new();
+        let mut from = BTreeMap::new();
+        let mut to = BTreeMap::new();
+        for index in 0..4_096_u64 {
+            from.insert(index * 10, index * 10 + 4);
+            to.insert(index * 10 + 5, index * 10 + 8);
+        }
+        booked.insert("from", from);
+        booked.insert("to", to);
+
+        // A candidate ending before the next booking may fill the gap.
+        assert_eq!(first_idle_head_slot(8, 10, "from", "to", &booked), 8);
+        // A candidate extending across future bookings must wait for all
+        // bookings that begin before its geometric end.
+        assert_eq!(
+            first_idle_head_slot(8, 40_960, "from", "to", &booked),
+            40_958
+        );
+        assert_eq!(
+            first_idle_head_slot(8, 40_959, "from", "to", &booked),
+            40_958
+        );
+        // No valid slot exists when the final booking ends at the deadline.
+        assert!(
+            first_idle_head_slot(8, 40_958, "from", "to", &booked) >= 40_958
+        );
+    }
+
+    #[test]
+    fn fixed_dwell_slot_lookup_matches_exhaustive_small_schedule() {
+        for from_mask in 0..16_u32 {
+            for to_mask in 0..16_u32 {
+                let mut booked = HashMap::new();
+                for (head, mask) in [("from", from_mask), ("to", to_mask)] {
+                    let intervals = (0..4_u32)
+                        .filter(|bit| mask & (1 << bit) != 0)
+                        .map(|bit| {
+                            let start = u64::from(bit) * 4;
+                            (start, start + 2)
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    booked.insert(head, intervals);
+                }
+                for end_ns in 1..=16_u64 {
+                    for start_ns in 0..end_ns {
+                        // Independent brute-force admission oracle: a
+                        // candidate occupies [slot, end_ns) on both heads.
+                        let expected = (start_ns..end_ns).find(|slot| {
+                            booked.values().all(|intervals| {
+                                intervals.iter().all(|(start, end)| {
+                                    *end <= *slot || *start >= end_ns
+                                })
+                            })
+                        });
+                        let actual = first_idle_head_slot(
+                            start_ns, end_ns, "from", "to", &booked,
+                        );
+                        assert_eq!(
+                            (actual < end_ns).then_some(actual),
+                            expected,
+                            "from={from_mask} to={to_mask} start={start_ns} end={end_ns}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
