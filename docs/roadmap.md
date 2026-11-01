@@ -1,5 +1,8 @@
 # Engineering roadmap
 
+- [x] Replace the packet adapter's second predicted BODY-frame follower integration with a canonical lease-only PAT timeline audit; retain deterministic fault-gap, handoff and packet-accounting acceptance. This is still offline two-phase planning, not a single live actuator/lease state owner. See [design](design/optical-body-frame-target-following.md).
+
+
 ## P0 — deterministic packet-transport vertical slice
 
 - [x] Subsystem-oriented workspace layout and English-only engineering documentation.
