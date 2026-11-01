@@ -1318,7 +1318,11 @@ mod tests {
         assert!(!geometry_los_rate_allowed(&initial, &other_link, 0.0));
         let mut later_original = initial.clone();
         later_original.at_ns = 60_000_000;
-        assert!(!geometry_los_rate_allowed(&other_link, &later_original, 0.0));
+        assert!(!geometry_los_rate_allowed(
+            &other_link,
+            &later_original,
+            0.0
+        ));
         assert!(geometry_los_rate_allowed(&initial, &later_original, 0.0));
 
         let mut rotated = initial.clone();
