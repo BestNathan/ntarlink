@@ -890,13 +890,19 @@ fn audit_pat_head_leases(
                 let result = expected
                     .get(&(sample.link_id.clone(), sample.at_ns))
                     .ok_or("missing provisional BODY-frame observation")?;
-                leases.sample(
+                // SYS-02 authenticates the command and advances the lease
+                // chronology atomically; no unchecked audit sample crosses
+                // the packet-runtime boundary.
+                leases.sample_committed(
+                    runtime,
                     &sample.link_id,
                     &pat.from_head,
                     &pat.to_head,
                     sample.at_ns,
                     reservation_index.is_some(),
-                    result.is_ok(),
+                    sample.from_target_body,
+                    sample.to_target_body,
+                    result,
                 )?;
             }
         }
