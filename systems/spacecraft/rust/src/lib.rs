@@ -666,16 +666,15 @@ impl BodyHeadRuntime {
                     if self
                         .link_heads
                         .get(command.link_id)
-                        .is_none_or(|(from, to)| {
-                            from != command.from_head || to != command.to_head
-                        })
+                        .is_none_or(|(from, to)| from != command.from_head || to != command.to_head)
                         || self.owners.get(command.from_head).map(String::as_str)
                             != Some(command.link_id)
                         || self.owners.get(command.to_head).map(String::as_str)
                             != Some(command.link_id)
                     {
-                        let rejected =
-                            Err("BODY-frame PAT command requires an active pair reservation".into());
+                        let rejected = Err(
+                            "BODY-frame PAT command requires an active pair reservation".into(),
+                        );
                         self.record_failed_pair_attempt(
                             command.from_head,
                             command.to_head,
