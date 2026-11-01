@@ -3,7 +3,7 @@ use ntarlink_contracts::{
     OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalHeadSlewActuator,
     OpticalPointing,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Conservative static steering-envelope gate for an operator-supplied
 /// off-boresight assumption. This is not an attitude or ephemeris calculation.
@@ -236,7 +236,116 @@ pub struct BodyHeadRuntime {
     release_floor_ns: HashMap<String, u64>,
 }
 
+/// Lease-only PAT command ownership state, initialized from the actual
+/// SYS-02 actuator registry. It audits a canonical virtual-time timeline
+/// without replaying or modifying the provisional follower's motion history.
+/// This is not a live shared-head command scheduler.
+#[derive(Debug, Default)]
+pub struct BodyHeadLeaseAudit {
+    known_heads: HashSet<String>,
+    owners: HashMap<String, String>,
+    link_heads: HashMap<String, (String, String)>,
+    last_success_ns: HashMap<String, u64>,
+}
+
+impl BodyHeadLeaseAudit {
+    pub fn contains_head(&self, head_id: &str) -> bool {
+        self.known_heads.contains(head_id)
+    }
+
+    /// Claim both configured heads atomically; a failed claim changes nothing.
+    pub fn reserve(&mut self, link_id: &str, from: &str, to: &str) -> Result<(), String> {
+        if link_id.trim().is_empty()
+            || from == to
+            || self.link_heads.contains_key(link_id)
+            || [from, to]
+                .into_iter()
+                .any(|head| !self.contains_head(head) || self.owners.contains_key(head))
+        {
+            return Err("PAT head lease audit ownership conflict".into());
+        }
+        self.owners.insert(from.to_owned(), link_id.to_owned());
+        self.owners.insert(to.to_owned(), link_id.to_owned());
+        self.link_heads
+            .insert(link_id.to_owned(), (from.to_owned(), to.to_owned()));
+        Ok(())
+    }
+
+    /// Release exactly the active ordered pair, without partially releasing
+    /// either head when the link or endpoint identity is incorrect.
+    pub fn release(&mut self, link_id: &str, from: &str, to: &str) -> Result<(), String> {
+        if self
+            .link_heads
+            .get(link_id)
+            .is_none_or(|(a, b)| a != from || b != to)
+            || self.owners.get(from).map(String::as_str) != Some(link_id)
+            || self.owners.get(to).map(String::as_str) != Some(link_id)
+        {
+            return Err("PAT head lease audit release mismatch".into());
+        }
+        self.owners.remove(from);
+        self.owners.remove(to);
+        self.link_heads.remove(link_id);
+        Ok(())
+    }
+
+    /// Check the canonical sample's lease projection. Failed commands do not
+    /// advance head chronology; successful paired commands advance both.
+    pub fn sample(
+        &mut self,
+        link_id: &str,
+        from: &str,
+        to: &str,
+        at_ns: u64,
+        leased: bool,
+        succeeded: bool,
+    ) -> Result<(), String> {
+        if from == to || !self.contains_head(from) || !self.contains_head(to) {
+            return Err("unknown BODY-frame runtime head".into());
+        }
+        if leased
+            && self
+                .link_heads
+                .get(link_id)
+                .is_none_or(|(a, b)| a != from || b != to)
+        {
+            return Err("PAT head lease audit command ownership mismatch".into());
+        }
+        if !leased && self.link_heads.contains_key(link_id) {
+            return Err("PAT head lease audit command ownership mismatch".into());
+        }
+        let expected_owner = leased.then_some(link_id);
+        for head in [from, to] {
+            if self.owners.get(head).map(String::as_str) != expected_owner {
+                return Err("PAT head lease audit command ownership mismatch".into());
+            }
+            if succeeded
+                && self
+                    .last_success_ns
+                    .get(head)
+                    .is_some_and(|previous| *previous >= at_ns)
+            {
+                return Err("PAT head lease audit sample order mismatch".into());
+            }
+        }
+        if succeeded {
+            self.last_success_ns.insert(from.to_owned(), at_ns);
+            self.last_success_ns.insert(to.to_owned(), at_ns);
+        }
+        Ok(())
+    }
+}
+
 impl BodyHeadRuntime {
+    /// Build an independent lease-only audit from this runtime's real head
+    /// registry; predicted boresight state remains owned by this runtime.
+    pub fn lease_audit(&self) -> BodyHeadLeaseAudit {
+        BodyHeadLeaseAudit {
+            known_heads: self.heads.keys().cloned().collect(),
+            ..BodyHeadLeaseAudit::default()
+        }
+    }
+
     pub fn new(actuators: &[OpticalHeadSlewActuator]) -> Result<Self, String> {
         let mut heads = HashMap::new();
         for actuator in actuators {
@@ -794,6 +903,35 @@ mod tests {
             start_ns: start,
             end_ns: end,
         }
+    }
+
+    #[test]
+    fn lease_audit_enforces_atomic_handoff_and_successful_sample_chronology() {
+        let actuators = ["a", "b", "c"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let mut audit = runtime.lease_audit();
+        assert!(audit.contains_head("a"));
+        assert!(!audit.contains_head("missing"));
+        audit.reserve("first", "a", "b").unwrap();
+        assert!(audit.reserve("second", "a", "c").is_err());
+        assert!(audit.release("first", "a", "c").is_err());
+        assert!(audit.sample("second", "a", "c", 10, false, true).is_err());
+        audit.sample("first", "a", "b", 10, true, true).unwrap();
+        assert!(audit.sample("first", "a", "b", 10, true, true).is_err());
+        audit.release("first", "a", "b").unwrap();
+        audit.reserve("second", "a", "c").unwrap();
+        audit.sample("second", "a", "c", 10, true, false).unwrap();
+        assert!(audit.sample("second", "a", "c", 10, true, true).is_err());
+        audit.sample("second", "a", "c", 11, true, true).unwrap();
+        audit.release("second", "a", "c").unwrap();
+        audit.sample("second", "a", "c", 12, false, true).unwrap();
+        assert!(audit.sample("second", "a", "c", 12, false, true).is_err());
     }
 
     #[test]

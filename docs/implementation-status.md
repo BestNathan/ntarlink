@@ -1,3 +1,21 @@
+## SYS-02-owned PAT lease audit state
+
+The lease-only PAT audit now uses a dedicated SYS-02 `BodyHeadLeaseAudit`
+initialized from the actual provisional `BodyHeadRuntime` head registry.
+The packet adapter supplies canonical Release/Reserve/Sample transitions and
+validated PAT endpoints; SYS-02 atomically checks pair ownership, release
+identity, and successful-command chronology. A failed sampled command leaves
+both heads' success timestamps unchanged, and a failed pair claim or release
+does not partially mutate ownership. The original follower remains the sole
+owner of predicted boresight and held-target history.
+
+**Verification and limits:** SYS-02 unit tests cover conflicting reservations,
+failed releases, same-timestamp failed-command retry, successful-command
+chronology and handoff. The existing packet adapter compares the audit against
+legacy follower replay, with deterministic PAT and packet-accounting CI.
+This is a responsibility-boundary refactor, not a single live PAT/actuator
+owner or a change to shared-head admission, sampled fidelity or optical PHY.
+
 ## SYS-03 lease-only PAT audit (single follower integration pass)
 
 The packet adapter now executes the sampled SYS-02 BODY-frame follower once to
