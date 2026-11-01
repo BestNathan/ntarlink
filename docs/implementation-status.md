@@ -1,3 +1,20 @@
+## Geometric link topology preflight
+
+SYS-01 now validates every geometric link's endpoint kinds and node references
+before requesting any orbital positions. RF user/feeder links require exactly
+one satellite and one ground endpoint; optical ISLs require two satellites.
+A malformed link fails even if its maximum-range gate would otherwise reject
+it. The full scenario is preflighted before the first geometry evaluation,
+including satellite TLE coverage, so a later invalid link cannot produce
+partial propagation work. Standalone `link_geometry_at()` calls enforce the
+same topology contract.
+
+**Verification and limits:** Python regressions cover range-masked invalid
+RF/optical topologies, unknown node references, later-link failure before
+any provider call, and valid reversed RF endpoint order. Preflight is O(L)
+for L links, with constant work per geometric link and no new dependencies
+or scenario fields. This does not model physical RF/optical feasibility.
+
 ## Total orbital geometry evaluation budget
 
 SYS-01 contact prediction now enforces an aggregate hard cap on calls to

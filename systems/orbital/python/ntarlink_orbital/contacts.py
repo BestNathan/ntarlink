@@ -104,6 +104,23 @@ def _geo_endpoint(node: dict, time_ns: int, position):
     raise ValueError(f"unsupported orbital endpoint kind: {kind}")
 
 
+def _validate_geometric_link_endpoints(link: dict, nodes: dict):
+    """Validate link topology before any orbital position-provider call."""
+    try:
+        a, b = nodes[link["from"]], nodes[link["to"]]
+    except KeyError as exc:
+        raise ValueError(f"unknown geometric link endpoint: {exc.args[0]}") from exc
+    if link["kind"] == "optical_isl":
+        if a["kind"] != "satellite" or b["kind"] != "satellite":
+            raise ValueError("optical ISL must join two satellites")
+    elif not (
+        (a["kind"] == "satellite" and b["kind"] in GROUND_KINDS)
+        or (b["kind"] == "satellite" and a["kind"] in GROUND_KINDS)
+    ):
+        raise ValueError("user/feeder RF link requires satellite and ground endpoint")
+    return a, b
+
+
 def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: dict):
     """Return (visible, propagation_delay_ns) for a geometric link."""
     if link["kind"] not in GEOMETRIC_LINKS:
@@ -125,7 +142,7 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
         )
         if not math.isfinite(min_elevation) or not -90.0 <= min_elevation <= 90.0:
             raise ValueError("min_elevation_deg must be finite and within [-90, 90]")
-    a, b = nodes[link["from"]], nodes[link["to"]]
+    a, b = _validate_geometric_link_endpoints(link, nodes)
     xyz_a = _geo_endpoint(a, time_ns, position)
     xyz_b = _geo_endpoint(b, time_ns, position)
     length = distance_m(xyz_a, xyz_b)
@@ -134,13 +151,9 @@ def link_geometry_at(link: dict, nodes: dict, time_ns: int, position, config: di
     if max_range_m is not None and length > max_range_m:
         return False, None
     if link["kind"] == "optical_isl":
-        if a["kind"] != "satellite" or b["kind"] != "satellite":
-            raise ValueError("optical ISL must join two satellites")
         visible = not earth_occludes_segment(xyz_a, xyz_b, clearance)
     else:
-        satellite, ground = (a, b) if a["kind"] == "satellite" else (b, a)
-        if satellite["kind"] != "satellite" or ground["kind"] not in GROUND_KINDS:
-            raise ValueError("user/feeder RF link requires satellite and ground endpoint")
+        ground = b if a["kind"] == "satellite" else a
         sat_xyz = xyz_a if a["kind"] == "satellite" else xyz_b
         angle = elevation_deg(
             sat_xyz,
@@ -216,6 +229,15 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
     delay_sample_total = 0
     nodes = {node["id"]: node for node in scenario["nodes"]}
     orbital_ids = {sat["id"] for sat in config["satellites"]}
+    # Reject malformed topology across all links before any geometry probe.
+    # A range miss must never hide a bad endpoint or a missing TLE.
+    for link in scenario["links"]:
+        if link["kind"] not in GEOMETRIC_LINKS:
+            continue
+        a, b = _validate_geometric_link_endpoints(link, nodes)
+        for node in (a, b):
+            if node["kind"] == "satellite" and node["id"] not in orbital_ids:
+                raise ValueError(f"TLE not provided for {node['id']}")
     windows = []
 
     def evaluate_geometry(link, time_ns):
@@ -230,13 +252,6 @@ def generate_contact_windows(scenario: dict, config: dict, position) -> list[dic
     for link in scenario["links"]:
         if link["kind"] not in GEOMETRIC_LINKS:
             continue
-        if not any(nodes[link[endpoint]]["kind"] == "satellite"
-                   for endpoint in ("from", "to")):
-            raise ValueError(f"missing space endpoint on {link['id']}")
-        for endpoint in ("from", "to"):
-            node = nodes[link[endpoint]]
-            if node["kind"] == "satellite" and node["id"] not in orbital_ids:
-                raise ValueError(f"TLE not provided for {node['id']}")
 
         def visible_at(time_ns):
             return evaluate_geometry(link, time_ns)[0]
