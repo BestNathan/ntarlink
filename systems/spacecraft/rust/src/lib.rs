@@ -1561,7 +1561,11 @@ mod tests {
         });
         let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
         let target = [1.0, 0.0, 0.0];
-        let command = |link_id, at_ns| {
+        fn command(
+            link_id: &str,
+            at_ns: u64,
+            target: [f64; 3],
+        ) -> BodyHeadPatRuntimeTransition<'_> {
             BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
                 link_id,
                 from_head: "a",
@@ -1571,10 +1575,10 @@ mod tests {
                 from_target_body: target,
                 to_target_body: target,
             })
-        };
+        }
 
         let BodyHeadPatRuntimeOutcome::Command(Err(reason)) =
-            runtime.apply_pat_transition(command("isl", 10)).unwrap()
+            runtime.apply_pat_transition(command("isl", 10, target)).unwrap()
         else {
             panic!("unreserved PAT command must fail");
         };
@@ -1598,7 +1602,7 @@ mod tests {
             })
             .unwrap();
         let BodyHeadPatRuntimeOutcome::Command(Err(wrong_link)) =
-            runtime.apply_pat_transition(command("other", 10)).unwrap()
+            runtime.apply_pat_transition(command("other", 10, target)).unwrap()
         else {
             panic!("wrong-link PAT command must fail");
         };
@@ -1609,7 +1613,7 @@ mod tests {
         assert_eq!(runtime.owners.get("a").map(String::as_str), Some("isl"));
 
         assert!(matches!(
-            runtime.apply_pat_transition(command("isl", 10)).unwrap(),
+            runtime.apply_pat_transition(command("isl", 10, target)).unwrap(),
             BodyHeadPatRuntimeOutcome::Command(Ok(_))
         ));
         runtime
@@ -1621,7 +1625,7 @@ mod tests {
             })
             .unwrap();
         let BodyHeadPatRuntimeOutcome::Command(Err(after_release)) =
-            runtime.apply_pat_transition(command("isl", 12)).unwrap()
+            runtime.apply_pat_transition(command("isl", 12, target)).unwrap()
         else {
             panic!("released PAT command must fail");
         };
