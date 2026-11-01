@@ -840,12 +840,7 @@ fn audit_pat_head_leases(
             .ok_or("missing provisional BODY-frame observation")?;
         // Cross-check the trusted provisional result against SYS-02's actual
         // successful command history before any lease audit transition.
-        runtime.verify_sample_outcome(
-            &pat.from_head,
-            &pat.to_head,
-            sample.at_ns,
-            observed,
-        )?;
+        runtime.verify_sample_outcome(&pat.from_head, &pat.to_head, sample.at_ns, observed)?;
     }
 
     for event in timeline {
@@ -1977,10 +1972,7 @@ mod tests {
             audit_pat_head_leases(&scenario, &reservations, &forged, &runtime).unwrap_err(),
             "PAT provisional sample outcome disagrees with SYS-02 history"
         );
-        forged.insert(
-            successful_key,
-            Ok(([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])),
-        );
+        forged.insert(successful_key, Ok(([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])));
         assert_eq!(
             audit_pat_head_leases(&scenario, &reservations, &forged, &runtime).unwrap_err(),
             "PAT provisional sample outcome disagrees with SYS-02 history"

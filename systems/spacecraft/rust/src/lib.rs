@@ -1015,7 +1015,9 @@ mod tests {
         ];
         let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
         let uncommitted = Ok(([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]));
-        assert!(runtime.verify_sample_outcome("a", "b", 10, &uncommitted).is_err());
+        assert!(runtime
+            .verify_sample_outcome("a", "b", 10, &uncommitted)
+            .is_err());
         assert!(runtime
             .verify_sample_outcome("a", "b", 10, &Err("failed".into()))
             .is_ok());
@@ -1033,12 +1035,7 @@ mod tests {
             "PAT provisional sample outcome disagrees with SYS-02 history"
         );
         assert!(runtime
-            .verify_sample_outcome(
-                "a",
-                "b",
-                10,
-                &Ok(([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]))
-            )
+            .verify_sample_outcome("a", "b", 10, &Ok(([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])))
             .is_err());
 
         assert!(runtime
