@@ -1,3 +1,23 @@
+## SYS-03 lease-only PAT audit (single follower integration pass)
+
+The packet adapter now executes the sampled SYS-02 BODY-frame follower once to
+produce immutable predicted boresight observations and PAT boundary projections.
+After SYS-03 plans accepted head reservations, a separate lease-only audit
+checks the canonical Release/Reserve/Sample timeline, endpoint identity, head
+ownership, and successful-sample chronology without integrating a second
+actuator history. Fault-gap commands remain unleased only when both heads are
+unowned; a rejected provisional command does not advance either head.
+
+**Verification and limits:** Rust regressions compare admitted reservation
+timelines with the legacy full follower replay, reverse reservation order, and
+reject a competing link's unleased command on an owned head. Existing
+deterministic PAT/packet scenarios remain the cross-subsystem acceptance
+baseline. The audit is O((A + S) log(A + S)) for A reservations and S sampled
+commands, with O(A + S + H) auxiliary state for H heads; it avoids the second
+follower integration and snapshot history. This is still offline two-phase
+planning and audit, not a single live mutable PAT/actuator owner, shared-head
+predicted arbitration, continuous servo, or optical PHY.
+
 ## SYS-01 Doppler contact-window integrity and canonical ordering
 
 The optional analytical Doppler sidecar now rejects duplicate and overlapping
