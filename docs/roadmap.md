@@ -9,6 +9,7 @@
 - [x] Finite link queues, propagation/serialization/processing delay, per-packet trace and deterministic output.
 - [x] Link-down event and delayed route reconvergence, validated through backup ISL fixture.
 - [ ] Verified CI on merged `main` branch and performance benchmarks.
+- [ ] Run and verify the release-mode P0 packet CLI performance baseline, including input/binary digests, deterministic repeated output and packet accounting. The [benchmark method](design/packet-runtime-benchmark.md) measures end-to-end wall time rather than isolated scheduler throughput; fixed-hardware regression thresholds remain future work.
 - [ ] Generated Rust/Python/TypeScript bindings from canonical schema.
 
 P0 is **static-contact, packet-level simulation**, not physical radio or orbital simulation. See [status](implementation-status.md).
