@@ -14,7 +14,7 @@ use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
     pointing_allowed, BodyHeadPatCommand, BodyHeadPatRuntimeOutcome, BodyHeadPatRuntimeTransition,
-    BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability,
+    BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability, PatFaultState,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1146,26 +1146,18 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .expect("validated optical PAT link");
         let mut windows = Vec::new();
         let mut cursor = 0;
-        let mut admin_up = link.up;
-        let mut pointing_up = true;
+        let mut fault_state = PatFaultState::new(link.up);
         if let Some(faults) = faults_by_link.get(config.link_id.as_str()) {
             let mut index = 0;
             while index < faults.len() {
                 let at_ns = faults[index].1.at_ns;
-                let was_up = admin_up && pointing_up;
+                let was_up = fault_state.effective_up();
                 while index < faults.len() && faults[index].1.at_ns == at_ns {
                     let fault = faults[index].1;
-                    match fault.cause {
-                        FaultCause::Administrative => {
-                            admin_up = matches!(fault.action, LinkAction::Up);
-                        }
-                        FaultCause::SampledPointing => {
-                            pointing_up = matches!(fault.action, LinkAction::Up);
-                        }
-                    }
+                    fault_state.apply(at_ns, fault.cause, fault.action.clone())?;
                     index += 1;
                 }
-                let now_up = admin_up && pointing_up;
+                let now_up = fault_state.effective_up();
                 if was_up != now_up {
                     if was_up && cursor < at_ns {
                         windows.push((cursor, at_ns));
@@ -1173,11 +1165,9 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     if !now_up {
                         down_faults.insert(
                             (config.link_id.as_str(), at_ns),
-                            if !admin_up {
-                                FaultCause::Administrative
-                            } else {
-                                FaultCause::SampledPointing
-                            },
+                            fault_state
+                                .down_cause()
+                                .expect("effective PAT fault state is down"),
                         );
                     }
                     cursor = at_ns;
@@ -1196,7 +1186,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 }
             }
         }
-        if admin_up && pointing_up && cursor < scenario.duration_ns {
+        if fault_state.effective_up() && cursor < scenario.duration_ns {
             windows.push((cursor, scenario.duration_ns));
         }
         admin_windows.insert(config.link_id.as_str(), windows);
