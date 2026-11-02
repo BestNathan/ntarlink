@@ -465,6 +465,9 @@ impl BodyHeadLeaseAudit {
         leased: bool,
         succeeded: bool,
     ) -> Result<(), String> {
+        if link_id.trim().is_empty() {
+            return Err("PAT head lease audit link ID must be nonempty".into());
+        }
         if from == to || !self.contains_head(from) || !self.contains_head(to) {
             return Err("unknown BODY-frame runtime head".into());
         }
@@ -737,7 +740,20 @@ impl BodyHeadRuntime {
                     self.record_typed_pat_attempt(&command, &rejected);
                     return Ok(BodyHeadPatRuntimeOutcome::Command(rejected));
                 }
-                let observed = if command.leased {
+                let observed = if command.link_id.trim().is_empty() {
+                    // Even provisional fault-gap commands must have a stable
+                    // link identity before they can mutate either head.
+                    let rejected = Err("BODY-frame PAT command link ID must be nonempty".into());
+                    self.record_failed_pair_attempt(
+                        command.from_head,
+                        command.to_head,
+                        command.at_ns,
+                        command.from_target_body,
+                        command.to_target_body,
+                        &rejected,
+                    );
+                    rejected
+                } else if command.leased {
                     // A PAT command must not implicitly acquire a pair lease.
                     // Only a preceding Reserve transition may establish ownership.
                     if self
@@ -2002,6 +2018,95 @@ mod tests {
         assert_eq!(runtime.history.get("a").unwrap().len(), 1);
         assert_eq!(runtime.history.get("b").unwrap().len(), 1);
         assert!(runtime.owners.is_empty());
+    }
+
+    #[test]
+    fn typed_pat_rejects_blank_link_identity_without_mutating_heads() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let mut audit = runtime.lease_audit();
+
+        for (link_id, leased) in [("", false), ("  ", true)] {
+            let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id,
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap()
+            else {
+                panic!("blank PAT link identity must reject the command");
+            };
+            assert_eq!(reason, "BODY-frame PAT command link ID must be nonempty");
+            runtime
+                .verify_sample_command("a", "b", 10, target, target, &Err(reason.clone()))
+                .unwrap();
+            assert_eq!(
+                audit
+                    .apply_transition(
+                        &runtime,
+                        BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                            link_id,
+                            from_head: "a",
+                            to_head: "b",
+                            at_ns: 10,
+                            leased: false,
+                            from_target_body: target,
+                            to_target_body: target,
+                            observed: &Err(reason),
+                        }),
+                    )
+                    .unwrap_err(),
+                "PAT head lease audit link ID must be nonempty"
+            );
+        }
+        assert!(runtime.history.is_empty());
+        assert!(runtime.owners.is_empty());
+        assert_eq!(runtime.last_pat_command_ns.get("a"), Some(&10));
+        assert_eq!(runtime.last_pat_command_ns.get("b"), Some(&10));
+
+        let BodyHeadPatRuntimeOutcome::Command(Ok(observed)) = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+                leased: false,
+                from_target_body: target,
+                to_target_body: target,
+            }))
+            .unwrap()
+        else {
+            panic!("valid same-time retry must succeed");
+        };
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &Ok(observed),
+                }),
+            )
+            .unwrap();
+        assert_eq!(runtime.history.get("a").unwrap().len(), 1);
+        assert_eq!(runtime.history.get("b").unwrap().len(), 1);
     }
 
     #[test]
