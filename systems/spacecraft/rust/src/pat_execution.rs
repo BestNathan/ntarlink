@@ -168,12 +168,12 @@ impl PatExecutionRuntime {
                             match self.faults.get(command.link_id) {
                                 None => Some("unknown PAT execution command link"),
                                 Some(state) => match state.down_cause() {
-                                    Some(FaultCause::Administrative) => {
-                                        Some("PAT execution command blocked by administrative fault")
-                                    }
-                                    Some(FaultCause::SampledPointing) => {
-                                        Some("PAT execution command blocked by sampled pointing fault")
-                                    }
+                                    Some(FaultCause::Administrative) => Some(
+                                        "PAT execution command blocked by administrative fault",
+                                    ),
+                                    Some(FaultCause::SampledPointing) => Some(
+                                        "PAT execution command blocked by sampled pointing fault",
+                                    ),
                                     None => None,
                                 },
                             }
@@ -747,8 +747,14 @@ mod tests {
         let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = outcome else {
             panic!("down-link command must be an observed failure");
         };
-        assert_eq!(reason, "PAT execution command blocked by administrative fault");
-        assert_eq!(runtime.head_runtime().predicted_at("a", 10).unwrap(), before);
+        assert_eq!(
+            reason,
+            "PAT execution command blocked by administrative fault"
+        );
+        assert_eq!(
+            runtime.head_runtime().predicted_at("a", 10).unwrap(),
+            before
+        );
         runtime
             .head_runtime()
             .verify_sample_command("a", "b", 10, target, target, &Err(reason))
@@ -860,14 +866,7 @@ mod tests {
         assert_eq!(reason, "unknown PAT execution command link");
         runtime
             .head_runtime()
-            .verify_sample_command(
-                "a",
-                "b",
-                10,
-                [1.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                &Err(reason),
-            )
+            .verify_sample_command("a", "b", 10, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], &Err(reason))
             .unwrap();
         assert!(matches!(
             runtime.apply_head(command("isl")).unwrap(),
