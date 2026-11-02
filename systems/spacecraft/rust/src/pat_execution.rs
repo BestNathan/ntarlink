@@ -174,8 +174,7 @@ impl PatExecutionRuntime {
                     .faults
                     .get_mut(link_id)
                     .ok_or("unknown PAT execution fault link")?;
-                let outcome =
-                    state.apply_batch(at_ns, [(FaultCause::SampledPointing, action)])?;
+                let outcome = state.apply_batch(at_ns, [(FaultCause::SampledPointing, action)])?;
                 self.last_pointing_observation_at
                     .insert(link_id.to_owned(), at_ns);
                 PatExecutionOutcome::Fault(outcome)
@@ -446,7 +445,10 @@ mod tests {
             ])
             .unwrap();
         assert_eq!(
-            outcomes.iter().map(|(context, _)| *context).collect::<Vec<_>>(),
+            outcomes
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
             ["command", "observation", "blocked"]
         );
         assert!(matches!(
@@ -535,7 +537,10 @@ mod tests {
             ])
             .unwrap();
         assert_eq!(
-            outcomes.iter().map(|(context, _)| *context).collect::<Vec<_>>(),
+            outcomes
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
             ["admin", "observed"]
         );
         assert_eq!(
