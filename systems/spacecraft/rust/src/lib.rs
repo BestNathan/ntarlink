@@ -2699,7 +2699,7 @@ mod tests {
                     at_ns: 20,
                 })
                 .unwrap_err(),
-            "BODY-frame runtime lease release precedes head history"
+            "BODY-frame PAT lease transition order mismatch"
         );
         assert_eq!(runtime.owners.get("a").map(String::as_str), Some("first"));
         assert_eq!(runtime.owners.get("b").map(String::as_str), Some("first"));
