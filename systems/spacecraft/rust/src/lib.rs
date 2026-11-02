@@ -666,11 +666,14 @@ impl BodyHeadRuntime {
             BodyHeadPatRuntimeTransition::Command(command) => {
                 // Failed commands are virtual-time observations too. Reject
                 // retroactive commands without rewinding the head clock.
-                if [command.from_head, command.to_head].into_iter().any(|head| {
-                    self.last_pat_command_ns
-                        .get(head)
-                        .is_some_and(|previous| command.at_ns < *previous)
-                }) {
+                if [command.from_head, command.to_head]
+                    .into_iter()
+                    .any(|head| {
+                        self.last_pat_command_ns
+                            .get(head)
+                            .is_some_and(|previous| command.at_ns < *previous)
+                    })
+                {
                     let rejected =
                         Err("BODY-frame PAT command precedes previous PAT command".into());
                     self.record_failed_pair_attempt(
