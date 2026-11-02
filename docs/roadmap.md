@@ -15,6 +15,9 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Fail closed when a typed SYS-02 PAT runtime audits a sample lacking typed link provenance, even if legacy paired follower history matches; retain standalone legacy compatibility and audit atomicity regression. Offline two-phase planning remains. See [status](implementation-status.md).
+
+
 - [x] Bind typed SYS-02 PAT success/failure provenance to the originating link, provisional lease mode, exact targets and result before the offline lease audit; reject cross-link samples even when head history matches while permitting provisional-to-leased reservation projection. This does not eliminate two-phase planning. See [status](implementation-status.md).
 
 - [x] Preserve per-head virtual-time chronology after rejected typed SYS-02 PAT commands, rejecting retroactive Reserve/Release and commands while retaining failure provenance and same-time retries. Offline planning and audit remain separate. See [status](implementation-status.md).

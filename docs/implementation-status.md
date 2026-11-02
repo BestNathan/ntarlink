@@ -1,3 +1,20 @@
+## SYS-02 typed PAT audit rejects legacy fallback in mixed runtimes
+
+Once a SYS-02 runtime has recorded any typed PAT command, its lease-only
+audit requires a matching typed command attempt for every sampled head pair
+and timestamp. Previously a separate legacy `observe_pair` call could create
+valid head history without link provenance; the audit silently accepted that
+sample when no typed attempt existed at its exact key. The typed path now
+fails closed rather than borrowing unauthenticated legacy history.
+
+**Verification and limits:** Rust regression covers a typed command followed
+by a valid legacy follower observation, rejects the latter in PAT audit,
+confirms that the rejected sample does not advance audit chronology, and
+preserves history-only audit for a purely standalone legacy runtime. The
+check reuses the existing attempt map and adds no dependencies or schema
+fields. This is still offline provisional planning and lease audit, not
+single-pass PAT execution or live shared-head arbitration.
+
 ## SYS-02 typed PAT command link provenance
 
 The typed SYS-02 PAT actuator transition now records the originating link ID,
