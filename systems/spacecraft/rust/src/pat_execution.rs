@@ -164,13 +164,25 @@ impl PatExecutionRuntime {
                     from_head,
                     to_head,
                     at_ns,
-                }) => (*at_ns, PatExecutionPhase::Release, link_id, from_head, to_head),
+                }) => (
+                    *at_ns,
+                    PatExecutionPhase::Release,
+                    link_id,
+                    from_head,
+                    to_head,
+                ),
                 PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
                     link_id,
                     from_head,
                     to_head,
                     at_ns,
-                }) => (*at_ns, PatExecutionPhase::Reserve, link_id, from_head, to_head),
+                }) => (
+                    *at_ns,
+                    PatExecutionPhase::Reserve,
+                    link_id,
+                    from_head,
+                    to_head,
+                ),
                 PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command)) => (
                     command.at_ns,
                     PatExecutionPhase::Command,
@@ -491,12 +503,18 @@ mod tests {
         ];
         let results = runtime.apply_timeline(events).unwrap();
         assert_eq!(
-            results.iter().map(|(context, _)| *context).collect::<Vec<_>>(),
+            results
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
             vec!["outage", "recovery", "reserve", "command"]
         );
         assert!(matches!(results[0].1, PatExecutionOutcome::Fault(_)));
         assert!(matches!(results[1].1, PatExecutionOutcome::Fault(_)));
-        assert!(matches!(results[2].1, PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Lease)));
+        assert!(matches!(
+            results[2].1,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Lease)
+        ));
         assert!(matches!(
             results[3].1,
             PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
@@ -529,11 +547,13 @@ mod tests {
         ];
         let outcomes = runtime.apply_timeline(events).unwrap();
         assert_eq!(
-            outcomes.into_iter().map(|(link, _)| link).collect::<Vec<_>>(),
+            outcomes
+                .into_iter()
+                .map(|(link, _)| link)
+                .collect::<Vec<_>>(),
             vec!["a", "z"]
         );
         assert!(!runtime.fault_state("a").unwrap().effective_up());
         assert!(!runtime.fault_state("z").unwrap().effective_up());
     }
-
 }
