@@ -1,4 +1,24 @@
-## SYS-02 repeated PAT attempt provenance deduplication
+## SYS-02 repeated PAT attempt provenance deduplication## SYS-02 typed PAT same-timestamp lease causality
+
+The executable SYS-02 PAT runtime now rejects Reserve and Release at the exact
+virtual timestamp of an already observed typed Command on either head. Both
+successful and rejected commands close the lease-edge phase at that instant.
+Previously only strictly earlier lease edges were rejected after failed
+commands, so a same-time Release or Reserve could change ownership after the
+Command phase and diverge from SYS-03's canonical Release/Reserve/Command order
+and the independent lease audit. A failed edge remains atomic: ownership and
+follower history are unchanged. Same-time command retries and a Release then
+Reserve handoff at the next valid instant remain supported.
+
+**Verification and limits:** Rust regression covers failed and successful
+commands, exact-time rejected lease edges, unchanged ownership and history,
+valid retries, and next-instant shared-head handoff. Existing packet/PAT
+scenarios remain the cross-subsystem CI acceptance. The check reuses the
+existing O(H) per-head typed-command watermark, adding no schema fields,
+dependencies or new state. This does not remove offline provisional planning,
+lease audit, or the shared-head predicted-mode limitation.
+
+
 
 The typed PAT command provenance ledger and the failed paired-command evidence
 ledger now retain one entry for each distinct attempt at a given ordered head
