@@ -848,7 +848,7 @@ mod tests {
     #[test]
     fn unknown_registered_command_link_fails_and_allows_same_time_retry() {
         let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
-        let command = |link_id| {
+        fn command(link_id: &str) -> BodyHeadPatRuntimeTransition<'_> {
             BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
                 link_id,
                 from_head: "a",
@@ -858,7 +858,7 @@ mod tests {
                 from_target_body: [1.0, 0.0, 0.0],
                 to_target_body: [1.0, 0.0, 0.0],
             })
-        };
+        }
         let outcome = runtime.apply_head(command("missing")).unwrap();
         let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = outcome else {
             panic!("unknown command link must be an observed failure");
