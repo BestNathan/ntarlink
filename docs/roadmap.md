@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Bind typed SYS-02 PAT success/failure provenance to the originating link, lease mode, exact targets and result before the offline lease audit; reject cross-link or wrong-mode samples even when head history matches. This does not eliminate two-phase planning. See [status](implementation-status.md).
+
 - [x] Preserve per-head virtual-time chronology after rejected typed SYS-02 PAT commands, rejecting retroactive Reserve/Release and commands while retaining failure provenance and same-time retries. Offline planning and audit remain separate. See [status](implementation-status.md).
 
 - [x] Require an explicit matching SYS-02 pair reservation before any typed leased PAT Command; reject unreserved, wrong-link and post-release commands with recorded failed-attempt provenance, preserving same-time retries and fault-gap semantics. Offline planning and audit remain separate. See [status](implementation-status.md).
