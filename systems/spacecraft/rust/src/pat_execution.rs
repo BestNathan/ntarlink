@@ -17,6 +17,8 @@ enum PatExecutionPhase {
     Release,
     Reserve,
     Command,
+    // A sampled pointing result derived from a command cannot precede it.
+    Observation,
 }
 
 /// One explicit virtual-time transition. A fault batch is atomic for one link;
@@ -27,6 +29,13 @@ pub enum PatExecutionTransition<'a> {
         link_id: &'a str,
         at_ns: u64,
         edges: &'a [(FaultCause, LinkAction)],
+    },
+    /// A sampled-pointing result observed after commands at the same instant.
+    /// Unlike a pre-command fault, it cannot invalidate its own observation.
+    PointingObservation {
+        link_id: &'a str,
+        at_ns: u64,
+        action: LinkAction,
     },
     Head(BodyHeadPatRuntimeTransition<'a>),
 }
@@ -47,6 +56,8 @@ pub struct PatExecutionRuntime {
     /// A link may commit only one atomic fault batch per virtual instant.
     /// The global clock makes the latest timestamp sufficient per link.
     last_fault_batch_at: HashMap<String, u64>,
+    last_sampled_fault_at: HashMap<String, u64>,
+    last_pointing_observation_at: HashMap<String, u64>,
     last_event: Option<(u64, PatExecutionPhase)>,
 }
 
@@ -70,6 +81,8 @@ impl PatExecutionRuntime {
             heads,
             faults,
             last_fault_batch_at: HashMap::new(),
+            last_sampled_fault_at: HashMap::new(),
+            last_pointing_observation_at: HashMap::new(),
             last_event: None,
         })
     }
@@ -96,6 +109,9 @@ impl PatExecutionRuntime {
     ) -> Result<PatExecutionOutcome, String> {
         let (at_ns, phase) = match &transition {
             PatExecutionTransition::FaultBatch { at_ns, .. } => (*at_ns, PatExecutionPhase::Fault),
+            PatExecutionTransition::PointingObservation { at_ns, .. } => {
+                (*at_ns, PatExecutionPhase::Observation)
+            }
             PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
                 at_ns, ..
             }) => (*at_ns, PatExecutionPhase::Release),
@@ -124,12 +140,43 @@ impl PatExecutionRuntime {
                 if self.last_fault_batch_at.get(link_id).copied() == Some(at_ns) {
                     return Err("duplicate PAT execution fault batch at timestamp".into());
                 }
+                let has_sampled = edges
+                    .iter()
+                    .any(|(cause, _)| *cause == FaultCause::SampledPointing);
+                if has_sampled
+                    && self.last_pointing_observation_at.get(link_id).copied() == Some(at_ns)
+                {
+                    return Err("ambiguous PAT sampled-pointing transition at timestamp".into());
+                }
                 let state = self
                     .faults
                     .get_mut(link_id)
                     .ok_or("unknown PAT execution fault link")?;
                 let outcome = state.apply_batch(at_ns, edges.iter().cloned())?;
                 self.last_fault_batch_at.insert(link_id.to_owned(), at_ns);
+                if has_sampled {
+                    self.last_sampled_fault_at.insert(link_id.to_owned(), at_ns);
+                }
+                PatExecutionOutcome::Fault(outcome)
+            }
+            PatExecutionTransition::PointingObservation {
+                link_id,
+                at_ns,
+                action,
+            } => {
+                if self.last_pointing_observation_at.get(link_id).copied() == Some(at_ns) {
+                    return Err("duplicate PAT pointing observation at timestamp".into());
+                }
+                if self.last_sampled_fault_at.get(link_id).copied() == Some(at_ns) {
+                    return Err("ambiguous PAT sampled-pointing transition at timestamp".into());
+                }
+                let state = self
+                    .faults
+                    .get_mut(link_id)
+                    .ok_or("unknown PAT execution fault link")?;
+                let outcome = state.apply_batch(at_ns, [(FaultCause::SampledPointing, action)])?;
+                self.last_pointing_observation_at
+                    .insert(link_id.to_owned(), at_ns);
                 PatExecutionOutcome::Fault(outcome)
             }
             PatExecutionTransition::Head(transition) => {
@@ -196,7 +243,7 @@ impl PatExecutionRuntime {
 
     /// Execute a mixed batch in deterministic virtual-time and phase order.
     /// The caller may supply events in any order; equal-time events sort by
-    /// Fault -> Release -> Reserve -> Command, then link and head identity.
+    /// Fault -> Release -> Reserve -> Command -> Observation, then link and head identity.
     /// Outcomes retain their caller-provided context in execution order.
     /// Same-time, same-phase contention for any head is rejected before the
     /// batch begins, rather than selecting a winner by caller input order.
@@ -218,11 +265,29 @@ impl PatExecutionRuntime {
         // Release -> Reserve -> Command handoff at one instant remains legal.
         let mut occupied = HashSet::new();
         let mut fault_instants = HashSet::new();
+        let mut sampled_fault_instants = HashSet::new();
+        let mut observation_instants = HashSet::new();
         for (transition, _) in &events {
             let (at_ns, phase, from_head, to_head) = match transition {
-                PatExecutionTransition::FaultBatch { link_id, at_ns, .. } => {
+                PatExecutionTransition::FaultBatch {
+                    link_id,
+                    at_ns,
+                    edges,
+                } => {
                     if !fault_instants.insert((*at_ns, *link_id)) {
                         return Err("duplicate PAT execution fault batch at timestamp".into());
+                    }
+                    if edges
+                        .iter()
+                        .any(|(cause, _)| *cause == FaultCause::SampledPointing)
+                    {
+                        sampled_fault_instants.insert((*at_ns, *link_id));
+                    }
+                    continue;
+                }
+                PatExecutionTransition::PointingObservation { link_id, at_ns, .. } => {
+                    if !observation_instants.insert((*at_ns, *link_id)) {
+                        return Err("duplicate PAT pointing observation at timestamp".into());
                     }
                     continue;
                 }
@@ -257,12 +322,22 @@ impl PatExecutionRuntime {
             }
         }
 
+        if observation_instants
+            .iter()
+            .any(|instant| sampled_fault_instants.contains(instant))
+        {
+            return Err("ambiguous PAT sampled-pointing transition at timestamp".into());
+        }
+
         fn key<'a>(
             event: &'a PatExecutionTransition<'_>,
         ) -> (u64, PatExecutionPhase, &'a str, &'a str, &'a str) {
             match event {
                 PatExecutionTransition::FaultBatch { link_id, at_ns, .. } => {
                     (*at_ns, PatExecutionPhase::Fault, link_id, "", "")
+                }
+                PatExecutionTransition::PointingObservation { link_id, at_ns, .. } => {
+                    (*at_ns, PatExecutionPhase::Observation, link_id, "", "")
                 }
                 PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
                     link_id,
@@ -337,6 +412,202 @@ mod tests {
                 settling_ns: None,
             })
             .to_vec()
+    }
+
+    #[test]
+    fn command_derived_pointing_fault_follows_its_own_command() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        let command = |at_ns| {
+            PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                BodyHeadPatCommand {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns,
+                    leased: false,
+                    from_target_body: [1.0, 0.0, 0.0],
+                    to_target_body: [1.0, 0.0, 0.0],
+                },
+            ))
+        };
+        let outcomes = runtime
+            .apply_timeline(vec![
+                (
+                    PatExecutionTransition::PointingObservation {
+                        link_id: "isl",
+                        at_ns: 10,
+                        action: LinkAction::Down,
+                    },
+                    "observation",
+                ),
+                (command(11), "blocked"),
+                (command(10), "command"),
+            ])
+            .unwrap();
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
+            ["command", "observation", "blocked"]
+        );
+        assert!(matches!(
+            &outcomes[0].1,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+        ));
+        assert!(matches!(
+            &outcomes[1].1,
+            PatExecutionOutcome::Fault(result) if result.was_up && !result.now_up
+        ));
+        assert!(matches!(
+            &outcomes[2].1,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Err(reason)))
+                if reason == "PAT execution command blocked by sampled pointing fault"
+        ));
+        runtime
+            .apply(PatExecutionTransition::PointingObservation {
+                link_id: "isl",
+                at_ns: 12,
+                action: LinkAction::Up,
+            })
+            .unwrap();
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+        assert!(matches!(
+            runtime.apply(command(13)).unwrap(),
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+        ));
+    }
+
+    #[test]
+    fn pointing_observation_conflicts_fail_before_any_timeline_mutation() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        let admin = [(FaultCause::Administrative, LinkAction::Down)];
+        let sampled = [(FaultCause::SampledPointing, LinkAction::Down)];
+        assert_eq!(
+            runtime
+                .apply_timeline(vec![
+                    (
+                        PatExecutionTransition::PointingObservation {
+                            link_id: "isl",
+                            at_ns: 10,
+                            action: LinkAction::Up,
+                        },
+                        0,
+                    ),
+                    (
+                        PatExecutionTransition::FaultBatch {
+                            link_id: "isl",
+                            at_ns: 10,
+                            edges: &sampled,
+                        },
+                        1,
+                    ),
+                    (
+                        PatExecutionTransition::FaultBatch {
+                            link_id: "isl",
+                            at_ns: 9,
+                            edges: &admin,
+                        },
+                        2,
+                    ),
+                ])
+                .unwrap_err(),
+            "ambiguous PAT sampled-pointing transition at timestamp"
+        );
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+
+        let outcomes = runtime
+            .apply_timeline(vec![
+                (
+                    PatExecutionTransition::PointingObservation {
+                        link_id: "isl",
+                        at_ns: 10,
+                        action: LinkAction::Down,
+                    },
+                    "observed",
+                ),
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "isl",
+                        at_ns: 10,
+                        edges: &admin,
+                    },
+                    "admin",
+                ),
+            ])
+            .unwrap();
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
+            ["admin", "observed"]
+        );
+        assert_eq!(
+            runtime.fault_state("isl").unwrap().down_cause(),
+            Some(FaultCause::Administrative)
+        );
+        let committed = *runtime.fault_state("isl").unwrap();
+        assert_eq!(
+            runtime
+                .apply(PatExecutionTransition::PointingObservation {
+                    link_id: "isl",
+                    at_ns: 10,
+                    action: LinkAction::Up,
+                })
+                .unwrap_err(),
+            "duplicate PAT pointing observation at timestamp"
+        );
+        assert_eq!(*runtime.fault_state("isl").unwrap(), committed);
+        runtime
+            .apply(PatExecutionTransition::PointingObservation {
+                link_id: "isl",
+                at_ns: 11,
+                action: LinkAction::Up,
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.fault_state("isl").unwrap().down_cause(),
+            Some(FaultCause::Administrative)
+        );
+    }
+
+    #[test]
+    fn duplicate_pointing_observations_reject_atomic_batch() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        let admin = [(FaultCause::Administrative, LinkAction::Down)];
+        assert_eq!(
+            runtime
+                .apply_timeline(vec![
+                    (
+                        PatExecutionTransition::FaultBatch {
+                            link_id: "isl",
+                            at_ns: 1,
+                            edges: &admin,
+                        },
+                        0,
+                    ),
+                    (
+                        PatExecutionTransition::PointingObservation {
+                            link_id: "isl",
+                            at_ns: 2,
+                            action: LinkAction::Down,
+                        },
+                        1,
+                    ),
+                    (
+                        PatExecutionTransition::PointingObservation {
+                            link_id: "isl",
+                            at_ns: 2,
+                            action: LinkAction::Up,
+                        },
+                        2,
+                    ),
+                ])
+                .unwrap_err(),
+            "duplicate PAT pointing observation at timestamp"
+        );
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
     }
 
     #[test]
