@@ -14,7 +14,8 @@ use ntarlink_spacecraft::{
     body_tracking_error_allowed, body_tracking_target_rate_allowed,
     geometry_los_acceleration_allowed, geometry_los_rate_allowed, geometry_pointing_allowed,
     pointing_allowed, BodyHeadPatCommand, BodyHeadPatRuntimeOutcome, BodyHeadPatRuntimeTransition,
-    BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability, PatFaultState,
+    BodyHeadPatSample, BodyHeadPatTransition, BodyHeadRuntime, HeadAvailability,
+    PatExecutionOutcome, PatExecutionRuntime, PatExecutionTransition,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1136,68 +1137,105 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         faults.sort_by_key(|(index, fault)| (fault.at_ns, *index));
     }
 
+    // Replay all optical fault edges through the same typed SYS-02 event owner
+    // used by head transitions. The planner still projects availability
+    // windows offline, but no longer owns a separate per-link fault reducer.
+    // Sort across links before replay: a per-link loop would violate the
+    // execution owner's global virtual-time clock.
+    let initial_links: Vec<_> = scenario
+        .optical_pat
+        .iter()
+        .map(|config| {
+            let link = scenario
+                .links
+                .iter()
+                .find(|link| link.id == config.link_id)
+                .expect("validated optical PAT link");
+            (config.link_id.as_str(), link.up)
+        })
+        .collect();
+    let mut fault_runtime = PatExecutionRuntime::new(&[], &initial_links)?;
+    let mut batches = Vec::new();
+    for (&link_id, faults) in &faults_by_link {
+        let mut index = 0;
+        while index < faults.len() {
+            let at_ns = faults[index].1.at_ns;
+            let start = index;
+            while index < faults.len() && faults[index].1.at_ns == at_ns {
+                index += 1;
+            }
+            let edges = faults[start..index]
+                .iter()
+                .map(|(_, fault)| (fault.cause, fault.action.clone()))
+                .collect::<Vec<_>>();
+            batches.push((at_ns, link_id, edges));
+        }
+    }
+    batches.sort_by_key(|(at_ns, link_id, _)| (*at_ns, *link_id));
+
     let mut admin_windows: HashMap<&str, Vec<(u64, u64)>> = HashMap::new();
     let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
-    let mut effective_faults: Vec<Fault> = Vec::new();
-    for config in &scenario.optical_pat {
-        let link = scenario
-            .links
-            .iter()
-            .find(|link| link.id == config.link_id)
-            .expect("validated optical PAT link");
-        let mut windows = Vec::new();
-        let mut cursor = 0;
-        let mut fault_state = PatFaultState::new(link.up);
-        if let Some(faults) = faults_by_link.get(config.link_id.as_str()) {
-            let mut index = 0;
-            while index < faults.len() {
-                let at_ns = faults[index].1.at_ns;
-                let start = index;
-                while index < faults.len() && faults[index].1.at_ns == at_ns {
-                    index += 1;
-                }
-                // SYS-02 owns atomic same-instant fault folding. A contradictory
-                // same-domain batch must not depend on scenario input order.
-                let transition = fault_state.apply_batch(
-                    at_ns,
-                    faults[start..index]
-                        .iter()
-                        .map(|(_, fault)| (fault.cause, fault.action.clone())),
-                )?;
-                let was_up = transition.was_up;
-                let now_up = transition.now_up;
-                if was_up != now_up {
-                    if was_up && cursor < at_ns {
-                        windows.push((cursor, at_ns));
-                    }
-                    if !now_up {
-                        down_faults.insert(
-                            (config.link_id.as_str(), at_ns),
-                            transition
-                                .down_cause
-                                .expect("effective PAT fault state is down"),
-                        );
-                    }
-                    cursor = at_ns;
-                    // The packet engine consumes the *effective* state, not
-                    // independent raw fault edges that could reopen it early.
-                    effective_faults.push(Fault {
-                        at_ns,
-                        link_id: config.link_id.clone(),
-                        action: if now_up {
-                            LinkAction::Up
-                        } else {
-                            LinkAction::Down
-                        },
-                        cause: FaultCause::Administrative,
-                    });
-                }
+    let mut effective_faults_by_link: HashMap<&str, Vec<Fault>> = HashMap::new();
+    let mut cursors: HashMap<&str, u64> = HashMap::new();
+    for (at_ns, link_id, edges) in batches {
+        let transition = match fault_runtime.apply(PatExecutionTransition::FaultBatch {
+            link_id,
+            at_ns,
+            edges: &edges,
+        })? {
+            PatExecutionOutcome::Fault(outcome) => outcome,
+            PatExecutionOutcome::Head(_) => unreachable!("fault batch returned head outcome"),
+        };
+        if transition.was_up != transition.now_up {
+            let cursor = cursors.entry(link_id).or_insert(0);
+            if transition.was_up && *cursor < at_ns {
+                admin_windows
+                    .entry(link_id)
+                    .or_default()
+                    .push((*cursor, at_ns));
             }
+            if !transition.now_up {
+                down_faults.insert(
+                    (link_id, at_ns),
+                    transition
+                        .down_cause
+                        .expect("effective PAT fault state is down"),
+                );
+            }
+            *cursor = at_ns;
+            effective_faults_by_link
+                .entry(link_id)
+                .or_default()
+                .push(Fault {
+                    at_ns,
+                    link_id: link_id.to_owned(),
+                    action: if transition.now_up {
+                        LinkAction::Up
+                    } else {
+                        LinkAction::Down
+                    },
+                    cause: FaultCause::Administrative,
+                });
         }
-        if fault_state.effective_up() && cursor < scenario.duration_ns {
+    }
+    let mut effective_faults = Vec::new();
+    for config in &scenario.optical_pat {
+        let link_id = config.link_id.as_str();
+        let cursor = cursors.get(link_id).copied().unwrap_or(0);
+        let windows = admin_windows.entry(link_id).or_default();
+        if fault_runtime
+            .fault_state(link_id)
+            .expect("registered optical PAT link")
+            .effective_up()
+            && cursor < scenario.duration_ns
+        {
             windows.push((cursor, scenario.duration_ns));
         }
-        admin_windows.insert(config.link_id.as_str(), windows);
+        // Preserve the packet engine's previous link-major fault ordering.
+        // Only the SYS-02 replay is globally chronological.
+        if let Some(faults) = effective_faults_by_link.remove(link_id) {
+            effective_faults.extend(faults);
+        }
     }
 
     let availability = HeadAvailability::new(&scenario.optical_head_outages);
@@ -1750,6 +1788,58 @@ mod tests {
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+
+        // Interleaved fault batches from two optical links must be replayed
+        // chronologically rather than in PAT configuration order. Reversing
+        // their input order must not change admitted contacts or packet traces.
+        let mut interleaved = scenario.clone();
+        interleaved.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-c-d".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 40_000_000,
+                link_id: "isl-a-c".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 60_000_000,
+                link_id: "isl-c-d".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 80_000_000,
+                link_id: "isl-a-c".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        let windows = |scenario: &Scenario| {
+            prepare_pat(scenario)
+                .unwrap()
+                .0
+                .contacts
+                .iter()
+                .filter(|contact| contact.link_id.starts_with("isl-"))
+                .map(|contact| (contact.link_id.clone(), contact.start_ns, contact.end_ns))
+                .collect::<Vec<_>>()
+        };
+        let first_windows = windows(&interleaved);
+        assert!(first_windows
+            .iter()
+            .any(|(link, start, _)| { link == "isl-c-d" && *start >= 80_000_000 }));
+        let first_report = run(&interleaved).unwrap();
+        interleaved.faults.reverse();
+        assert_eq!(windows(&interleaved), first_windows);
+        assert_eq!(
+            serde_json::to_vec(&run(&interleaved).unwrap()).unwrap(),
+            serde_json::to_vec(&first_report).unwrap()
         );
     }
 
