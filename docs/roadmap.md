@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Deduplicate identical same-time SYS-02 typed PAT command attempts and failed-command evidence by exact IEEE-754 target bits, link identity, lease mode and outcome, retaining distinct failure modes and successful retries. This bounds redundant provenance from repeated identical calls but does not cap unique attempts or remove offline lease audit. See [status](implementation-status.md).
+
 - [x] Reject blank or whitespace-only typed SYS-02 PAT link identities before actuator mutation, including provisional fault-gap commands; preserve exact failed-command provenance, audit atomicity and valid same-time retries. This remains offline two-phase PAT planning. See [status](implementation-status.md).
 
 - [x] Fail closed when a typed SYS-02 PAT runtime audits a sample lacking typed link provenance, even if legacy paired follower history matches; retain standalone legacy compatibility and audit atomicity regression. Offline two-phase planning remains. See [status](implementation-status.md).
