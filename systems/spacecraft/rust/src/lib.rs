@@ -234,12 +234,10 @@ pub struct BodyHeadRuntime {
     lease_start_ns: HashMap<String, u64>,
     /// Earliest allowed time for a new command after a timed lease release.
     release_floor_ns: HashMap<String, u64>,
-    /// Latest accepted typed PAT command instant per head, including failed
-    /// attempts that leave no successful follower history.
-    last_pat_command_ns: HashMap<String, u64>,
-    /// Accepted typed lease edges enforce Release -> Reserve ordering at each
-    /// virtual instant, even when no actuator command has been sampled.
-    last_pat_lease_edge: HashMap<String, (u64, LeaseAuditPhase)>,
+    /// One per-head virtual-time phase clock for accepted typed lease edges
+    /// and all typed commands, including rejected commands without history.
+    /// The canonical same-instant order is Release -> Reserve -> Sample.
+    last_pat_transition: HashMap<String, (u64, LeaseAuditPhase)>,
     /// Rejected paired commands have no committed head snapshot. Preserve
     /// their exact inputs and error reason for the offline PAT audit.
     failed_pair_attempts: HashMap<(String, String, u64), Vec<FailedPairAttempt>>,
@@ -692,8 +690,7 @@ impl BodyHeadRuntime {
             link_heads: HashMap::new(),
             lease_start_ns: HashMap::new(),
             release_floor_ns: HashMap::new(),
-            last_pat_command_ns: HashMap::new(),
-            last_pat_lease_edge: HashMap::new(),
+            last_pat_transition: HashMap::new(),
             failed_pair_attempts: HashMap::new(),
             pat_command_attempts: HashMap::new(),
         })
@@ -710,7 +707,7 @@ impl BodyHeadRuntime {
         phase: LeaseAuditPhase,
     ) -> Result<(), String> {
         if [from_head, to_head].into_iter().any(|head| {
-            self.last_pat_lease_edge
+            self.last_pat_transition
                 .get(head)
                 .is_some_and(|previous| *previous > (at_ns, phase))
         }) {
@@ -719,7 +716,7 @@ impl BodyHeadRuntime {
         Ok(())
     }
 
-    fn record_pat_lease_edge(
+    fn record_pat_transition(
         &mut self,
         from_head: &str,
         to_head: &str,
@@ -727,7 +724,7 @@ impl BodyHeadRuntime {
         phase: LeaseAuditPhase,
     ) {
         for head in [from_head, to_head] {
-            self.last_pat_lease_edge
+            self.last_pat_transition
                 .insert(head.to_owned(), (at_ns, phase));
         }
     }
@@ -748,7 +745,7 @@ impl BodyHeadRuntime {
             } => {
                 self.check_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Release)?;
                 self.release_pair_at(link_id, from_head, to_head, at_ns)?;
-                self.record_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Release);
+                self.record_pat_transition(from_head, to_head, at_ns, LeaseAuditPhase::Release);
                 Ok(BodyHeadPatRuntimeOutcome::Lease)
             }
             BodyHeadPatRuntimeTransition::Reserve {
@@ -759,7 +756,7 @@ impl BodyHeadRuntime {
             } => {
                 self.check_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Reserve)?;
                 self.reserve_pair_for_link(link_id, from_head, to_head, at_ns)?;
-                self.record_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Reserve);
+                self.record_pat_transition(from_head, to_head, at_ns, LeaseAuditPhase::Reserve);
                 Ok(BodyHeadPatRuntimeOutcome::Lease)
             }
             BodyHeadPatRuntimeTransition::Command(command) => {
@@ -768,13 +765,13 @@ impl BodyHeadRuntime {
                 if [command.from_head, command.to_head]
                     .into_iter()
                     .any(|head| {
-                        self.last_pat_command_ns
+                        self.last_pat_transition
                             .get(head)
-                            .is_some_and(|previous| command.at_ns < *previous)
+                            .is_some_and(|(previous, _)| command.at_ns < *previous)
                     })
                 {
                     let rejected =
-                        Err("BODY-frame PAT command precedes previous PAT command".into());
+                        Err("BODY-frame PAT command precedes previous PAT transition".into());
                     self.record_failed_pair_attempt(
                         command.from_head,
                         command.to_head,
@@ -850,10 +847,12 @@ impl BodyHeadRuntime {
                     && self.heads.contains_key(command.from_head)
                     && self.heads.contains_key(command.to_head)
                 {
-                    for head in [command.from_head, command.to_head] {
-                        self.last_pat_command_ns
-                            .insert(head.to_owned(), command.at_ns);
-                    }
+                    self.record_pat_transition(
+                        command.from_head,
+                        command.to_head,
+                        command.at_ns,
+                        LeaseAuditPhase::Sample,
+                    );
                 }
                 Ok(BodyHeadPatRuntimeOutcome::Command(observed))
             }
@@ -1128,10 +1127,12 @@ impl BodyHeadRuntime {
                     .and_then(|samples| samples.last())
                     .is_some_and(|(sample_ns, _)| at_ns <= *sample_ns)
                 || self
-                    .last_pat_command_ns
+                    .last_pat_transition
                     .get(head_id)
-                    // Lease edges must precede commands at the same instant.
-                    .is_some_and(|last| at_ns <= *last)
+                    // A typed command closes the lease-edge phase at its instant.
+                    .is_some_and(|(last, phase)| {
+                        at_ns < *last || (at_ns == *last && *phase == LeaseAuditPhase::Sample)
+                    })
             {
                 return Err(
                     "BODY-frame pair reservation conflicts with head history or owner".into(),
@@ -1211,10 +1212,12 @@ impl BodyHeadRuntime {
                     .get(head_id)
                     .is_some_and(|released_at| at_ns < *released_at)
                 || self
-                    .last_pat_command_ns
+                    .last_pat_transition
                     .get(head_id)
-                    // Lease edges must precede commands at the same instant.
-                    .is_some_and(|last| at_ns <= *last)
+                    // A typed command closes the lease-edge phase at its instant.
+                    .is_some_and(|(last, phase)| {
+                        at_ns < *last || (at_ns == *last && *phase == LeaseAuditPhase::Sample)
+                    })
             {
                 return Err("BODY-frame runtime lease release precedes head history".into());
             }
@@ -2227,8 +2230,14 @@ mod tests {
         }
         assert!(runtime.history.is_empty());
         assert!(runtime.owners.is_empty());
-        assert_eq!(runtime.last_pat_command_ns.get("a"), Some(&10));
-        assert_eq!(runtime.last_pat_command_ns.get("b"), Some(&10));
+        assert_eq!(
+            runtime.last_pat_transition.get("a"),
+            Some(&(10, LeaseAuditPhase::Sample))
+        );
+        assert_eq!(
+            runtime.last_pat_transition.get("b"),
+            Some(&(10, LeaseAuditPhase::Sample))
+        );
 
         let BodyHeadPatRuntimeOutcome::Command(Ok(observed)) = runtime
             .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
@@ -2261,6 +2270,125 @@ mod tests {
             .unwrap();
         assert_eq!(runtime.history.get("a").unwrap().len(), 1);
         assert_eq!(runtime.history.get("b").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn typed_pat_phase_clock_rejects_commands_before_unsampled_lease_edges() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.last_pat_transition.get("a"),
+            Some(&(20, LeaseAuditPhase::Reserve))
+        );
+        let retroactive = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 19,
+                leased: true,
+                from_target_body: target,
+                to_target_body: target,
+            }))
+            .unwrap();
+        assert!(matches!(
+            retroactive,
+            BodyHeadPatRuntimeOutcome::Command(Err(_))
+        ));
+        assert!(runtime.history.is_empty());
+        assert_eq!(
+            runtime.last_pat_transition.get("b"),
+            Some(&(20, LeaseAuditPhase::Reserve))
+        );
+
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        assert_eq!(
+            runtime.last_pat_transition.get("a"),
+            Some(&(20, LeaseAuditPhase::Sample))
+        );
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 21,
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.last_pat_transition.get("a"),
+            Some(&(21, LeaseAuditPhase::Release))
+        );
+        let retroactive = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+                leased: false,
+                from_target_body: target,
+                to_target_body: target,
+            }))
+            .unwrap();
+        assert!(matches!(
+            retroactive,
+            BodyHeadPatRuntimeOutcome::Command(Err(_))
+        ));
+        assert_eq!(runtime.history.get("a").unwrap().len(), 1);
+        assert_eq!(
+            runtime.last_pat_transition.get("a"),
+            Some(&(21, LeaseAuditPhase::Release))
+        );
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 21,
+                    leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
     }
 
     #[test]
@@ -2393,7 +2521,7 @@ mod tests {
         };
         assert_eq!(
             reason,
-            "BODY-frame PAT command precedes previous PAT command"
+            "BODY-frame PAT command precedes previous PAT transition"
         );
         runtime
             .verify_sample_command("a", "b", 19, target, target, &Err(reason))
@@ -2573,7 +2701,7 @@ mod tests {
                     at_ns: 20,
                 })
                 .unwrap_err(),
-            "BODY-frame runtime lease release precedes head history"
+            "BODY-frame PAT lease transition order mismatch"
         );
         assert_eq!(runtime.owners.get("a").map(String::as_str), Some("first"));
         assert_eq!(runtime.owners.get("b").map(String::as_str), Some("first"));
