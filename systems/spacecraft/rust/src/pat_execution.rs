@@ -133,6 +133,21 @@ impl PatExecutionRuntime {
                 PatExecutionOutcome::Fault(outcome)
             }
             PatExecutionTransition::Head(transition) => {
+                // Offline head-only replay has no registered fault links.
+                // Once links are registered, a new lease must be admitted
+                // against their committed fault state. Releases remain legal
+                // while a link is down so its heads can be reassigned.
+                if let BodyHeadPatRuntimeTransition::Reserve { link_id, .. } = &transition {
+                    if !self.faults.is_empty() {
+                        let fault = self
+                            .faults
+                            .get(*link_id)
+                            .ok_or("unknown PAT execution reservation link")?;
+                        if !fault.effective_up() {
+                            return Err("PAT execution reservation link is down".into());
+                        }
+                    }
+                }
                 PatExecutionOutcome::Head(self.heads.apply_pat_transition(transition)?)
             }
         };
@@ -556,4 +571,128 @@ mod tests {
         assert!(!runtime.fault_state("a").unwrap().effective_up());
         assert!(!runtime.fault_state("z").unwrap().effective_up());
     }
+    #[test]
+    fn registered_fault_state_gates_reservation_but_not_release() {
+        let mut runtime =
+            PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", true)]).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let up = [(FaultCause::Administrative, LinkAction::Up)];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+
+        let reserve = |link_id, at_ns| {
+            PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id,
+                from_head: "a",
+                to_head: "b",
+                at_ns,
+            })
+        };
+        assert_eq!(
+            runtime.apply(reserve("isl", 10)).unwrap_err(),
+            "PAT execution reservation link is down"
+        );
+        assert_eq!(
+            runtime.apply(reserve("missing", 10)).unwrap_err(),
+            "unknown PAT execution reservation link"
+        );
+
+        // Rejected reservations must not consume the Reserve phase: another
+        // link can still commit a fault batch at this exact instant.
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "backup",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 11,
+                edges: &up,
+            })
+            .unwrap();
+        runtime.apply(reserve("isl", 11)).unwrap();
+        let command = BodyHeadPatCommand {
+            link_id: "isl",
+            from_head: "a",
+            to_head: "b",
+            at_ns: 11,
+            leased: true,
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [1.0, 0.0, 0.0],
+        };
+        assert!(matches!(
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Command(command))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+
+        // A fault at the next instant must not prevent release of the
+        // occupied heads. A different, healthy link can then acquire them.
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 12,
+                edges: &down,
+            })
+            .unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 12,
+            })
+            .unwrap();
+        assert_eq!(
+            runtime.apply(reserve("backup", 12)).unwrap_err(),
+            "PAT execution reservation link is down"
+        );
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "backup",
+                at_ns: 13,
+                edges: &up,
+            })
+            .unwrap();
+        runtime.apply(reserve("backup", 13)).unwrap();
+        assert!(!runtime.fault_state("isl").unwrap().effective_up());
+        assert!(runtime.fault_state("backup").unwrap().effective_up());
+    }
+
+    #[test]
+    fn unregistered_head_only_timeline_keeps_offline_compatibility() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[]).unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "offline",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "offline",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: true,
+                    from_target_body: [1.0, 0.0, 0.0],
+                    to_target_body: [1.0, 0.0, 0.0],
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+    }
+
 }
