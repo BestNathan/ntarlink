@@ -240,6 +240,9 @@ pub struct BodyHeadRuntime {
     /// Rejected paired commands have no committed head snapshot. Preserve
     /// their exact inputs and error reason for the offline PAT audit.
     failed_pair_attempts: HashMap<(String, String, u64), Vec<FailedPairAttempt>>,
+    /// Link identity and lease mode of typed commands, including failures.
+    /// Legacy standalone follower observations do not populate this ledger.
+    pat_command_attempts: HashMap<(String, String, u64), Vec<PatCommandAttempt>>,
 }
 
 #[derive(Debug)]
@@ -247,6 +250,17 @@ struct FailedPairAttempt {
     from_target_bits: [u64; 3],
     to_target_bits: [u64; 3],
     reason: String,
+}
+
+/// Bind typed PAT command evidence to the originating link and lease mode.
+/// Head history alone cannot distinguish links that use the same head pair.
+#[derive(Debug)]
+struct PatCommandAttempt {
+    link_id: String,
+    leased: bool,
+    from_target_bits: [u64; 3],
+    to_target_bits: [u64; 3],
+    outcome: Result<([f64; 3], [f64; 3]), String>,
 }
 
 /// One typed, authenticated PAT command submitted to the SYS-02 lease audit.
@@ -496,14 +510,7 @@ impl BodyHeadLeaseAudit {
         runtime: &BodyHeadRuntime,
         sample: BodyHeadPatSample<'_>,
     ) -> Result<(), String> {
-        runtime.verify_sample_command(
-            sample.from_head,
-            sample.to_head,
-            sample.at_ns,
-            sample.from_target_body,
-            sample.to_target_body,
-            sample.observed,
-        )?;
+        runtime.verify_pat_sample(&sample)?;
         self.sample(
             sample.link_id,
             sample.from_head,
@@ -603,6 +610,38 @@ impl BodyHeadRuntime {
         Ok(())
     }
 
+    /// Verify the link and lease mode of a typed PAT command as well as its
+    /// actual committed outcome. Standalone legacy follower calls have no
+    /// typed provenance, so they retain their existing history-only checks.
+    fn verify_pat_sample(&self, sample: &BodyHeadPatSample<'_>) -> Result<(), String> {
+        self.verify_sample_command(
+            sample.from_head,
+            sample.to_head,
+            sample.at_ns,
+            sample.from_target_body,
+            sample.to_target_body,
+            sample.observed,
+        )?;
+        let key = (
+            sample.from_head.to_owned(),
+            sample.to_head.to_owned(),
+            sample.at_ns,
+        );
+        if let Some(attempts) = self.pat_command_attempts.get(&key) {
+            let matches = attempts.iter().any(|attempt| {
+                attempt.link_id == sample.link_id
+                    && attempt.leased == sample.leased
+                    && attempt.from_target_bits == sample.from_target_body.map(f64::to_bits)
+                    && attempt.to_target_bits == sample.to_target_body.map(f64::to_bits)
+                    && attempt.outcome == *sample.observed
+            });
+            if !matches {
+                return Err("PAT typed command provenance mismatch".into());
+            }
+        }
+        Ok(())
+    }
+
     /// Build an independent lease-only audit from this runtime's real head
     /// registry; predicted boresight state remains owned by this runtime.
     pub fn lease_audit(&self) -> BodyHeadLeaseAudit {
@@ -634,6 +673,7 @@ impl BodyHeadRuntime {
             release_floor_ns: HashMap::new(),
             last_pat_command_ns: HashMap::new(),
             failed_pair_attempts: HashMap::new(),
+            pat_command_attempts: HashMap::new(),
         })
     }
 
@@ -684,6 +724,7 @@ impl BodyHeadRuntime {
                         command.to_target_body,
                         &rejected,
                     );
+                    self.record_typed_pat_attempt(&command, &rejected);
                     return Ok(BodyHeadPatRuntimeOutcome::Command(rejected));
                 }
                 let observed = if command.leased {
@@ -729,6 +770,7 @@ impl BodyHeadRuntime {
                         command.to_target_body,
                     )
                 };
+                self.record_typed_pat_attempt(&command, &observed);
                 // An observed failure consumes virtual time, even though it
                 // commits neither boresight nor target. Unknown head IDs do
                 // not establish a clock on an otherwise valid head.
@@ -744,6 +786,27 @@ impl BodyHeadRuntime {
                 Ok(BodyHeadPatRuntimeOutcome::Command(observed))
             }
         }
+    }
+
+    fn record_typed_pat_attempt(
+        &mut self,
+        command: &BodyHeadPatCommand<'_>,
+        outcome: &Result<([f64; 3], [f64; 3]), String>,
+    ) {
+        self.pat_command_attempts
+            .entry((
+                command.from_head.to_owned(),
+                command.to_head.to_owned(),
+                command.at_ns,
+            ))
+            .or_default()
+            .push(PatCommandAttempt {
+                link_id: command.link_id.to_owned(),
+                leased: command.leased,
+                from_target_bits: command.from_target_body.map(f64::to_bits),
+                to_target_bits: command.to_target_body.map(f64::to_bits),
+                outcome: outcome.clone(),
+            });
     }
 
     fn record_failed_pair_attempt(
@@ -1591,6 +1654,116 @@ mod tests {
                     to_target_body: target,
                     observed: &Err(failure),
                 },
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn typed_pat_audit_binds_success_and_failure_to_link_and_lease_mode() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let invalid = [f64::NAN, 0.0, 0.0];
+        let execute = |runtime: &mut BodyHeadRuntime, at_ns, from_target_body| {
+            let BodyHeadPatRuntimeOutcome::Command(result) = runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(
+                    BodyHeadPatCommand {
+                        link_id: "isl-a",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns,
+                        leased: false,
+                        from_target_body,
+                        to_target_body: target,
+                    },
+                ))
+                .unwrap()
+            else {
+                panic!("expected PAT command result");
+            };
+            result
+        };
+
+        let rejected = execute(&mut runtime, 10, invalid);
+        assert!(rejected.is_err());
+        let mut audit = runtime.lease_audit();
+        for (link_id, leased) in [("isl-b", false), ("isl-a", true)] {
+            assert_eq!(
+                audit
+                    .apply_transition(
+                        &runtime,
+                        BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                            link_id,
+                            from_head: "a",
+                            to_head: "b",
+                            at_ns: 10,
+                            leased,
+                            from_target_body: invalid,
+                            to_target_body: target,
+                            observed: &rejected,
+                        }),
+                    )
+                    .unwrap_err(),
+                "PAT typed command provenance mismatch"
+            );
+        }
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: false,
+                    from_target_body: invalid,
+                    to_target_body: target,
+                    observed: &rejected,
+                }),
+            )
+            .unwrap();
+
+        let committed = execute(&mut runtime, 20, target);
+        assert!(committed.is_ok());
+        for (link_id, leased) in [("isl-b", false), ("isl-a", true)] {
+            assert_eq!(
+                audit
+                    .apply_transition(
+                        &runtime,
+                        BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                            link_id,
+                            from_head: "a",
+                            to_head: "b",
+                            at_ns: 20,
+                            leased,
+                            from_target_body: target,
+                            to_target_body: target,
+                            observed: &committed,
+                        }),
+                    )
+                    .unwrap_err(),
+                "PAT typed command provenance mismatch"
+            );
+        }
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &committed,
+                }),
             )
             .unwrap();
     }
