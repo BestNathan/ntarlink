@@ -1364,7 +1364,11 @@ mod tests {
         );
         assert!(runtime.fault_state("backup").unwrap().effective_up());
         assert_eq!(
-            runtime.head_runtime().predicted_at("a", 1_000_000_000).unwrap().1,
+            runtime
+                .head_runtime()
+                .predicted_at("a", 1_000_000_000)
+                .unwrap()
+                .1,
             [1.0, 0.0, 0.0]
         );
         // The original lease and global clock remain at the pre-batch state.
