@@ -1,16 +1,18 @@
 ## SYS-02 typed PAT command link provenance
 
 The typed SYS-02 PAT actuator transition now records the originating link ID,
-lease mode, exact target bits and observed result for each command attempt.
+execution lease mode, exact target bits and observed result for each command attempt.
 The lease-only audit checks this typed provenance after validating committed
-head history or failed-attempt evidence. Previously an audit sample for a
+head history or failed-attempt evidence. Provisional commands execute without
+leases before planning; the audit may subsequently project a reservation onto
+them, but cannot remove an already-executed typed lease. Previously an audit sample for a
 different link using the same ordered head pair and timestamp could borrow a
 valid result, because the head-only ledger did not identify the originating
 link. Rejected provenance leaves lease ownership and audit chronology unchanged.
 
-**Verification and limits:** Rust regressions cover cross-link and wrong-lease
-forgery for both successful and rejected commands, followed by valid samples
-at the same timestamps. Legacy standalone follower APIs still use the existing
+**Verification and limits:** Rust regressions cover cross-link forgery for
+both successful and rejected commands, followed by valid samples at the same
+timestamps and legitimate provisional-to-leased audit projection. Legacy standalone follower APIs still use the existing
 head-history checks when no typed command exists. The additional ledger uses
 O(C) memory for C typed command attempts and expected O(1) keyed lookup plus
 linear scan of same-pair/same-time retries. This remains offline provisional
