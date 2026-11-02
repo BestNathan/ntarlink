@@ -5,7 +5,7 @@ single-flow workload from the minimal scenario, records the generated scenario
 and binary SHA-256 digests, Git revision and repeated wall-time samples, and
 requires byte-equivalent canonical report hashes and complete packet
 accounting. A dedicated CI workflow builds the optimized CLI and runs the
-harness contract tests plus a 1,000-packet smoke benchmark.
+harness contract tests plus 1,000- and 10,000-packet scale-point benchmarks.
 
 **Verification and limits:** the workflow is subject to PR and main CI
 verification; no benchmark throughput result or successful CI execution is
