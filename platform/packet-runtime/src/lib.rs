@@ -755,8 +755,7 @@ fn execute_pat_head_timeline(
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
-    let mut runtime =
-        PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
+    let mut runtime = PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
     // Build the complete canonical head timeline before touching actuator state.
     // SYS-02 now validates and commits this batch transactionally rather than
     // allowing a late invalid lease edge to leave earlier head motion behind.
