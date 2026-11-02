@@ -1,3 +1,23 @@
+## P1 fault-aware PAT reservation admission
+
+The SYS-02 `PatExecutionRuntime` now checks committed per-link fault state
+before accepting a typed Reserve when fault links are registered. An unknown
+or currently unavailable link cannot acquire an optical head pair; rejected
+reservations leave the global phase clock and head ownership unchanged.
+Release remains legal during a link outage, allowing the head pair to be
+reassigned after the fault. A head-only runtime with no registered fault
+links retains its offline provisional/lease replay compatibility.
+
+**Verification and limits:** SYS-02 Rust regressions cover same-instant
+fault-down admission rejection, unknown-link rejection, failure atomicity,
+recovery followed by successful reservation and command, release during a
+later outage, and a separate link's recovery and acquisition. The existing
+packet/PAT scenarios remain cross-subsystem CI coverage. Admission is an
+expected O(1) per-reservation fault lookup and adds no persistent state,
+dependencies or scenario schema fields. Fault and head events still originate
+from separate offline planning passes in the packet adapter; Command events
+are not yet fault-gated, and this is not a live shared-head arbiter.
+
 ## P1 deterministic mixed PAT event-batch execution
 
 SYS-02 now provides `PatExecutionRuntime::apply_timeline` to sort a mixed
