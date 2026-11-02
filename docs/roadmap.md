@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Reject a second successful SYS-02 PAT fault batch for the same link and virtual timestamp, even when individual batches are valid or identical. Keep independent links concurrent, allow a retry after a rejected contradictory batch, and preserve atomic fault state. This closes a split-batch ordering ambiguity in the typed execution owner; the packet adapter still plans fault windows offline. See [status](implementation-status.md).
+
 - [x] Introduce a SYS-02 typed PAT execution owner that accepts ordered Fault Batch, Release, Reserve and Command events through one virtual-time phase clock. Migrate the canonical packet adapter head-only timeline to this entry point, and cover mixed fault/lease/command chronology and atomic rejection in Rust tests. Fault-window reduction and contact admission still run offline; this is an incremental API boundary, not yet live single-pass arbitration. See [status](implementation-status.md).
 
 - [x] Atomically fold same-instant SYS-02 optical PAT fault-domain edges before evaluating link availability. Reject contradictory Up/Down actions for the same domain at one timestamp regardless of input order, preserve idempotent duplicates and cross-domain recovery, and test packet-runtime rejection. This is a fault-domain transaction boundary, not yet a unified live Reservation/Command/Fault executor. See [status](implementation-status.md).
