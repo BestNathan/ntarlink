@@ -1363,14 +1363,8 @@ mod tests {
             "PAT execution reservation link is down"
         );
         assert!(runtime.fault_state("backup").unwrap().effective_up());
-        assert_eq!(
-            runtime
-                .head_runtime()
-                .predicted_at("a", 1_000_000_000)
-                .unwrap()
-                .1,
-            [1.0, 0.0, 0.0]
-        );
+        let history = runtime.head_runtime().predicted_at("a", 1_000_000_000);
+        assert_eq!(history.unwrap_err(), "missing predicted optical head history");
         // The original lease and global clock remain at the pre-batch state.
         runtime
             .apply(PatExecutionTransition::FaultBatch {
