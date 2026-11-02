@@ -753,10 +753,8 @@ fn execute_pat_head_timeline(
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
-    let mut runtime = ntarlink_spacecraft::PatExecutionRuntime::new(
-        &scenario.optical_head_slew_actuators,
-        &[],
-    )?;
+    let mut runtime =
+        ntarlink_spacecraft::PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
     let mut observations = HashMap::new();
     for event in &timeline.events {
         match event.kind {
@@ -787,8 +785,8 @@ fn execute_pat_head_timeline(
                 // Lease changes and sampled commands now cross the same SYS-02
                 // actuator transition boundary, preserving failed attempts as
                 // observations for PAT planning and provenance verification.
-                let outcome = runtime.apply_head(
-                    BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                let outcome = runtime.apply_head(BodyHeadPatRuntimeTransition::Command(
+                    BodyHeadPatCommand {
                         link_id: &sample.link_id,
                         from_head: &pat.from_head,
                         to_head: &pat.to_head,
@@ -796,8 +794,8 @@ fn execute_pat_head_timeline(
                         leased: reservation_index.is_some(),
                         from_target_body: sample.from_target_body,
                         to_target_body: sample.to_target_body,
-                    }),
-                )?;
+                    },
+                ))?;
                 let BodyHeadPatRuntimeOutcome::Command(observed) = outcome else {
                     return Err("PAT actuator command returned a lease result".into());
                 };
