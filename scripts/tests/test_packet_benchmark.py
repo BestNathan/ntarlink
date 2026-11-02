@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +16,7 @@ from scripts.benchmark_packet_runtime import (
     benchmark,
     canonical_bytes,
     make_workload,
+    run_command,
     run_once,
     sha256,
     validate_report,
@@ -70,13 +74,16 @@ class PacketBenchmarkTests(unittest.TestCase):
             "injected": 1, "delivered": 1, "dropped": 0,
             "processed_events": 4, "packets": [{"status": "delivered"}],
         }
-        fake_result = type("Completed", (), {"stdout": json.dumps(report)})()
-        with patch("scripts.benchmark_packet_runtime.subprocess.run", return_value=fake_result) as runner:
+        with patch("scripts.benchmark_packet_runtime.run_command",
+                   return_value=(json.dumps(report), 42, 5, 6)) as runner:
             with patch("scripts.benchmark_packet_runtime.time.perf_counter_ns", side_effect=[10, 50]):
-                elapsed, digest, observed = run_once(Path("/tmp/cli"), Path("/tmp/input"), 1)
+                elapsed, digest, observed, rss, user, system = run_once(
+                    Path("/tmp/cli"), Path("/tmp/input"), 1,
+                )
         self.assertEqual(elapsed, 40)
         self.assertEqual(digest, sha256(canonical_bytes(report)))
         self.assertEqual(observed, report)
+        self.assertEqual((rss, user, system), (42, 5, 6))
         runner.assert_called_once()
 
     def test_benchmark_rejects_nondeterministic_repetitions(self) -> None:
@@ -87,7 +94,8 @@ class PacketBenchmarkTests(unittest.TestCase):
             source = Path(directory) / "base.json"
             source.write_text(json.dumps(self.base), encoding="utf-8")
             with patch("scripts.benchmark_packet_runtime.run_once",
-                       side_effect=[(10, "first", report), (20, "second", report)]):
+                       side_effect=[(10, "first", report, 10, 2, 1),
+                                    (20, "second", report, 20, 3, 1)]):
                 with self.assertRaisesRegex(ValueError, "differs"):
                     benchmark(binary, source, 1, 1, 0, 2)
 
@@ -99,15 +107,73 @@ class PacketBenchmarkTests(unittest.TestCase):
             source = Path(directory) / "base.json"
             source.write_text(json.dumps(self.base), encoding="utf-8")
             with patch("scripts.benchmark_packet_runtime.run_once",
-                       side_effect=[(1_000, "stable", report), (100, "stable", report),
-                                    (200, "stable", report), (300, "stable", report)]):
+                       side_effect=[(1_000, "stable", report, 99, 50, 10),
+                                    (100, "stable", report, 40, 5, 2),
+                                    (200, "stable", report, 60, 6, 3),
+                                    (300, "stable", report, 50, 7, 4)]):
                 summary = benchmark(binary, source, 1, 1, 1, 3)
         self.assertEqual(summary["wall_time_ns"], [100, 200, 300])
         self.assertEqual(summary["median_wall_time_ns"], 200)
         self.assertEqual(summary["min_wall_time_ns"], 100)
         self.assertEqual(summary["max_wall_time_ns"], 300)
         self.assertEqual(summary["sample_runs"], 3)
+        self.assertEqual(summary["schema_version"], 2)
+        self.assertEqual(summary["peak_rss_kib"], [40, 60, 50])
+        self.assertEqual(summary["median_peak_rss_kib"], 50)
+        self.assertEqual(summary["user_cpu_ns"], [5, 6, 7])
+        self.assertEqual(summary["system_cpu_ns"], [2, 3, 4])
         self.assertEqual(summary["deterministic_report_sha256"], "stable")
+
+
+    @unittest.skipUnless(sys.platform == "linux" and hasattr(os, "wait4"),
+                         "per-child resource usage requires Linux wait4")
+    def test_linux_process_resources_are_per_child(self) -> None:
+        output, rss, user, system = run_command(
+            [sys.executable, "-c", "print('packet-benchmark-child')"],
+        )
+        self.assertEqual(output.strip(), "packet-benchmark-child")
+        self.assertIsInstance(rss, int)
+        self.assertGreater(rss, 0)
+        self.assertGreaterEqual(user, 0)
+        self.assertGreaterEqual(system, 0)
+
+    @unittest.skipUnless(sys.platform == "linux" and hasattr(os, "wait4"),
+                         "per-child resource usage requires Linux wait4")
+    def test_linux_child_failure_retains_exit_and_stderr(self) -> None:
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            run_command([
+                sys.executable, "-c",
+                "import sys; print('expected failure', file=sys.stderr); sys.exit(7)",
+            ])
+        self.assertEqual(caught.exception.returncode, 7)
+        self.assertIn("expected failure", caught.exception.stderr)
+
+    def test_non_linux_fallback_does_not_invent_resource_metrics(self) -> None:
+        fake_result = type("Completed", (), {"stdout": "ok"})()
+        with patch("scripts.benchmark_packet_runtime.sys.platform", "darwin"):
+            with patch("scripts.benchmark_packet_runtime.subprocess.run",
+                       return_value=fake_result) as runner:
+                self.assertEqual(
+                    run_command(["example"]), ("ok", None, None, None),
+                )
+        runner.assert_called_once_with(
+            ["example"], check=True, capture_output=True, text=True,
+        )
+
+    def test_benchmark_resource_metrics_unavailable_on_fallback(self) -> None:
+        report = {"processed_events": 4, "injected": 1, "delivered": 1, "dropped": 0}
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "cli"
+            binary.write_bytes(b"mock-binary")
+            source = Path(directory) / "base.json"
+            source.write_text(json.dumps(self.base), encoding="utf-8")
+            with patch("scripts.benchmark_packet_runtime.run_once",
+                       return_value=(100, "stable", report, None, None, None)):
+                summary = benchmark(binary, source, 1, 1, 0, 2)
+        self.assertEqual(summary["peak_rss_kib"], [None, None])
+        self.assertIsNone(summary["median_peak_rss_kib"])
+        self.assertEqual(summary["user_cpu_ns"], [None, None])
+        self.assertEqual(summary["system_cpu_ns"], [None, None])
 
 
 if __name__ == "__main__":
