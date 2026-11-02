@@ -8,10 +8,10 @@ use crate::{
     PatFaultState,
 };
 use ntarlink_contracts::{FaultCause, LinkAction, OpticalHeadSlewActuator};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Equal-time events must enter in this order, independently of link identity.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 enum PatExecutionPhase {
     Fault,
     Release,
@@ -198,6 +198,8 @@ impl PatExecutionRuntime {
     /// The caller may supply events in any order; equal-time events sort by
     /// Fault -> Release -> Reserve -> Command, then link and head identity.
     /// Outcomes retain their caller-provided context in execution order.
+    /// Same-time, same-phase contention for any head is rejected before the
+    /// batch begins, rather than selecting a winner by caller input order.
     ///
     /// This is fail-stop, not a transaction: an invalid later event can leave
     /// earlier transitions committed. Callers must discard the runtime after
@@ -206,6 +208,45 @@ impl PatExecutionRuntime {
         &mut self,
         mut events: Vec<(PatExecutionTransition<'a>, T)>,
     ) -> Result<Vec<(T, PatExecutionOutcome)>, String> {
+        // Independent head pairs may act concurrently. A single head cannot
+        // have two transitions of the same phase at one virtual instant.
+        // Check the entire batch before any fault, lease or command mutation.
+        // Release -> Reserve -> Command handoff at one instant remains legal.
+        let mut occupied = HashSet::new();
+        for (transition, _) in &events {
+            let (at_ns, phase, from_head, to_head) = match transition {
+                PatExecutionTransition::FaultBatch { .. } => continue,
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                    at_ns,
+                    from_head,
+                    to_head,
+                    ..
+                }) => (*at_ns, PatExecutionPhase::Release, *from_head, *to_head),
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                    at_ns,
+                    from_head,
+                    to_head,
+                    ..
+                }) => (*at_ns, PatExecutionPhase::Reserve, *from_head, *to_head),
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command)) => (
+                    command.at_ns,
+                    PatExecutionPhase::Command,
+                    command.from_head,
+                    command.to_head,
+                ),
+            };
+            // Invalid self-pairs retain their existing typed transition error
+            // or failed-command observation instead of changing API semantics.
+            if from_head == to_head {
+                continue;
+            }
+            if !occupied.insert((at_ns, phase, from_head))
+                || !occupied.insert((at_ns, phase, to_head))
+            {
+                return Err("conflicting PAT head transitions at timestamp".into());
+            }
+        }
+
         fn key<'a>(
             event: &'a PatExecutionTransition<'_>,
         ) -> (u64, PatExecutionPhase, &'a str, &'a str, &'a str) {
@@ -899,5 +940,246 @@ mod tests {
                 .unwrap(),
             BodyHeadPatRuntimeOutcome::Command(Ok(_))
         ));
+    }
+    #[test]
+    fn simultaneous_head_contention_rejects_before_any_batch_mutation() {
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        for reverse in [false, true] {
+            let mut runtime =
+                PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", true)]).unwrap();
+            let mut events = vec![
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "isl",
+                        at_ns: 4,
+                        edges: &down,
+                    },
+                    "fault",
+                ),
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 5,
+                    }),
+                    "first",
+                ),
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                        link_id: "backup",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 5,
+                    }),
+                    "second",
+                ),
+            ];
+            if reverse {
+                events.reverse();
+            }
+            assert_eq!(
+                runtime.apply_timeline(events).unwrap_err(),
+                "conflicting PAT head transitions at timestamp"
+            );
+            assert!(runtime.fault_state("isl").unwrap().effective_up());
+            // Neither the earlier fault nor the first reservation committed.
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id: "backup",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 5,
+                })
+                .unwrap();
+
+            let mut releases = vec![
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                        link_id: "backup",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 6,
+                    }),
+                    "release-1",
+                ),
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                        link_id: "backup",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 6,
+                    }),
+                    "release-2",
+                ),
+            ];
+            if reverse {
+                releases.reverse();
+            }
+            assert_eq!(
+                runtime.apply_timeline(releases).unwrap_err(),
+                "conflicting PAT head transitions at timestamp"
+            );
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "backup",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 6,
+                })
+                .unwrap();
+        }
+
+        for reverse in [false, true] {
+            let mut runtime = PatExecutionRuntime::new(&heads(), &[]).unwrap();
+            let target = [1.0, 0.0, 0.0];
+            let other = [0.0, 1.0, 0.0];
+            let mut commands = vec![
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        BodyHeadPatCommand {
+                            link_id: "isl",
+                            from_head: "a",
+                            to_head: "b",
+                            at_ns: 10,
+                            leased: false,
+                            from_target_body: target,
+                            to_target_body: target,
+                        },
+                    )),
+                    "first",
+                ),
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        BodyHeadPatCommand {
+                            link_id: "backup",
+                            from_head: "a",
+                            to_head: "b",
+                            at_ns: 10,
+                            leased: false,
+                            from_target_body: other,
+                            to_target_body: other,
+                        },
+                    )),
+                    "second",
+                ),
+            ];
+            if reverse {
+                commands.reverse();
+            }
+            assert_eq!(
+                runtime.apply_timeline(commands).unwrap_err(),
+                "conflicting PAT head transitions at timestamp"
+            );
+            assert!(matches!(
+                runtime
+                    .apply_head(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 10,
+                        leased: false,
+                        from_target_body: target,
+                        to_target_body: target,
+                    }))
+                    .unwrap(),
+                BodyHeadPatRuntimeOutcome::Command(Ok(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn independent_heads_and_same_instant_handoff_remain_legal() {
+        let actuators = ["a", "b", "c", "d"]
+            .map(|head_id| OpticalHeadSlewActuator {
+                head_id: head_id.into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            })
+            .to_vec();
+        let mut runtime = PatExecutionRuntime::new(
+            &actuators,
+            &[("old", true), ("new", true), ("independent", true)],
+        )
+        .unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "old",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 1,
+            })
+            .unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let events = vec![
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                    BodyHeadPatCommand {
+                        link_id: "independent",
+                        from_head: "c",
+                        to_head: "d",
+                        at_ns: 10,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                    },
+                )),
+                "independent-command",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id: "new",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                }),
+                "new-reserve",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "old",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                }),
+                "old-release",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id: "independent",
+                    from_head: "c",
+                    to_head: "d",
+                    at_ns: 10,
+                }),
+                "independent-reserve",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                    BodyHeadPatCommand {
+                        link_id: "new",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 10,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                    },
+                )),
+                "new-command",
+            ),
+        ];
+        let results = runtime.apply_timeline(events).unwrap();
+        assert_eq!(results.len(), 5);
+        assert!(results.iter().all(|(_, outcome)| {
+            matches!(
+                outcome,
+                PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Lease)
+                    | PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+            )
+        }));
+        assert!(runtime.head_runtime().predicted_at("a", 10).is_ok());
+        assert!(runtime.head_runtime().predicted_at("d", 10).is_ok());
     }
 }

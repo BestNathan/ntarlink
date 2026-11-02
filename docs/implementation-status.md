@@ -1,3 +1,24 @@
+## P1 simultaneous PAT head contention preflight
+
+The SYS-02 `PatExecutionRuntime::apply_timeline` rejects any mixed batch with
+two Release, Reserve or Command transitions for the same optical head, virtual
+timestamp and phase. It checks all head transitions before committing earlier
+fault batches or leases, so neither the original event order nor the stable
+sort's tie-breaking can select a winner for ambiguous simultaneous head use.
+Distinct optical head pairs remain concurrent; a same-instant Release ->
+Reserve -> Command handoff remains legal because the phases differ. Invalid
+self-pair events retain their existing transition/command error semantics.
+
+**Verification and limits:** Rust regressions cover reverse-input conflicting
+reservations, duplicate releases, conflicting target commands, absence of
+partial fault/lease/command mutation and valid independent-pair handoff.
+Preflight is O(E) expected time and O(E) temporary head-phase keys for E
+timeline events; the existing sort remains O(E log E). The single-event
+`apply` API and legitimate same-time command retries are unchanged. This is
+not a transactional mixed batch for unrelated later errors, not packet-time
+single-pass PAT scheduling and not shared-head predicted arbitration. No
+dependencies or scenario schema changes.
+
 ## P1 fault-aware PAT command outcomes
 
 The SYS-02 PatExecutionRuntime checks committed per-link fault state before
