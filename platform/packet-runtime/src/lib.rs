@@ -1,13 +1,13 @@
 use ntarlink_access_scheduler::{BeamConfig, BeamScheduler, TerminalSpec};
 use ntarlink_contracts::{
-    ContactMode, Fault, FaultCause, LinkAction, LinkKind, OpticalBodyTrackingSample,
-    PropagationDelaySample, Scenario,
+    ContactMode, Fault, FaultCause, LinkAction, LinkKind, OpticalBodyFollowingSample,
+    OpticalBodyTrackingSample, OpticalPatLink, PropagationDelaySample, Scenario,
 };
 use ntarlink_network_control::next_hops;
 use ntarlink_optical_pat::{
     pat_runtime_transitions, plan_contacts, plan_contacts_with_slew,
     plan_contacts_with_slew_starts, HeadSlewActuator, PatCandidate, PatReservation,
-    PatRuntimeTransitionKind, PatSlewStart, PatSlewTarget, PatState,
+    PatRuntimeTransition, PatRuntimeTransitionKind, PatSlewStart, PatSlewTarget, PatState,
 };
 use ntarlink_simulation::Scheduler;
 use ntarlink_spacecraft::{
@@ -674,6 +674,69 @@ impl<'a> Runtime<'a> {
     }
 }
 
+/// Canonical, preflighted PAT timeline shared by provisional execution and
+/// lease-only audit. It owns neither actuator history nor live reservations.
+struct ValidatedPatHeadTimeline<'a> {
+    events: Vec<PatRuntimeTransition>,
+    links: HashMap<&'a str, &'a OpticalPatLink>,
+}
+
+impl<'a> ValidatedPatHeadTimeline<'a> {
+    fn new(scenario: &'a Scenario, reservations: &[PatReservation]) -> Result<Self, String> {
+        let samples: Vec<_> = scenario
+            .optical_body_following_samples
+            .iter()
+            .map(|sample| (sample.at_ns, sample.link_id.as_str()))
+            .collect();
+        let events = pat_runtime_transitions(reservations, &samples)?;
+        let links: HashMap<_, _> = scenario
+            .optical_pat
+            .iter()
+            .map(|pat| (pat.link_id.as_str(), pat))
+            .collect();
+
+        // Reject invalid links and ordered endpoints before either consumer
+        // mutates its own lease or follower state.
+        for reservation in reservations {
+            let pat = links
+                .get(reservation.link_id.as_str())
+                .ok_or("unknown PAT reservation link")?;
+            if reservation.from_head != pat.from_head || reservation.to_head != pat.to_head {
+                return Err("PAT reservation endpoint mismatch".into());
+            }
+        }
+        for sample in &scenario.optical_body_following_samples {
+            if !links.contains_key(sample.link_id.as_str()) {
+                return Err("unknown predicted PAT link".into());
+            }
+        }
+        Ok(Self { events, links })
+    }
+
+    fn sample_link(
+        &self,
+        sample: &OpticalBodyFollowingSample,
+        reservation_index: Option<usize>,
+        reservations: &[PatReservation],
+    ) -> Result<&'a OpticalPatLink, String> {
+        let pat = self
+            .links
+            .get(sample.link_id.as_str())
+            .copied()
+            .ok_or("unknown predicted PAT link")?;
+        if let Some(index) = reservation_index {
+            let reservation = &reservations[index];
+            if reservation.link_id != sample.link_id
+                || reservation.from_head != pat.from_head
+                || reservation.to_head != pat.to_head
+            {
+                return Err("PAT sample lease endpoint mismatch".into());
+            }
+        }
+        Ok(pat)
+    }
+}
+
 /// Apply deterministic PAT acquisition before the packet event engine runs.
 /// Only opted-in optical links are gated; other contacts are unchanged.
 /// Administrative down/up transitions interrupt tracking, release optical
@@ -688,37 +751,11 @@ fn execute_pat_head_timeline(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
-    let samples: Vec<_> = scenario
-        .optical_body_following_samples
-        .iter()
-        .map(|sample| (sample.at_ns, sample.link_id.as_str()))
-        .collect();
-    let timeline = pat_runtime_transitions(reservations, &samples)?;
-    let pat_links: HashMap<_, _> = scenario
-        .optical_pat
-        .iter()
-        .map(|pat| (pat.link_id.as_str(), pat))
-        .collect();
-
-    // Preflight all endpoints, including command-free reservations, before
-    // applying any state transition to the SYS-02 actuator owner.
-    for reservation in reservations {
-        let pat = pat_links
-            .get(reservation.link_id.as_str())
-            .ok_or("unknown PAT reservation link")?;
-        if reservation.from_head != pat.from_head || reservation.to_head != pat.to_head {
-            return Err("PAT reservation endpoint mismatch".into());
-        }
-    }
-    for sample in &scenario.optical_body_following_samples {
-        if !pat_links.contains_key(sample.link_id.as_str()) {
-            return Err("unknown predicted PAT link".into());
-        }
-    }
+    let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
     let mut runtime = BodyHeadRuntime::new(&scenario.optical_head_slew_actuators)?;
     let mut observations = HashMap::new();
-    for event in timeline {
+    for event in &timeline.events {
         match event.kind {
             PatRuntimeTransitionKind::Release(index) => {
                 let reservation = &reservations[index];
@@ -743,18 +780,7 @@ fn execute_pat_head_timeline(
                 reservation_index,
             } => {
                 let sample = &scenario.optical_body_following_samples[index];
-                let pat = pat_links
-                    .get(sample.link_id.as_str())
-                    .ok_or("unknown predicted PAT link")?;
-                if let Some(reservation_index) = reservation_index {
-                    let reservation = &reservations[reservation_index];
-                    if reservation.link_id != sample.link_id
-                        || reservation.from_head != pat.from_head
-                        || reservation.to_head != pat.to_head
-                    {
-                        return Err("PAT sample lease endpoint mismatch".into());
-                    }
-                }
+                let pat = timeline.sample_link(sample, reservation_index, reservations)?;
                 // Lease changes and sampled commands now cross the same SYS-02
                 // actuator transition boundary, preserving failed attempts as
                 // observations for PAT planning and provenance verification.
@@ -798,39 +824,28 @@ fn audit_pat_head_leases(
     expected: &PredictedObservations,
     runtime: &BodyHeadRuntime,
 ) -> Result<(), String> {
-    let samples: Vec<_> = scenario
-        .optical_body_following_samples
-        .iter()
-        .map(|sample| (sample.at_ns, sample.link_id.as_str()))
-        .collect();
-    let timeline = pat_runtime_transitions(reservations, &samples)?;
-    let pat_links: HashMap<_, _> = scenario
-        .optical_pat
-        .iter()
-        .map(|pat| (pat.link_id.as_str(), pat))
-        .collect();
+    let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
     let mut leases = runtime.lease_audit();
 
     // Validate every reservation and sample before changing audit ownership.
     // The known-head registry comes from the actual SYS-02 follower runtime,
     // rather than a second packet-adapter head configuration tracker.
     for reservation in reservations {
-        let pat = pat_links
-            .get(reservation.link_id.as_str())
-            .ok_or("unknown PAT reservation link")?;
-        if reservation.from_head != pat.from_head || reservation.to_head != pat.to_head {
-            return Err("PAT reservation endpoint mismatch".into());
-        }
         if !leases.contains_head(&reservation.from_head)
             || !leases.contains_head(&reservation.to_head)
         {
             return Err("unknown BODY-frame runtime head".into());
         }
     }
-    for sample in &scenario.optical_body_following_samples {
-        let pat = pat_links
-            .get(sample.link_id.as_str())
-            .ok_or("unknown predicted PAT link")?;
+    for event in &timeline.events {
+        let PatRuntimeTransitionKind::Sample {
+            index,
+            reservation_index,
+        } = event.kind else {
+            continue;
+        };
+        let sample = &scenario.optical_body_following_samples[index];
+        let pat = timeline.sample_link(sample, reservation_index, reservations)?;
         if !leases.contains_head(&pat.from_head) || !leases.contains_head(&pat.to_head) {
             return Err("unknown BODY-frame runtime head".into());
         }
@@ -849,7 +864,7 @@ fn audit_pat_head_leases(
         )?;
     }
 
-    for event in timeline {
+    for event in &timeline.events {
         let transition = match event.kind {
             PatRuntimeTransitionKind::Reserve(index) => {
                 let reservation = &reservations[index];
@@ -874,18 +889,7 @@ fn audit_pat_head_leases(
                 reservation_index,
             } => {
                 let sample = &scenario.optical_body_following_samples[index];
-                let pat = pat_links
-                    .get(sample.link_id.as_str())
-                    .ok_or("unknown predicted PAT link")?;
-                if let Some(reservation_index) = reservation_index {
-                    let reservation = &reservations[reservation_index];
-                    if reservation.link_id != sample.link_id
-                        || reservation.from_head != pat.from_head
-                        || reservation.to_head != pat.to_head
-                    {
-                        return Err("PAT sample lease endpoint mismatch".into());
-                    }
-                }
+                let pat = timeline.sample_link(sample, reservation_index, reservations)?;
                 let result = expected
                     .get(&(sample.link_id.clone(), sample.at_ns))
                     .ok_or("missing provisional BODY-frame observation")?;
@@ -1901,6 +1905,56 @@ mod tests {
         unknown.optical_body_following_samples[0].link_id = "missing-link".into();
         assert_eq!(
             prepare_pat(&unknown).unwrap_err(),
+            "unknown predicted PAT link"
+        );
+    }
+
+    #[test]
+    fn pat_timeline_preflight_is_shared_by_executor_and_lease_audit() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let (runtime, expected) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let pat = &scenario.optical_pat[0];
+        let valid = PatReservation {
+            link_id: pat.link_id.clone(),
+            from_head: pat.from_head.clone(),
+            to_head: pat.to_head.clone(),
+            start_ns: 0,
+            end_ns: 30_000_000,
+        };
+
+        let mut unknown = valid.clone();
+        unknown.link_id = "unknown-link".into();
+        assert_eq!(
+            execute_pat_head_timeline(&scenario, &[unknown.clone()], None).unwrap_err(),
+            "unknown PAT reservation link"
+        );
+        assert_eq!(
+            audit_pat_head_leases(&scenario, &[unknown], &expected, &runtime).unwrap_err(),
+            "unknown PAT reservation link"
+        );
+
+        let mut swapped = valid;
+        std::mem::swap(&mut swapped.from_head, &mut swapped.to_head);
+        assert_eq!(
+            execute_pat_head_timeline(&scenario, &[swapped.clone()], None).unwrap_err(),
+            "PAT reservation endpoint mismatch"
+        );
+        assert_eq!(
+            audit_pat_head_leases(&scenario, &[swapped], &expected, &runtime).unwrap_err(),
+            "PAT reservation endpoint mismatch"
+        );
+
+        let mut unknown_sample = scenario.clone();
+        unknown_sample.optical_body_following_samples[0].link_id = "unknown-link".into();
+        assert_eq!(
+            execute_pat_head_timeline(&unknown_sample, &[], None).unwrap_err(),
+            "unknown predicted PAT link"
+        );
+        assert_eq!(
+            audit_pat_head_leases(&unknown_sample, &[], &expected, &runtime).unwrap_err(),
             "unknown predicted PAT link"
         );
     }
