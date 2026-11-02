@@ -234,6 +234,9 @@ pub struct BodyHeadRuntime {
     lease_start_ns: HashMap<String, u64>,
     /// Earliest allowed time for a new command after a timed lease release.
     release_floor_ns: HashMap<String, u64>,
+    /// Latest accepted typed PAT command instant per head, including failed
+    /// attempts that leave no successful follower history.
+    last_pat_command_ns: HashMap<String, u64>,
     /// Rejected paired commands have no committed head snapshot. Preserve
     /// their exact inputs and error reason for the offline PAT audit.
     failed_pair_attempts: HashMap<(String, String, u64), Vec<FailedPairAttempt>>,
@@ -629,6 +632,7 @@ impl BodyHeadRuntime {
             link_heads: HashMap::new(),
             lease_start_ns: HashMap::new(),
             release_floor_ns: HashMap::new(),
+            last_pat_command_ns: HashMap::new(),
             failed_pair_attempts: HashMap::new(),
         })
     }
@@ -660,6 +664,28 @@ impl BodyHeadRuntime {
                 Ok(BodyHeadPatRuntimeOutcome::Lease)
             }
             BodyHeadPatRuntimeTransition::Command(command) => {
+                // Failed commands are virtual-time observations too. Reject
+                // retroactive commands without rewinding the head clock.
+                if [command.from_head, command.to_head]
+                    .into_iter()
+                    .any(|head| {
+                        self.last_pat_command_ns
+                            .get(head)
+                            .is_some_and(|previous| command.at_ns < *previous)
+                    })
+                {
+                    let rejected =
+                        Err("BODY-frame PAT command precedes previous PAT command".into());
+                    self.record_failed_pair_attempt(
+                        command.from_head,
+                        command.to_head,
+                        command.at_ns,
+                        command.from_target_body,
+                        command.to_target_body,
+                        &rejected,
+                    );
+                    return Ok(BodyHeadPatRuntimeOutcome::Command(rejected));
+                }
                 let observed = if command.leased {
                     // A PAT command must not implicitly acquire a pair lease.
                     // Only a preceding Reserve transition may establish ownership.
@@ -703,6 +729,18 @@ impl BodyHeadRuntime {
                         command.to_target_body,
                     )
                 };
+                // An observed failure consumes virtual time, even though it
+                // commits neither boresight nor target. Unknown head IDs do
+                // not establish a clock on an otherwise valid head.
+                if command.from_head != command.to_head
+                    && self.heads.contains_key(command.from_head)
+                    && self.heads.contains_key(command.to_head)
+                {
+                    for head in [command.from_head, command.to_head] {
+                        self.last_pat_command_ns
+                            .insert(head.to_owned(), command.at_ns);
+                    }
+                }
                 Ok(BodyHeadPatRuntimeOutcome::Command(observed))
             }
         }
@@ -934,6 +972,10 @@ impl BodyHeadRuntime {
                     .get(head_id)
                     .and_then(|samples| samples.last())
                     .is_some_and(|(sample_ns, _)| at_ns <= *sample_ns)
+                || self
+                    .last_pat_command_ns
+                    .get(head_id)
+                    .is_some_and(|last| at_ns < *last)
             {
                 return Err(
                     "BODY-frame pair reservation conflicts with head history or owner".into(),
@@ -1012,6 +1054,10 @@ impl BodyHeadRuntime {
                     .release_floor_ns
                     .get(head_id)
                     .is_some_and(|released_at| at_ns < *released_at)
+                || self
+                    .last_pat_command_ns
+                    .get(head_id)
+                    .is_some_and(|last| at_ns < *last)
             {
                 return Err("BODY-frame runtime lease release precedes head history".into());
             }
@@ -1639,6 +1685,174 @@ mod tests {
         assert_eq!(runtime.history.get("a").unwrap().len(), 1);
         assert_eq!(runtime.history.get("b").unwrap().len(), 1);
         assert!(runtime.owners.is_empty());
+    }
+
+    #[test]
+    fn typed_pat_failed_commands_prevent_retroactive_lease_edges() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let invalid = [f64::NAN, 0.0, 0.0];
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .unwrap();
+        let failed = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+                leased: true,
+                from_target_body: invalid,
+                to_target_body: target,
+            }))
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = failed else {
+            panic!("invalid PAT target must fail");
+        };
+        runtime
+            .verify_sample_command("a", "b", 20, invalid, target, &Err(reason))
+            .unwrap();
+        assert!(runtime.history.is_empty());
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 19,
+            })
+            .is_err());
+        assert_eq!(runtime.owners.get("a").map(String::as_str), Some("isl"));
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .unwrap();
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "next",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 19,
+            })
+            .is_err());
+        assert!(runtime.owners.is_empty());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "next",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "next",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn typed_pat_failed_fault_gap_command_preserves_time_without_head_history() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let invalid = [f64::NAN, 0.0, 0.0];
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: false,
+                    from_target_body: invalid,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Err(_))
+        ));
+        let retroactive = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 19,
+                leased: false,
+                from_target_body: target,
+                to_target_body: target,
+            }))
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = retroactive else {
+            panic!("retroactive PAT command must fail");
+        };
+        assert_eq!(
+            reason,
+            "BODY-frame PAT command precedes previous PAT command"
+        );
+        runtime
+            .verify_sample_command("a", "b", 19, target, target, &Err(reason))
+            .unwrap();
+        assert!(runtime.history.is_empty());
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 19,
+            })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
     }
 
     #[test]
