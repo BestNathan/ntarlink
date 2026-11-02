@@ -1,0 +1,311 @@
+//! SYS-02 typed virtual-time PAT execution boundary.
+//!
+//! This owner composes the existing head actuator/lease runtime with per-link
+//! fault reducers. It is an execution API, not a shared-head contact planner.
+
+use crate::{
+    BodyHeadPatRuntimeOutcome, BodyHeadPatRuntimeTransition, BodyHeadRuntime, PatFaultBatchOutcome,
+    PatFaultState,
+};
+use ntarlink_contracts::{FaultCause, LinkAction, OpticalHeadSlewActuator};
+use std::collections::HashMap;
+
+/// Equal-time events must enter in this order, independently of link identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PatExecutionPhase {
+    Fault,
+    Release,
+    Reserve,
+    Command,
+}
+
+/// One explicit virtual-time transition. A fault batch is atomic for one link;
+/// head transitions retain their existing atomic paired-lease semantics.
+#[derive(Debug)]
+pub enum PatExecutionTransition<'a> {
+    FaultBatch {
+        link_id: &'a str,
+        at_ns: u64,
+        edges: &'a [(FaultCause, LinkAction)],
+    },
+    Head(BodyHeadPatRuntimeTransition<'a>),
+}
+
+#[derive(Debug)]
+pub enum PatExecutionOutcome {
+    Fault(PatFaultBatchOutcome),
+    Head(BodyHeadPatRuntimeOutcome),
+}
+
+/// Owns one chronological stream of fault, reservation and command events.
+/// The current packet adapter still computes its fault windows offline; this
+/// boundary prepares a live event loop without changing planning semantics.
+#[derive(Debug)]
+pub struct PatExecutionRuntime {
+    heads: BodyHeadRuntime,
+    faults: HashMap<String, PatFaultState>,
+    last_event: Option<(u64, PatExecutionPhase)>,
+}
+
+impl PatExecutionRuntime {
+    pub fn new(
+        actuators: &[OpticalHeadSlewActuator],
+        initial_links: &[(&str, bool)],
+    ) -> Result<Self, String> {
+        let heads = BodyHeadRuntime::new(actuators)?;
+        let mut faults = HashMap::new();
+        for &(link_id, initially_up) in initial_links {
+            if link_id.trim().is_empty()
+                || faults
+                    .insert(link_id.to_owned(), PatFaultState::new(initially_up))
+                    .is_some()
+            {
+                return Err("invalid or duplicate PAT execution link".into());
+            }
+        }
+        Ok(Self {
+            heads,
+            faults,
+            last_event: None,
+        })
+    }
+
+    pub fn head_runtime(&self) -> &BodyHeadRuntime {
+        &self.heads
+    }
+
+    pub fn fault_state(&self, link_id: &str) -> Option<&PatFaultState> {
+        self.faults.get(link_id)
+    }
+
+    /// The existing offline planner still needs its immutable actuator history.
+    pub fn into_heads(self) -> BodyHeadRuntime {
+        self.heads
+    }
+
+    /// Reject retroactive and phase-reversed events before mutating either
+    /// state owner. Failed commands are observations and consume Command phase;
+    /// rejected fault batches and lease edges do not advance the global clock.
+    pub fn apply(
+        &mut self,
+        transition: PatExecutionTransition<'_>,
+    ) -> Result<PatExecutionOutcome, String> {
+        let (at_ns, phase) = match &transition {
+            PatExecutionTransition::FaultBatch { at_ns, .. } => {
+                (*at_ns, PatExecutionPhase::Fault)
+            }
+            PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                at_ns, ..
+            }) => (*at_ns, PatExecutionPhase::Release),
+            PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                at_ns, ..
+            }) => (*at_ns, PatExecutionPhase::Reserve),
+            PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command)) => {
+                (command.at_ns, PatExecutionPhase::Command)
+            }
+        };
+        if self.last_event.is_some_and(|previous| previous > (at_ns, phase)) {
+            return Err("PAT execution transition order mismatch".into());
+        }
+        let outcome = match transition {
+            PatExecutionTransition::FaultBatch {
+                link_id,
+                at_ns,
+                edges,
+            } => {
+                if edges.is_empty() {
+                    return Err("PAT fault batch must contain an edge".into());
+                }
+                let state = self
+                    .faults
+                    .get_mut(link_id)
+                    .ok_or("unknown PAT execution fault link")?;
+                PatExecutionOutcome::Fault(state.apply_batch(at_ns, edges.iter().cloned())?)
+            }
+            PatExecutionTransition::Head(transition) => {
+                PatExecutionOutcome::Head(self.heads.apply_pat_transition(transition)?)
+            }
+        };
+        self.last_event = Some((at_ns, phase));
+        Ok(outcome)
+    }
+
+    /// Compatibility bridge for the canonical SYS-03 head-only timeline.
+    pub fn apply_head(
+        &mut self,
+        transition: BodyHeadPatRuntimeTransition<'_>,
+    ) -> Result<BodyHeadPatRuntimeOutcome, String> {
+        match self.apply(PatExecutionTransition::Head(transition))? {
+            PatExecutionOutcome::Head(outcome) => Ok(outcome),
+            PatExecutionOutcome::Fault(_) => unreachable!("head transition returned fault outcome"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BodyHeadPatCommand;
+
+    fn heads() -> Vec<OpticalHeadSlewActuator> {
+        ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        }).to_vec()
+    }
+
+    #[test]
+    fn mixed_pat_events_share_one_time_and_phase_clock() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let outcome = runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+        assert!(matches!(outcome, PatExecutionOutcome::Fault(result) if result.was_up && !result.now_up));
+
+        let before = *runtime.fault_state("isl").unwrap();
+        let contradictory = [
+            (FaultCause::Administrative, LinkAction::Up),
+            (FaultCause::Administrative, LinkAction::Down),
+        ];
+        assert_eq!(
+            runtime
+                .apply(PatExecutionTransition::FaultBatch {
+                    link_id: "isl",
+                    at_ns: 20,
+                    edges: &contradictory,
+                })
+                .unwrap_err(),
+            "conflicting PAT fault edges at same timestamp"
+        );
+        assert_eq!(*runtime.fault_state("isl").unwrap(), before);
+
+        let up = [(FaultCause::Administrative, LinkAction::Up)];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 20,
+                edges: &up,
+            })
+            .unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .unwrap();
+        let result = runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+                leased: true,
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [1.0, 0.0, 0.0],
+            }))
+            .unwrap();
+        assert!(matches!(result, BodyHeadPatRuntimeOutcome::Command(Ok(_))));
+        assert_eq!(
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                })
+                .unwrap_err(),
+            "PAT execution transition order mismatch"
+        );
+        assert_eq!(
+            runtime
+                .apply(PatExecutionTransition::FaultBatch {
+                    link_id: "isl",
+                    at_ns: 20,
+                    edges: &down,
+                })
+                .unwrap_err(),
+            "PAT execution transition order mismatch"
+        );
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 21,
+            })
+            .unwrap();
+        assert!(runtime.head_runtime().predicted_at("a", 21).is_ok());
+    }
+
+    #[test]
+    fn rejected_commands_advance_phase_but_invalid_faults_do_not() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", false)]).unwrap();
+        assert!(PatExecutionRuntime::new(&heads(), &[("isl", true), ("isl", false)]).is_err());
+        let empty: [(FaultCause, LinkAction); 0] = [];
+        assert!(runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 10,
+                edges: &empty,
+            })
+            .is_err());
+        assert!(runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "missing",
+                at_ns: 10,
+                edges: &[(FaultCause::Administrative, LinkAction::Down)],
+            })
+            .is_err());
+        let outcome = runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 9,
+                leased: false,
+                from_target_body: [f64::NAN, 0.0, 0.0],
+                to_target_body: [1.0, 0.0, 0.0],
+            }))
+            .unwrap();
+        assert!(matches!(outcome, BodyHeadPatRuntimeOutcome::Command(Err(_))));
+        assert!(runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 9,
+                edges: &[(FaultCause::Administrative, LinkAction::Down)],
+            })
+            .is_err());
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        for link_id in ["isl", "backup"] {
+            runtime
+                .apply(PatExecutionTransition::FaultBatch {
+                    link_id,
+                    at_ns: 10,
+                    edges: &down,
+                })
+                .unwrap();
+        }
+        assert!(!runtime.fault_state("isl").unwrap().effective_up());
+        assert!(!runtime.fault_state("backup").unwrap().effective_up());
+        assert!(runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 8,
+                edges: &down,
+            })
+            .is_err());
+    }
+}
