@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Preserve per-head virtual-time chronology after rejected typed SYS-02 PAT commands, rejecting retroactive Reserve/Release and commands while retaining failure provenance and same-time retries. Offline planning and audit remain separate. See [status](implementation-status.md).
+
 - [x] Require an explicit matching SYS-02 pair reservation before any typed leased PAT Command; reject unreserved, wrong-link and post-release commands with recorded failed-attempt provenance, preserving same-time retries and fault-gap semantics. Offline planning and audit remain separate. See [status](implementation-status.md).
 
 - [x] Route executable SYS-02 PAT Release/Reserve/Command events through a typed actuator runtime transition API, preserving atomic leases and rejected-command provenance in packet/PAT acceptance. Provisional planning and the separate lease audit remain offline. See [status](implementation-status.md).
