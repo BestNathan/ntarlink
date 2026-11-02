@@ -1,3 +1,21 @@
+## P1 unified typed PAT per-head phase clock
+
+SYS-02 now uses one per-head virtual-time phase clock for typed Release,
+Reserve and Command transitions. Accepted lease edges and successful or
+rejected commands share the canonical Release -> Reserve -> Sample order.
+A command cannot move backward across a future unsampled reservation or
+release; rejected commands preserve their exact provenance without changing
+the phase clock. Same-time command retries and subsequent lease handoffs
+remain valid. Direct legacy follower helpers keep their existing contracts.
+
+**Verification and limits:** Rust regression covers an unsampled future
+reservation, a rejected retroactive command, a valid boundary command,
+same-time release rejection, later release and retry, and unchanged
+follower history on rejected commands. This replaces two O(H) per-head
+chronology maps with one O(H) map and expected O(1) checks. No schema
+or dependency changes. Provisional planning and lease-only audit still
+run in separate offline stages; there is no live shared-head arbiter.
+
 ## P1 typed PAT lease-edge phase chronology
 
 The SYS-02 typed PAT transition entry point now tracks the latest accepted
