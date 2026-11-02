@@ -1,3 +1,23 @@
+## P1 transactional packet-adapter PAT head replay
+
+The packet adapter now translates its complete validated SYS-03 Release,
+Reserve and sampled Command timeline into one SYS-02
+`PatExecutionRuntime::apply_timeline` call. The typed owner canonicalizes
+cross-link ordering, preflights same-instant head contention and commits
+the actuator/lease state atomically; the adapter no longer applies each head
+event separately. Caller-indexed outcomes retain their originating sampled
+command identity. A Rust packet-adapter regression reverses sampled command
+input order and compares every predicted head state, while the existing
+follower/lease and packet-accounting acceptance remains in CI.
+
+**Scope and limits:** This is a transactional **head-only** replay. Fault
+availability still runs through a separate offline SYS-02 instance; provisional
+follower observations are still required to plan contact reservations and the
+lease-only audit still runs afterward. This does not claim live single-pass
+PAT arbitration, eliminate duplicate planning, or change the scenario schema.
+The batch adds one O(S) actuator-state snapshot and O(E log E) sorting for E
+head events; performance impact has not yet been measured.
+
 ## P1 atomic SYS-02 mixed PAT timeline commit
 
 `PatExecutionRuntime::apply_timeline` now executes a canonically ordered mixed
