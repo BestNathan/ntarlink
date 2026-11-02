@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Consolidate SYS-03 PAT event ordering, link identity and ordered optical-head endpoint preflight into one immutable validated timeline consumed by both SYS-02 provisional actuator execution and lease-only audit; preflight sampled lease bindings before audit mutation. This removes duplicate adapter validation, not the offline two-phase state boundary. See [status](implementation-status.md).
+
 - [x] Enforce canonical Release/Reserve-before-Command ordering at the same virtual timestamp in the SYS-02 typed PAT actuator runtime. A failed or successful command now prevents later same-time lease edges, while command retries and next-instant head handoff remain legal. This closes a mismatch with the separate lease audit; offline two-phase planning remains. See [status](implementation-status.md).
 
 - [x] Deduplicate identical same-time SYS-02 typed PAT command attempts and failed-command evidence by exact IEEE-754 target bits, link identity, lease mode and outcome, retaining distinct failure modes and successful retries. This bounds redundant provenance from repeated identical calls but does not cap unique attempts or remove offline lease audit. See [status](implementation-status.md).
