@@ -1,3 +1,20 @@
+## P0 packet CLI per-process resource baseline
+
+The release-mode packet benchmark now records each Linux child process's own
+peak resident set size (KiB) and user/system CPU time (ns) via `wait4`.
+This avoids cumulative `RUSAGE_CHILDREN` accounting and short-lived process
+polling races. Warmup samples are excluded from the resource summary; other
+platforms emit explicit null resource fields. The benchmark result schema is
+version 2, while deterministic report hashing, packet accounting and
+end-to-end wall-time measurement remain unchanged.
+
+**Verification and limits:** Python contracts cover Linux process success,
+nonzero exit/stderr propagation, portable fallback, resource summaries and
+warmup exclusion. The dedicated CI workflow exercises the compiled release
+CLI on Linux. Hosted runner measurements are not a stable memory or throughput
+regression gate. Peak RSS does not replace allocation profiling or a
+pinned-hardware performance envelope. No simulator or packet schema changes.
+
 ## P0 packet-runtime performance benchmark harness
 
 A release-mode end-to-end packet CLI benchmark now derives a bounded
