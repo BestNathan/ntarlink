@@ -1,3 +1,5 @@
+- [x] Preflight duplicate same-link, same-instant optical PAT fault batches across the entire mixed SYS-02 timeline before any Fault, Release, Reserve or Command transition commits. Both identical and contradictory split batches now reject without advancing virtual time or mutating earlier links; independent links and later recovery remain valid. This is a batch-integrity guard, not transactional rollback or live packet-time arbitration. See [status](implementation-status.md).
+
 # Engineering roadmap
 
 ## P0 — deterministic packet-transport vertical slice
