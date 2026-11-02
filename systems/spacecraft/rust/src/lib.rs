@@ -240,7 +240,7 @@ pub struct BodyHeadRuntime {
     /// Rejected paired commands have no committed head snapshot. Preserve
     /// their exact inputs and error reason for the offline PAT audit.
     failed_pair_attempts: HashMap<(String, String, u64), Vec<FailedPairAttempt>>,
-    /// Link identity and lease mode of typed commands, including failures.
+    /// Link identity and provisional lease mode of typed commands, including failures.
     /// Legacy standalone follower observations do not populate this ledger.
     pat_command_attempts: HashMap<(String, String, u64), Vec<PatCommandAttempt>>,
 }
@@ -252,7 +252,7 @@ struct FailedPairAttempt {
     reason: String,
 }
 
-/// Bind typed PAT command evidence to the originating link and lease mode.
+/// Bind typed PAT command evidence to the originating link and execution mode.
 /// Head history alone cannot distinguish links that use the same head pair.
 #[derive(Debug)]
 struct PatCommandAttempt {
@@ -1661,7 +1661,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_pat_audit_binds_success_and_failure_to_link_and_lease_mode() {
+    fn typed_pat_audit_binds_results_to_link_with_lease_projection() {
         let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
             head_id: head_id.into(),
             initial_direction_body: [1.0, 0.0, 0.0],
