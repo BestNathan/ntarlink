@@ -1364,7 +1364,10 @@ mod tests {
         );
         assert!(runtime.fault_state("backup").unwrap().effective_up());
         let history = runtime.head_runtime().predicted_at("a", 1_000_000_000);
-        assert_eq!(history.unwrap_err(), "missing predicted optical head history");
+        assert_eq!(
+            history.unwrap_err(),
+            "missing predicted optical head history"
+        );
         // The original lease and global clock remain at the pre-batch state.
         runtime
             .apply(PatExecutionTransition::FaultBatch {
