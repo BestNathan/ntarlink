@@ -33,8 +33,8 @@ def make_workload(base: dict, packet_count: int, interval_ns: int) -> dict:
     """Scale only the single-flow baseline without changing its topology."""
     if not 1 <= packet_count <= 1_000_000:
         raise ValueError("packet_count must be between 1 and 1,000,000")
-    if interval_ns <= 0:
-        raise ValueError("interval_ns must be positive")
+    if not 1 <= interval_ns < 2**64:
+        raise ValueError("interval_ns must be a positive u64")
     if len(base.get("flows", [])) != 1:
         raise ValueError("benchmark requires exactly one flow")
     scenario = copy.deepcopy(base)
@@ -73,9 +73,21 @@ def run_once(binary: Path, scenario_path: Path, packet_count: int) -> tuple[int,
         text=True,
     )
     elapsed_ns = time.perf_counter_ns() - started
+    if elapsed_ns <= 0:
+        raise ValueError("packet benchmark wall time must be positive")
     report = json.loads(completed.stdout)
     validate_report(report, packet_count)
     return elapsed_ns, sha256(canonical_bytes(report)), report
+
+
+def git_revision() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unavailable"
 
 
 def benchmark(
@@ -105,6 +117,7 @@ def benchmark(
         "schema_version": 1,
         "measurement": "compiled_cli_wall_time_including_json_and_process_startup",
         "binary_sha256": sha256(binary.read_bytes()),
+        "git_revision": git_revision(),
         "python_version": platform.python_version(),
         "platform": platform.platform(),
         "workload": {
