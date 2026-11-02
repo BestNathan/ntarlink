@@ -847,10 +847,12 @@ impl BodyHeadRuntime {
                     && self.heads.contains_key(command.from_head)
                     && self.heads.contains_key(command.to_head)
                 {
-                    for head in [command.from_head, command.to_head] {
-                        self.last_pat_transition
-                            .insert(head.to_owned(), (command.at_ns, LeaseAuditPhase::Sample));
-                    }
+                    self.record_pat_transition(
+                        command.from_head,
+                        command.to_head,
+                        command.at_ns,
+                        LeaseAuditPhase::Sample,
+                    );
                 }
                 Ok(BodyHeadPatRuntimeOutcome::Command(observed))
             }
