@@ -91,9 +91,7 @@ impl PatExecutionRuntime {
         transition: PatExecutionTransition<'_>,
     ) -> Result<PatExecutionOutcome, String> {
         let (at_ns, phase) = match &transition {
-            PatExecutionTransition::FaultBatch { at_ns, .. } => {
-                (*at_ns, PatExecutionPhase::Fault)
-            }
+            PatExecutionTransition::FaultBatch { at_ns, .. } => (*at_ns, PatExecutionPhase::Fault),
             PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
                 at_ns, ..
             }) => (*at_ns, PatExecutionPhase::Release),
@@ -104,7 +102,10 @@ impl PatExecutionRuntime {
                 (command.at_ns, PatExecutionPhase::Command)
             }
         };
-        if self.last_event.is_some_and(|previous| previous > (at_ns, phase)) {
+        if self
+            .last_event
+            .is_some_and(|previous| previous > (at_ns, phase))
+        {
             return Err("PAT execution transition order mismatch".into());
         }
         let outcome = match transition {
@@ -148,13 +149,15 @@ mod tests {
     use crate::BodyHeadPatCommand;
 
     fn heads() -> Vec<OpticalHeadSlewActuator> {
-        ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
-            head_id: head_id.into(),
-            initial_direction_body: [1.0, 0.0, 0.0],
-            max_slew_rate_deg_per_s: 100.0,
-            max_slew_acceleration_deg_per_s2: None,
-            settling_ns: None,
-        }).to_vec()
+        ["a", "b"]
+            .map(|head_id| OpticalHeadSlewActuator {
+                head_id: head_id.into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            })
+            .to_vec()
     }
 
     #[test]
@@ -168,7 +171,9 @@ mod tests {
                 edges: &down,
             })
             .unwrap();
-        assert!(matches!(outcome, PatExecutionOutcome::Fault(result) if result.was_up && !result.now_up));
+        assert!(
+            matches!(outcome, PatExecutionOutcome::Fault(result) if result.was_up && !result.now_up)
+        );
 
         let before = *runtime.fault_state("isl").unwrap();
         let contradictory = [
@@ -250,7 +255,8 @@ mod tests {
 
     #[test]
     fn rejected_commands_advance_phase_but_invalid_faults_do_not() {
-        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", false)]).unwrap();
+        let mut runtime =
+            PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", false)]).unwrap();
         assert!(PatExecutionRuntime::new(&heads(), &[("isl", true), ("isl", false)]).is_err());
         let empty: [(FaultCause, LinkAction); 0] = [];
         assert!(runtime
@@ -278,7 +284,10 @@ mod tests {
                 to_target_body: [1.0, 0.0, 0.0],
             }))
             .unwrap();
-        assert!(matches!(outcome, BodyHeadPatRuntimeOutcome::Command(Err(_))));
+        assert!(matches!(
+            outcome,
+            BodyHeadPatRuntimeOutcome::Command(Err(_))
+        ));
         assert!(runtime
             .apply(PatExecutionTransition::FaultBatch {
                 link_id: "isl",
