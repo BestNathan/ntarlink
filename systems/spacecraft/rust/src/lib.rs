@@ -2500,8 +2500,16 @@ mod tests {
                     },
                 )
             };
-            assert_eq!(actual.is_ok(), accepted, "runtime edge: {link_id} at {at_ns}");
-            assert_eq!(audited.is_ok(), accepted, "audit edge: {link_id} at {at_ns}");
+            assert_eq!(
+                actual.is_ok(),
+                accepted,
+                "runtime edge: {link_id} at {at_ns}"
+            );
+            assert_eq!(
+                audited.is_ok(),
+                accepted,
+                "audit edge: {link_id} at {at_ns}"
+            );
             if release && !accepted {
                 assert_eq!(
                     actual.unwrap_err(),
