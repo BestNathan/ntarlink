@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Atomically fold same-instant SYS-02 optical PAT fault-domain edges before evaluating link availability. Reject contradictory Up/Down actions for the same domain at one timestamp regardless of input order, preserve idempotent duplicates and cross-domain recovery, and test packet-runtime rejection. This is a fault-domain transaction boundary, not yet a unified live Reservation/Command/Fault executor. See [status](implementation-status.md).
+
 - [x] Move optical PAT administrative and sampled-pointing fault-domain folding from the packet adapter into typed SYS-02 per-link state, preserving simultaneous-edge atomic evaluation, failure reason precedence, and retroactive rejection. This is preparatory state consolidation, not yet one live Reservation/Command/Fault owner. See [status](implementation-status.md).
 
 
