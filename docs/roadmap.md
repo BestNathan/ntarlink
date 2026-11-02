@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Gate SYS-02 typed PAT Commands on committed per-link fault state, preserving administrative/sampled-pointing failure precedence, failed-command provenance and virtual-time chronology without actuator mutation. Unknown registered links fail closed; offline head-only replay remains compatible. This is an incremental invariant, not live packet-time arbitration. See [status](implementation-status.md).
+
 - [x] Gate SYS-02 typed PAT Reserve transitions on committed per-link fault availability when links are registered. Reject unknown/down-link reservations without advancing the global phase or changing head ownership, while allowing Release during outages and preserving head-only offline replay. This is an incremental fault/lease admission boundary, not live packet-time arbitration or command fault gating. See [status](implementation-status.md).
 
 - [x] Provide a deterministic SYS-02 mixed Fault/Release/Reserve/Command event-batch executor, with stable same-instant link/head ordering and typed outcomes. Route packet-adapter optical fault replay through this API and test shuffled mixed events. Execution is fail-stop, not transactional; PAT availability projection and lease audit remain offline. See [status](implementation-status.md).
