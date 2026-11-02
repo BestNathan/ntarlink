@@ -513,6 +513,11 @@ impl BodyHeadLeaseAudit {
         runtime: &BodyHeadRuntime,
         sample: BodyHeadPatSample<'_>,
     ) -> Result<(), String> {
+        // Reject unnamed samples before provenance lookup, regardless of
+        // whether the original command ran provisionally or under a lease.
+        if sample.link_id.trim().is_empty() {
+            return Err("PAT head lease audit link ID must be nonempty".into());
+        }
         runtime.verify_pat_sample(&sample)?;
         self.sample(
             sample.link_id,
