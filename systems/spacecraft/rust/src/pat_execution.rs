@@ -44,6 +44,9 @@ pub enum PatExecutionOutcome {
 pub struct PatExecutionRuntime {
     heads: BodyHeadRuntime,
     faults: HashMap<String, PatFaultState>,
+    /// A link may commit only one atomic fault batch per virtual instant.
+    /// The global clock makes the latest timestamp sufficient per link.
+    last_fault_batch_at: HashMap<String, u64>,
     last_event: Option<(u64, PatExecutionPhase)>,
 }
 
@@ -66,6 +69,7 @@ impl PatExecutionRuntime {
         Ok(Self {
             heads,
             faults,
+            last_fault_batch_at: HashMap::new(),
             last_event: None,
         })
     }
@@ -117,11 +121,16 @@ impl PatExecutionRuntime {
                 if edges.is_empty() {
                     return Err("PAT fault batch must contain an edge".into());
                 }
+                if self.last_fault_batch_at.get(link_id).copied() == Some(at_ns) {
+                    return Err("duplicate PAT execution fault batch at timestamp".into());
+                }
                 let state = self
                     .faults
                     .get_mut(link_id)
                     .ok_or("unknown PAT execution fault link")?;
-                PatExecutionOutcome::Fault(state.apply_batch(at_ns, edges.iter().cloned())?)
+                let outcome = state.apply_batch(at_ns, edges.iter().cloned())?;
+                self.last_fault_batch_at.insert(link_id.to_owned(), at_ns);
+                PatExecutionOutcome::Fault(outcome)
             }
             PatExecutionTransition::Head(transition) => {
                 PatExecutionOutcome::Head(self.heads.apply_pat_transition(transition)?)
@@ -251,6 +260,74 @@ mod tests {
             })
             .unwrap();
         assert!(runtime.head_runtime().predicted_at("a", 21).is_ok());
+    }
+
+    #[test]
+    fn same_link_fault_batches_cannot_split_one_atomic_instant() {
+        let mut runtime =
+            PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", true)]).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let up = [(FaultCause::Administrative, LinkAction::Up)];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+        let committed = *runtime.fault_state("isl").unwrap();
+
+        // A second batch at the same instant would make the final state
+        // depend on API call order, even if the individual batches are valid.
+        for edges in [&down[..], &up[..]] {
+            assert_eq!(
+                runtime
+                    .apply(PatExecutionTransition::FaultBatch {
+                        link_id: "isl",
+                        at_ns: 10,
+                        edges,
+                    })
+                    .unwrap_err(),
+                "duplicate PAT execution fault batch at timestamp"
+            );
+            assert_eq!(*runtime.fault_state("isl").unwrap(), committed);
+        }
+
+        // A different link can commit its own batch at the same instant.
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "backup",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+        assert!(!runtime.fault_state("backup").unwrap().effective_up());
+
+        // A rejected contradictory batch does not consume the next instant.
+        let conflicting = [
+            (FaultCause::Administrative, LinkAction::Up),
+            (FaultCause::Administrative, LinkAction::Down),
+        ];
+        assert_eq!(
+            runtime
+                .apply(PatExecutionTransition::FaultBatch {
+                    link_id: "isl",
+                    at_ns: 11,
+                    edges: &conflicting,
+                })
+                .unwrap_err(),
+            "conflicting PAT fault edges at same timestamp"
+        );
+        assert_eq!(*runtime.fault_state("isl").unwrap(), committed);
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 11,
+                edges: &up,
+            })
+            .unwrap();
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+        assert!(!runtime.fault_state("backup").unwrap().effective_up());
     }
 
     #[test]
