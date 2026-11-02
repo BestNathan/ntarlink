@@ -18,7 +18,7 @@ existing O(H) per-head typed-command watermark, adding no schema fields,
 dependencies or new state. This does not remove offline provisional planning,
 lease audit, or the shared-head predicted-mode limitation.
 
-
+## SYS-02 repeated PAT attempt provenance deduplication
 
 The typed PAT command provenance ledger and the failed paired-command evidence
 ledger now retain one entry for each distinct attempt at a given ordered head
