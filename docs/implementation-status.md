@@ -1,3 +1,19 @@
+## P0 packet-runtime performance benchmark harness
+
+A release-mode end-to-end packet CLI benchmark now derives a bounded
+single-flow workload from the minimal scenario, records the generated scenario
+and binary SHA-256 digests, Git revision and repeated wall-time samples, and
+requires byte-equivalent canonical report hashes and complete packet
+accounting. A dedicated CI workflow builds the optimized CLI and runs the
+harness contract tests plus 1,000- and 10,000-packet scale-point benchmarks.
+
+**Verification and limits:** the workflow is subject to PR and main CI
+verification; no benchmark throughput result or successful CI execution is
+claimed in this source file. Results include process startup and JSON report
+serialization, not pure event-loop throughput. Hosted-runner timing is not
+a stable regression threshold; peak RSS and pinned-hardware scaling remain
+outstanding. See [benchmark method](design/packet-runtime-benchmark.md).
+
 ## SYS-02 typed PAT same-timestamp lease causality
 
 The executable SYS-02 PAT runtime now rejects Reserve and Release at the exact

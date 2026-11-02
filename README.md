@@ -23,6 +23,22 @@ cd applications/console && npm install && npm run check
 
 The JSON report includes per-packet status, drop reason, route revisions and a timestamped, hop-by-hop packet trace.
 
+## P0 packet performance baseline
+
+Build the optimized CLI and run the reproducible end-to-end packet benchmark:
+
+```sh
+cargo build --release -p ntarlink-cli
+python3 -m unittest discover -s scripts/tests
+python3 scripts/benchmark_packet_runtime.py --output packet-benchmark.json
+```
+
+The [benchmark method](docs/design/packet-runtime-benchmark.md) reports
+wall-clock CLI throughput, input/binary digests, accounting and deterministic
+report hashes. These are **not** virtual-time throughput or portable
+performance guarantees. The dedicated CI workflow runs the release-mode
+smoke baseline on relevant changes.
+
 ## GitHub Pages: showcase and interactive demo
 
 The [Platform Showcase](https://bestnathan.github.io/ntarlink/) introduces the system and its 16 engineering domains. The separate **[Mission Control Demo](https://bestnathan.github.io/ntarlink/demo/)** provides a network overview and navigable workspaces for all 16 subsystems; each subsystem has **Overview, Assets, Operations and Telemetry** pages with synthetic example records and local mock interactions. Importing a local Rust `SimulationReport` JSON shows genuine packet totals in a separately labeled browser-only panel.
