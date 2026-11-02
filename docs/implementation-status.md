@@ -1,3 +1,21 @@
+## P1 single-commit PAT fault batch timestamps
+
+The typed SYS-02 `PatExecutionRuntime` now commits at most one fault batch per
+registered link and virtual timestamp. Administrative and sampled-pointing
+edges for the same link and instant must arrive together in one atomic batch;
+splitting them across calls is rejected even when the second batch repeats
+the first. This prevents API call order from silently determining the final
+link state. Other links may still commit at the same instant, and a rejected
+contradictory batch leaves the timestamp available for a corrected retry.
+
+A Rust regression checks duplicate and opposite second batches, independent
+same-time links, rejection without partial mutation, and recovery after a
+rejected batch. The per-link latest-batch registry costs O(L) memory and O(1)
+expected lookup/update per batch. The existing packet adapter already groups
+same-link, same-time edges before applying them; its offline PAT planning,
+lease-only audit, and packet accounting are unchanged. This is not a live
+single-pass Reservation/Command/Fault scheduler.
+
 ## P1 typed PAT execution event owner
 
 SYS-02 now provides `PatExecutionRuntime`, which owns the existing per-head
