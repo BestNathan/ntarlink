@@ -585,7 +585,7 @@ mod tests {
             })
             .unwrap();
 
-        let reserve = |link_id, at_ns| {
+        fn reserve(link_id: &str, at_ns: u64) -> PatExecutionTransition<'_> {
             PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
                 link_id,
                 from_head: "a",
