@@ -824,20 +824,31 @@ impl BodyHeadRuntime {
         command: &BodyHeadPatCommand<'_>,
         outcome: &Result<([f64; 3], [f64; 3]), String>,
     ) {
-        self.pat_command_attempts
+        let attempts = self
+            .pat_command_attempts
             .entry((
                 command.from_head.to_owned(),
                 command.to_head.to_owned(),
                 command.at_ns,
             ))
-            .or_default()
-            .push(PatCommandAttempt {
+            .or_default();
+        let from_bits = command.from_target_body.map(f64::to_bits);
+        let to_bits = command.to_target_body.map(f64::to_bits);
+        if !attempts.iter().any(|attempt| {
+            attempt.link_id == command.link_id
+                && attempt.leased == command.leased
+                && attempt.from_target_bits == from_bits
+                && attempt.to_target_bits == to_bits
+                && attempt.outcome == *outcome
+        }) {
+            attempts.push(PatCommandAttempt {
                 link_id: command.link_id.to_owned(),
                 leased: command.leased,
-                from_target_bits: command.from_target_body.map(f64::to_bits),
-                to_target_bits: command.to_target_body.map(f64::to_bits),
+                from_target_bits: from_bits,
+                to_target_bits: to_bits,
                 outcome: outcome.clone(),
             });
+        }
     }
 
     fn record_failed_pair_attempt(
@@ -850,14 +861,23 @@ impl BodyHeadRuntime {
         result: &Result<([f64; 3], [f64; 3]), String>,
     ) {
         if let Err(reason) = result {
-            self.failed_pair_attempts
+            let attempts = self
+                .failed_pair_attempts
                 .entry((from_head_id.to_owned(), to_head_id.to_owned(), at_ns))
-                .or_default()
-                .push(FailedPairAttempt {
-                    from_target_bits: from_target_body.map(f64::to_bits),
-                    to_target_bits: to_target_body.map(f64::to_bits),
+                .or_default();
+            let from_bits = from_target_body.map(f64::to_bits);
+            let to_bits = to_target_body.map(f64::to_bits);
+            if !attempts.iter().any(|attempt| {
+                attempt.from_target_bits == from_bits
+                    && attempt.to_target_bits == to_bits
+                    && attempt.reason == *reason
+            }) {
+                attempts.push(FailedPairAttempt {
+                    from_target_bits: from_bits,
+                    to_target_bits: to_bits,
                     reason: reason.clone(),
                 });
+            }
         }
     }
 
@@ -2023,6 +2043,92 @@ mod tests {
         assert_eq!(runtime.history.get("a").unwrap().len(), 1);
         assert_eq!(runtime.history.get("b").unwrap().len(), 1);
         assert!(runtime.owners.is_empty());
+    }
+
+    #[test]
+    fn typed_pat_attempt_ledgers_deduplicate_exact_same_time_retries() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let invalid = [f64::NAN, 0.0, 0.0];
+        let key = ("a".to_owned(), "b".to_owned(), 10);
+        let command = |target_body, leased| {
+            BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+                leased,
+                from_target_body: target_body,
+                to_target_body: target,
+            })
+        };
+
+        for _ in 0..3 {
+            assert!(matches!(
+                runtime
+                    .apply_pat_transition(command(invalid, false))
+                    .unwrap(),
+                BodyHeadPatRuntimeOutcome::Command(Err(_))
+            ));
+        }
+        assert_eq!(runtime.failed_pair_attempts[&key].len(), 1);
+        assert_eq!(runtime.pat_command_attempts[&key].len(), 1);
+        assert!(runtime.history.is_empty());
+
+        // IEEE-754 NaN payloads are distinct command inputs, even when the
+        // error message and physical invalidity are the same.
+        let other_nan = [f64::from_bits(f64::NAN.to_bits() ^ 1), 0.0, 0.0];
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(command(other_nan, false))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Err(_))
+        ));
+        assert_eq!(runtime.failed_pair_attempts[&key].len(), 2);
+        assert_eq!(runtime.pat_command_attempts[&key].len(), 2);
+
+        // A different failure mode must also retain its own provenance.
+        assert!(matches!(
+            runtime.apply_pat_transition(command(target, true)).unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Err(_))
+        ));
+        assert_eq!(runtime.failed_pair_attempts[&key].len(), 3);
+        assert_eq!(runtime.pat_command_attempts[&key].len(), 3);
+
+        // Failed retries never commit follower history or prevent a valid
+        // same-time command from being authenticated by the lease audit.
+        let BodyHeadPatRuntimeOutcome::Command(Ok(observed)) = runtime
+            .apply_pat_transition(command(target, false))
+            .unwrap()
+        else {
+            panic!("valid same-time PAT retry must succeed");
+        };
+        assert_eq!(runtime.pat_command_attempts[&key].len(), 4);
+        assert_eq!(runtime.history["a"].len(), 1);
+        assert_eq!(runtime.history["b"].len(), 1);
+        let mut audit = runtime.lease_audit();
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &Ok(observed),
+                }),
+            )
+            .unwrap();
     }
 
     #[test]
