@@ -627,7 +627,15 @@ impl BodyHeadRuntime {
             sample.to_head.to_owned(),
             sample.at_ns,
         );
-        if let Some(attempts) = self.pat_command_attempts.get(&key) {
+        // Once typed PAT commands exist, every audited sample must have
+        // matching typed provenance. Otherwise a legacy observe_pair call
+        // could create head history that bypasses link identity verification.
+        // Standalone legacy runtimes retain their history-only audit behavior.
+        if !self.pat_command_attempts.is_empty() {
+            let attempts = self
+                .pat_command_attempts
+                .get(&key)
+                .ok_or("PAT typed command provenance mismatch")?;
             let matches = attempts.iter().any(|attempt| {
                 attempt.link_id == sample.link_id
                     // Provisional commands run before PAT has assigned leases.
@@ -1808,6 +1816,99 @@ mod tests {
                     from_target_body: target,
                     to_target_body: target,
                     observed: &committed,
+                }),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn typed_pat_audit_rejects_legacy_history_without_link_provenance() {
+        let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let target = [1.0, 0.0, 0.0];
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(typed) = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl-a",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+                leased: false,
+                from_target_body: target,
+                to_target_body: target,
+            }))
+            .unwrap()
+        else {
+            panic!("expected typed PAT command result");
+        };
+        assert!(typed.is_ok());
+        let legacy = runtime
+            .observe_pair("a", "b", 20, target, target)
+            .unwrap();
+        // The legacy observation has valid committed head history but no
+        // typed link identity. It cannot be borrowed by an audited PAT link.
+        runtime
+            .verify_sample_command("a", "b", 20, target, target, &Ok(legacy))
+            .unwrap();
+        let mut audit = runtime.lease_audit();
+        assert_eq!(
+            audit
+                .apply_transition(
+                    &runtime,
+                    BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                        link_id: "isl-b",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 20,
+                        leased: false,
+                        from_target_body: target,
+                        to_target_body: target,
+                        observed: &Ok(legacy),
+                    }),
+                )
+                .unwrap_err(),
+            "PAT typed command provenance mismatch"
+        );
+        // A rejected provenance check must not advance audit chronology.
+        audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &typed,
+                }),
+            )
+            .unwrap();
+
+        // Pure standalone follower use remains backwards compatible.
+        let mut standalone = BodyHeadRuntime::new(&actuators).unwrap();
+        let observed = standalone
+            .observe_pair("a", "b", 20, target, target)
+            .unwrap();
+        standalone
+            .lease_audit()
+            .apply_transition(
+                &standalone,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "standalone",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &Ok(observed),
                 }),
             )
             .unwrap();
