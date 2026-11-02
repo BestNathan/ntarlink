@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Consolidate typed SYS-02 per-head PAT lease-edge and command chronology into one phase clock (Release -> Reserve -> Sample), including failed commands. Reject commands that predate an unsampled reservation or release, while preserving same-time retries and independent head histories. This remains offline PAT planning and audit, not single-pass live arbitration. See [status](implementation-status.md).
+
 - [x] Enforce typed SYS-02 PAT Release-before-Reserve lease-edge phase chronology per head, including unsampled zero-duration reservations, atomic rejection and parity with the lease-only audit. This is a typed runtime consistency guard, not a single-pass fault/actuator scheduler. See [status](implementation-status.md).
 
 - [x] Consolidate SYS-03 PAT event ordering, link identity and ordered optical-head endpoint preflight into one immutable validated timeline consumed by both SYS-02 provisional actuator execution and lease-only audit; preflight sampled lease bindings before audit mutation. This removes duplicate adapter validation, not the offline two-phase state boundary. See [status](implementation-status.md).
