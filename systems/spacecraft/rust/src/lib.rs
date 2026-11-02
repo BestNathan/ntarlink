@@ -1089,7 +1089,8 @@ impl BodyHeadRuntime {
                 || self
                     .last_pat_command_ns
                     .get(head_id)
-                    .is_some_and(|last| at_ns < *last)
+                    // Lease edges must precede commands at the same instant.
+                    .is_some_and(|last| at_ns <= *last)
             {
                 return Err(
                     "BODY-frame pair reservation conflicts with head history or owner".into(),
@@ -1171,7 +1172,8 @@ impl BodyHeadRuntime {
                 || self
                     .last_pat_command_ns
                     .get(head_id)
-                    .is_some_and(|last| at_ns < *last)
+                    // Lease edges must precede commands at the same instant.
+                    .is_some_and(|last| at_ns <= *last)
             {
                 return Err("BODY-frame runtime lease release precedes head history".into());
             }
@@ -1981,7 +1983,7 @@ mod tests {
         }
 
         let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = runtime
-            .apply_pat_transition(command("isl", 10, target))
+            .apply_pat_transition(command("isl", 9, target))
             .unwrap()
         else {
             panic!("unreserved PAT command must fail");
@@ -1991,7 +1993,7 @@ mod tests {
             "BODY-frame PAT command requires an active pair reservation"
         );
         runtime
-            .verify_sample_command("a", "b", 10, target, target, &Err(reason))
+            .verify_sample_command("a", "b", 9, target, target, &Err(reason))
             .unwrap();
         assert!(!runtime.history.contains_key("a"));
         assert!(!runtime.history.contains_key("b"));
@@ -2272,7 +2274,7 @@ mod tests {
                 link_id: "isl",
                 from_head: "a",
                 to_head: "b",
-                at_ns: 20,
+                at_ns: 21,
             })
             .unwrap();
         assert!(runtime
@@ -2289,7 +2291,7 @@ mod tests {
                 link_id: "next",
                 from_head: "a",
                 to_head: "b",
-                at_ns: 20,
+                at_ns: 21,
             })
             .unwrap();
         assert!(matches!(
@@ -2298,7 +2300,7 @@ mod tests {
                     link_id: "next",
                     from_head: "a",
                     to_head: "b",
-                    at_ns: 20,
+                    at_ns: 21,
                     leased: true,
                     from_target_body: target,
                     to_target_body: target,
@@ -2364,18 +2366,95 @@ mod tests {
                 at_ns: 19,
             })
             .is_err());
-        runtime
+        assert!(runtime
             .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
                 link_id: "isl",
                 from_head: "a",
                 to_head: "b",
                 at_ns: 20,
             })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 21,
+            })
             .unwrap();
         assert!(matches!(
             runtime
                 .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
                     link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 21,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn typed_pat_command_phase_rejects_same_time_release_atomically() {
+        let actuators = ["a", "b", "c"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let invalid = [f64::NAN, 0.0, 0.0];
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .unwrap();
+        let failed = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+                leased: true,
+                from_target_body: invalid,
+                to_target_body: target,
+            }))
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = failed else {
+            panic!("invalid target must be recorded as a rejected command");
+        };
+        runtime
+            .verify_sample_command("a", "b", 20, invalid, target, &Err(reason))
+            .unwrap();
+        assert_eq!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "first",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                })
+                .unwrap_err(),
+            "BODY-frame runtime lease release precedes head history"
+        );
+        assert_eq!(runtime.owners.get("a").map(String::as_str), Some("first"));
+        assert_eq!(runtime.owners.get("b").map(String::as_str), Some("first"));
+        assert!(runtime.history.is_empty());
+
+        // Same-time command retries remain legal; lease edges do not.
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "first",
                     from_head: "a",
                     to_head: "b",
                     at_ns: 20,
@@ -2386,6 +2465,47 @@ mod tests {
                 .unwrap(),
             BodyHeadPatRuntimeOutcome::Command(Ok(_))
         ));
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 21,
+            })
+            .unwrap();
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "second",
+                from_head: "a",
+                to_head: "c",
+                at_ns: 21,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "second",
+                    from_head: "a",
+                    to_head: "c",
+                    at_ns: 21,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        assert_eq!(runtime.history["a"].len(), 2);
+        assert_eq!(runtime.history["b"].len(), 1);
+        assert_eq!(runtime.history["c"].len(), 1);
     }
 
     #[test]
