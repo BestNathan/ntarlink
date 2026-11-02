@@ -746,7 +746,8 @@ impl<'a> ValidatedPatHeadTimeline<'a> {
 /// through one SYS-02 actuator owner. An empty reservation set produces the
 /// provisional follower observations used to plan PAT contact boundaries.
 /// A populated set verifies the same observations under actual command leases.
-/// This shares one execution path, but PAT planning still requires two passes.
+/// The complete head timeline now commits as one SYS-02 transaction, but
+/// PAT planning still requires provisional observations and a lease audit.
 fn execute_pat_head_timeline(
     scenario: &Scenario,
     reservations: &[PatReservation],
@@ -755,39 +756,41 @@ fn execute_pat_head_timeline(
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
     let mut runtime =
-        ntarlink_spacecraft::PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
-    let mut observations = HashMap::new();
-    for event in &timeline.events {
-        match event.kind {
-            PatRuntimeTransitionKind::Release(index) => {
-                let reservation = &reservations[index];
-                runtime.apply_head(BodyHeadPatRuntimeTransition::Release {
-                    link_id: &reservation.link_id,
-                    from_head: &reservation.from_head,
-                    to_head: &reservation.to_head,
-                    at_ns: reservation.end_ns,
-                })?;
-            }
-            PatRuntimeTransitionKind::Reserve(index) => {
-                let reservation = &reservations[index];
-                runtime.apply_head(BodyHeadPatRuntimeTransition::Reserve {
-                    link_id: &reservation.link_id,
-                    from_head: &reservation.from_head,
-                    to_head: &reservation.to_head,
-                    at_ns: reservation.start_ns,
-                })?;
-            }
-            PatRuntimeTransitionKind::Sample {
-                index,
-                reservation_index,
-            } => {
-                let sample = &scenario.optical_body_following_samples[index];
-                let pat = timeline.sample_link(sample, reservation_index, reservations)?;
-                // Lease changes and sampled commands now cross the same SYS-02
-                // actuator transition boundary, preserving failed attempts as
-                // observations for PAT planning and provenance verification.
-                let outcome = runtime.apply_head(BodyHeadPatRuntimeTransition::Command(
-                    BodyHeadPatCommand {
+        PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
+    // Build the complete canonical head timeline before touching actuator state.
+    // SYS-02 now validates and commits this batch transactionally rather than
+    // allowing a late invalid lease edge to leave earlier head motion behind.
+    let events = timeline
+        .events
+        .iter()
+        .enumerate()
+        .map(|(event_index, event)| {
+            let transition = match event.kind {
+                PatRuntimeTransitionKind::Release(index) => {
+                    let reservation = &reservations[index];
+                    BodyHeadPatRuntimeTransition::Release {
+                        link_id: &reservation.link_id,
+                        from_head: &reservation.from_head,
+                        to_head: &reservation.to_head,
+                        at_ns: reservation.end_ns,
+                    }
+                }
+                PatRuntimeTransitionKind::Reserve(index) => {
+                    let reservation = &reservations[index];
+                    BodyHeadPatRuntimeTransition::Reserve {
+                        link_id: &reservation.link_id,
+                        from_head: &reservation.from_head,
+                        to_head: &reservation.to_head,
+                        at_ns: reservation.start_ns,
+                    }
+                }
+                PatRuntimeTransitionKind::Sample {
+                    index,
+                    reservation_index,
+                } => {
+                    let sample = &scenario.optical_body_following_samples[index];
+                    let pat = timeline.sample_link(sample, reservation_index, reservations)?;
+                    BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
                         link_id: &sample.link_id,
                         from_head: &pat.from_head,
                         to_head: &pat.to_head,
@@ -795,22 +798,33 @@ fn execute_pat_head_timeline(
                         leased: reservation_index.is_some(),
                         from_target_body: sample.from_target_body,
                         to_target_body: sample.to_target_body,
-                    },
-                ))?;
-                let BodyHeadPatRuntimeOutcome::Command(observed) = outcome else {
-                    return Err("PAT actuator command returned a lease result".into());
-                };
-                if let Some(expected) = expected {
-                    let provisional = expected
-                        .get(&(sample.link_id.clone(), sample.at_ns))
-                        .ok_or("missing provisional BODY-frame observation")?;
-                    if &observed != provisional {
-                        return Err("PAT lease replay diverged from predicted head history".into());
-                    }
+                    })
                 }
-                observations.insert((sample.link_id.clone(), sample.at_ns), observed);
+            };
+            Ok((PatExecutionTransition::Head(transition), event_index))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let mut observations = HashMap::new();
+    for (event_index, outcome) in runtime.apply_timeline(events)? {
+        let PatRuntimeTransitionKind::Sample { index, .. } = timeline.events[event_index].kind
+        else {
+            continue;
+        };
+        let PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(observed)) = outcome
+        else {
+            return Err("PAT actuator command returned a lease result".into());
+        };
+        let sample = &scenario.optical_body_following_samples[index];
+        if let Some(expected) = expected {
+            let provisional = expected
+                .get(&(sample.link_id.clone(), sample.at_ns))
+                .ok_or("missing provisional BODY-frame observation")?;
+            if &observed != provisional {
+                return Err("PAT lease replay diverged from predicted head history".into());
             }
         }
+        observations.insert((sample.link_id.clone(), sample.at_ns), observed);
     }
     Ok((runtime.into_heads(), observations))
 }
@@ -2096,6 +2110,35 @@ mod tests {
         let (_, reordered) =
             execute_pat_head_timeline(&scenario, &reversed, Some(&expected)).unwrap();
         assert_eq!(reordered, expected);
+    }
+
+    #[test]
+    fn packet_pat_head_batch_is_sample_order_independent() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let (original, observations) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let mut shuffled = scenario.clone();
+        shuffled.optical_body_following_samples.reverse();
+        let (reordered, reordered_observations) =
+            execute_pat_head_timeline(&shuffled, &[], None).unwrap();
+        assert_eq!(reordered_observations, observations);
+        for sample in &scenario.optical_body_following_samples {
+            let pat = scenario
+                .optical_pat
+                .iter()
+                .find(|pat| pat.link_id == sample.link_id)
+                .unwrap();
+            for head in [&pat.from_head, &pat.to_head] {
+                assert_eq!(
+                    reordered.predicted_at(head, sample.at_ns).unwrap(),
+                    original.predicted_at(head, sample.at_ns).unwrap()
+                );
+            }
+        }
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, report.delivered + report.dropped);
     }
 
     #[test]
