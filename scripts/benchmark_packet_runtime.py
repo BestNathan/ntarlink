@@ -9,6 +9,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import platform
 import statistics
 import subprocess
@@ -64,20 +65,58 @@ def validate_report(report: dict, packet_count: int) -> None:
         raise ValueError("packet benchmark accounting or completion invariant failed")
 
 
-def run_once(binary: Path, scenario_path: Path, packet_count: int) -> tuple[int, str, dict]:
+def run_command(command: list[str]) -> tuple[str, int | None, int | None, int | None]:
+    """Capture a child's own peak RSS and CPU usage on Linux.
+
+    wait4 reports resource usage for this exact PID, unlike cumulative
+    RUSAGE_CHILDREN or a /proc polling loop that can miss short-lived CLIs.
+    Redirect output to temporary files to avoid a pipe deadlock before wait4.
+    Other platforms retain wall-time measurements and report resources as null.
+    """
+    if sys.platform != "linux" or not hasattr(os, "wait4"):
+        completed = subprocess.run(command, check=True, capture_output=True, text=True)
+        return completed.stdout, None, None, None
+
+    with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stdout:
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stderr:
+            process = subprocess.Popen(command, stdout=stdout, stderr=stderr, text=True)
+            try:
+                _, status, usage = os.wait4(process.pid, 0)
+            except BaseException:
+                process.wait()
+                raise
+            process.returncode = os.waitstatus_to_exitcode(status)
+            stdout.seek(0)
+            stderr.seek(0)
+            output, errors = stdout.read(), stderr.read()
+            if process.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    process.returncode, command, output=output, stderr=errors,
+                )
+            return (
+                output,
+                int(usage.ru_maxrss),  # Linux reports ru_maxrss in KiB.
+                round(usage.ru_utime * 1_000_000_000),
+                round(usage.ru_stime * 1_000_000_000),
+            )
+
+
+def run_once(
+    binary: Path, scenario_path: Path, packet_count: int,
+) -> tuple[int, str, dict, int | None, int | None, int | None]:
     started = time.perf_counter_ns()
-    completed = subprocess.run(
+    output, peak_rss_kib, user_cpu_ns, system_cpu_ns = run_command(
         [str(binary), "simulate", str(scenario_path), "--json"],
-        check=True,
-        capture_output=True,
-        text=True,
     )
     elapsed_ns = time.perf_counter_ns() - started
     if elapsed_ns <= 0:
         raise ValueError("packet benchmark wall time must be positive")
-    report = json.loads(completed.stdout)
+    report = json.loads(output)
     validate_report(report, packet_count)
-    return elapsed_ns, sha256(canonical_bytes(report)), report
+    return (
+        elapsed_ns, sha256(canonical_bytes(report)), report,
+        peak_rss_kib, user_cpu_ns, system_cpu_ns,
+    )
 
 
 def git_revision() -> str:
@@ -108,14 +147,21 @@ def benchmark(
             for _ in range(warmup + samples)
         ]
     reference_digest = measurements[0][1]
-    if any(digest != reference_digest for _, digest, _ in measurements):
+    if any(measurement[1] != reference_digest for measurement in measurements):
         raise ValueError("packet benchmark report differs between repeated runs")
-    timings = [elapsed for elapsed, _, _ in measurements[warmup:]]
+    timings = [measurement[0] for measurement in measurements[warmup:]]
+    peak_rss = [measurement[3] for measurement in measurements[warmup:]]
+    user_cpu = [measurement[4] for measurement in measurements[warmup:]]
+    system_cpu = [measurement[5] for measurement in measurements[warmup:]]
     median_ns = statistics.median(timings)
     report = measurements[0][2]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "measurement": "compiled_cli_wall_time_including_json_and_process_startup",
+        "resource_measurement": (
+            "linux_wait4_per_child" if sys.platform == "linux" and hasattr(os, "wait4")
+            else "unavailable_on_this_platform"
+        ),
         "binary_sha256": sha256(binary.read_bytes()),
         "git_revision": git_revision(),
         "python_version": platform.python_version(),
@@ -130,6 +176,13 @@ def benchmark(
         "warmup_runs": warmup,
         "sample_runs": samples,
         "wall_time_ns": timings,
+        "peak_rss_kib": peak_rss,
+        "median_peak_rss_kib": (
+            statistics.median(peak_rss) if all(value is not None for value in peak_rss)
+            else None
+        ),
+        "user_cpu_ns": user_cpu,
+        "system_cpu_ns": system_cpu,
         "median_wall_time_ns": median_ns,
         "min_wall_time_ns": min(timings),
         "max_wall_time_ns": max(timings),

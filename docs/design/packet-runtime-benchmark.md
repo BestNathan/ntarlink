@@ -43,7 +43,12 @@ The output records the Git revision (when available), SHA-256 of the compiled
 binary, SHA-256 of the generated scenario, Python/platform information, number
 of warmup and measured runs, every measured wall duration in nanoseconds, the
 minimum/median/maximum wall duration, median end-to-end packets per second,
-event count and packet accounting. The SHA-256 of the canonicalized simulation
+event count and packet accounting. On Linux, each measured child process also
+records peak resident memory in KiB and user/system CPU time in nanoseconds
+using `wait4` for the exact PID. Warmup resource samples are excluded from the
+reported arrays and median peak RSS. On other platforms these resource fields
+are JSON null, never estimated from cumulative child usage or polling.
+The result schema is version 2. The SHA-256 of the canonicalized simulation
 report must match across **all warmup and measured runs**. Every run must
 account for all injected packets as delivered or dropped, with no in-flight
 packets at the end of the scenario.
@@ -58,8 +63,9 @@ validation, digest stability, timing and the warmup exclusion rule.
 These measurements provide a reproducible **method**, not a portable
 performance SLA. Compare runs only when hardware, runner load, toolchain,
 binary hash, input hash and sample count are controlled. GitHub-hosted runners
-vary; no wall-time pass/fail threshold is imposed in CI. The report does not
-measure peak RSS, energy, per-event latency or Rust-only scheduler throughput.
+vary; no wall-time pass/fail threshold is imposed in CI. The Linux peak RSS is a per-process high-water mark, not instantaneous memory
+at the end of the simulation; CPU time is not elapsed time. The report does
+not measure energy, per-event latency or Rust-only scheduler throughput.
 The benchmark is a first P0 packet-path baseline; additional scale points,
-memory profiling, regressions against pinned hardware and separate PAT/fault
-workloads remain future work.
+memory-allocation profiling, regressions against pinned hardware and separate
+PAT/fault workloads remain future work.
