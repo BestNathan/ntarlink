@@ -1,3 +1,9 @@
+## P1 mixed-timeline optical fault batch preflight
+
+The SYS-02 `PatExecutionRuntime::apply_timeline` now rejects multiple `FaultBatch` events for the same link and virtual timestamp during its full-batch preflight, alongside the existing simultaneous head contention checks. Previously, the first fault batch could commit (along with earlier unrelated events) before the second was rejected by the single-event timestamp guard. The outcome was fail-stop partial mutation even for an input conflict that can be detected without executing any event.
+
+**Verification and limits:** Rust regressions cover identical and contradictory split batches in both caller orders, no partial mutation of earlier independent faults, no global clock advancement, independent same-instant links and subsequent recovery. The additional preflight set costs expected O(F) time and O(F) temporary memory for F fault events; the existing canonical timeline sort remains O(E log E). The single-event `apply` API and legitimate different-time fault batches are unchanged. This does **not** make arbitrary later errors transactional, merge split fault batches, remove offline availability projection, or implement single-pass PAT arbitration. No dependencies or scenario schema changes.
+
 ## P1 simultaneous PAT head contention preflight
 
 The SYS-02 `PatExecutionRuntime::apply_timeline` rejects any mixed batch with

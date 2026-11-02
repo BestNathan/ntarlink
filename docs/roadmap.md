@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Preflight duplicate same-link, same-instant optical PAT fault batches across the entire mixed SYS-02 timeline before any Fault, Release, Reserve or Command transition commits. Both identical and contradictory split batches now reject without advancing virtual time or mutating earlier links; independent links and later recovery remain valid. This is a batch-integrity guard, not transactional rollback or live packet-time arbitration. See [status](implementation-status.md).
+
 - [x] Preflight simultaneous SYS-02 mixed-timeline head contention before any event commits: reject duplicate same-time, same-phase Release, Reserve or Command on a shared optical head regardless of input order, while allowing independent head pairs and same-instant Release -> Reserve -> Command handoff. This prevents input-order-dependent partial execution but does not make later unrelated failures transactional or implement live shared-head arbitration. See [status](implementation-status.md).
 
 - [x] Gate SYS-02 typed PAT Commands on committed per-link fault state, preserving administrative/sampled-pointing failure precedence, failed-command provenance and virtual-time chronology without actuator mutation. Unknown registered links fail closed; offline head-only replay remains compatible. This is an incremental invariant, not live packet-time arbitration. See [status](implementation-status.md).
