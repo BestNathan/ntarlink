@@ -1,0 +1,51 @@
+name: Packet Performance Baseline
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/packet-benchmark.yml'
+      - 'scripts/benchmark_packet_runtime.py'
+      - 'scripts/tests/test_packet_benchmark.py'
+      - 'platform/packet-runtime/**'
+      - 'platform/simulation/**'
+      - 'systems/network-control/**'
+      - 'applications/cli/**'
+      - 'scenarios/minimal.json'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/packet-benchmark.yml'
+      - 'scripts/benchmark_packet_runtime.py'
+      - 'scripts/tests/test_packet_benchmark.py'
+      - 'platform/packet-runtime/**'
+      - 'platform/simulation/**'
+      - 'systems/network-control/**'
+      - 'applications/cli/**'
+      - 'scenarios/minimal.json'
+
+jobs:
+  packet-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify benchmark harness contracts
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build optimized packet CLI
+        run: cargo build --release -p ntarlink-cli
+      - name: Measure deterministic packet throughput
+        run: |
+          python scripts/benchmark_packet_runtime.py \
+            --binary target/release/ntarlink-cli \
+            --packet-count 1000 --interval-ns 1000000 \
+            --warmup 1 --samples 3 \
+            --output packet-benchmark.json
+          echo '### Packet performance baseline (end-to-end CLI)' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Measurements include process startup and JSON serialization; not pure event-loop throughput.' >> "$GITHUB_STEP_SUMMARY"
+          echo '~~~json' >> "$GITHUB_STEP_SUMMARY"
+          cat packet-benchmark.json >> "$GITHUB_STEP_SUMMARY"
+          echo '~~~' >> "$GITHUB_STEP_SUMMARY"
