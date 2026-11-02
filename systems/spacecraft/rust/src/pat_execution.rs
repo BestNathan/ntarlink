@@ -592,7 +592,7 @@ mod tests {
                 to_head: "b",
                 at_ns,
             })
-        };
+        }
         assert_eq!(
             runtime.apply(reserve("isl", 10)).unwrap_err(),
             "PAT execution reservation link is down"
