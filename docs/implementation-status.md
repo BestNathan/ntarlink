@@ -1,4 +1,4 @@
-## SYS-02 repeated PAT attempt provenance deduplication## SYS-02 typed PAT same-timestamp lease causality
+## SYS-02 typed PAT same-timestamp lease causality
 
 The executable SYS-02 PAT runtime now rejects Reserve and Release at the exact
 virtual timestamp of an already observed typed Command on either head. Both
