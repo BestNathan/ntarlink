@@ -322,7 +322,7 @@ impl PatFaultState {
 /// Single owner of sampled predicted BODY-frame head state and immutable
 /// historical snapshots. PAT consumes projections; it does not mutate this
 /// command timeline or own the follower's actuator state.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BodyHeadRuntime {
     heads: HashMap<String, BodyHeadFollower>,
     history: HashMap<String, Vec<(u64, BodyHeadFollower)>>,
@@ -345,7 +345,7 @@ pub struct BodyHeadRuntime {
     pat_command_attempts: HashMap<(String, String, u64), Vec<PatCommandAttempt>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct FailedPairAttempt {
     from_target_bits: [u64; 3],
     to_target_bits: [u64; 3],
@@ -354,7 +354,7 @@ struct FailedPairAttempt {
 
 /// Bind typed PAT command evidence to the originating link and execution mode.
 /// Head history alone cannot distinguish links that use the same head pair.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct PatCommandAttempt {
     link_id: String,
     leased: bool,

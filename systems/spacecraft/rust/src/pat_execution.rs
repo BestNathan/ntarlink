@@ -40,7 +40,7 @@ pub enum PatExecutionOutcome {
 /// Owns one chronological stream of fault, reservation and command events.
 /// The current packet adapter still computes its fault windows offline; this
 /// boundary prepares a live event loop without changing planning semantics.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PatExecutionRuntime {
     heads: BodyHeadRuntime,
     faults: HashMap<String, PatFaultState>,
@@ -203,9 +203,11 @@ impl PatExecutionRuntime {
     /// Multiple fault batches for the same link and instant are also rejected
     /// before any earlier event in the batch can mutate runtime state.
     ///
-    /// This is fail-stop, not a transaction: an invalid later event can leave
-    /// earlier transitions committed. Callers must discard the runtime after
-    /// an error. In particular, this does not perform live PAT arbitration.
+    /// The batch commits atomically: a later invalid event cannot leave
+    /// earlier fault, lease or actuator transitions committed. Failed command
+    /// outcomes are observations, not fatal errors, and commit normally.
+    /// Staging clones the runtime once per batch (time and memory linear in
+    /// existing state size); this does not perform live PAT arbitration.
     pub fn apply_timeline<'a, T>(
         &mut self,
         mut events: Vec<(PatExecutionTransition<'a>, T)>,
@@ -297,10 +299,15 @@ impl PatExecutionRuntime {
         }
 
         events.sort_by(|(left, _), (right, _)| key(left).cmp(&key(right)));
-        events
+        // Execute against a private snapshot so even a late invalid event
+        // cannot leak a fault, lease, failed-attempt ledger or head motion.
+        let mut staged = self.clone();
+        let outcomes = events
             .into_iter()
-            .map(|(event, context)| self.apply(event).map(|outcome| (context, outcome)))
-            .collect()
+            .map(|(event, context)| staged.apply(event).map(|outcome| (context, outcome)))
+            .collect::<Result<Vec<_>, _>>()?;
+        *self = staged;
+        Ok(outcomes)
     }
 
     /// Compatibility bridge for the canonical SYS-03 head-only timeline.
@@ -1293,5 +1300,162 @@ mod tests {
         }));
         assert!(runtime.head_runtime().predicted_at("a", 10).is_ok());
         assert!(runtime.head_runtime().predicted_at("d", 10).is_ok());
+    }
+
+    #[test]
+    fn late_mixed_timeline_error_rolls_back_fault_lease_and_actuator_state() {
+        let mut runtime =
+            PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", true)]).unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 1,
+            })
+            .unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let target = [0.0, 1.0, 0.0];
+        let events = vec![
+            (
+                PatExecutionTransition::FaultBatch {
+                    link_id: "backup",
+                    at_ns: 2,
+                    edges: &down,
+                },
+                "fault",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                    BodyHeadPatCommand {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 2,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                    },
+                )),
+                "command",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 3,
+                }),
+                "release",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id: "backup",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 3,
+                }),
+                "invalid-reserve",
+            ),
+        ];
+        assert_eq!(
+            runtime.apply_timeline(events).unwrap_err(),
+            "PAT execution reservation link is down"
+        );
+        assert!(runtime.fault_state("backup").unwrap().effective_up());
+        let history = runtime.head_runtime().predicted_at("a", 1_000_000_000);
+        assert_eq!(
+            history.unwrap_err(),
+            "missing predicted optical head history"
+        );
+        // The original lease and global clock remain at the pre-batch state.
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "backup",
+                at_ns: 2,
+                edges: &down,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 2,
+                    leased: true,
+                    from_target_body: [1.0, 0.0, 0.0],
+                    to_target_body: [1.0, 0.0, 0.0],
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn failed_command_observation_commits_with_successful_atomic_batch() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 1,
+            })
+            .unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let target = [1.0, 0.0, 0.0];
+        let results = runtime
+            .apply_timeline(vec![
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        BodyHeadPatCommand {
+                            link_id: "isl",
+                            from_head: "a",
+                            to_head: "b",
+                            at_ns: 2,
+                            leased: true,
+                            from_target_body: target,
+                            to_target_body: target,
+                        },
+                    )),
+                    "command",
+                ),
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "isl",
+                        at_ns: 2,
+                        edges: &down,
+                    },
+                    "fault",
+                ),
+            ])
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(matches!(
+            &results[1].1,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Err(reason)))
+                if reason == "PAT execution command blocked by administrative fault"
+        ));
+        assert!(!runtime.fault_state("isl").unwrap().effective_up());
+        assert_eq!(
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 2,
+                })
+                .unwrap_err(),
+            "PAT execution transition order mismatch"
+        );
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 3,
+            })
+            .unwrap();
     }
 }
