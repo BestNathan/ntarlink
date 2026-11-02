@@ -223,7 +223,7 @@ impl PatExecutionRuntime {
                         return Err("duplicate PAT execution fault batch at timestamp".into());
                     }
                     continue;
-                },
+                }
                 PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
                     at_ns,
                     from_head,
