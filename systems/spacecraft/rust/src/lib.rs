@@ -2399,6 +2399,116 @@ mod tests {
     }
 
     #[test]
+    fn typed_pat_command_phase_rejects_same_time_release_atomically() {
+        let actuators = ["a", "b", "c"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let invalid = [f64::NAN, 0.0, 0.0];
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+            })
+            .unwrap();
+        let failed = runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+                leased: true,
+                from_target_body: invalid,
+                to_target_body: target,
+            }))
+            .unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = failed else {
+            panic!("invalid target must be recorded as a rejected command");
+        };
+        runtime
+            .verify_sample_command("a", "b", 20, invalid, target, &Err(reason))
+            .unwrap();
+        assert_eq!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "first",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                })
+                .unwrap_err(),
+            "BODY-frame runtime lease release precedes head history"
+        );
+        assert_eq!(runtime.owners.get("a").map(String::as_str), Some("first"));
+        assert_eq!(runtime.owners.get("b").map(String::as_str), Some("first"));
+        assert!(runtime.history.is_empty());
+
+        // Same-time command retries remain legal; lease edges do not.
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "first",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        assert!(runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 20,
+            })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                link_id: "first",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 21,
+            })
+            .unwrap();
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "second",
+                from_head: "a",
+                to_head: "c",
+                at_ns: 21,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "second",
+                    from_head: "a",
+                    to_head: "c",
+                    at_ns: 21,
+                    leased: true,
+                    from_target_body: target,
+                    to_target_body: target,
+                }))
+                .unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        assert_eq!(runtime.history["a"].len(), 2);
+        assert_eq!(runtime.history["b"].len(), 1);
+        assert_eq!(runtime.history["c"].len(), 1);
+    }
+
+    #[test]
     fn typed_pat_runtime_executes_atomic_leases_and_fault_gap_commands() {
         let actuators = ["a", "b"].map(|head_id| OpticalHeadSlewActuator {
             head_id: head_id.into(),
