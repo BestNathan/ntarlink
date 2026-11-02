@@ -1,3 +1,22 @@
+## SYS-02 repeated PAT attempt provenance deduplication
+
+The typed PAT command provenance ledger and the failed paired-command evidence
+ledger now retain one entry for each distinct attempt at a given ordered head
+pair and virtual timestamp. Identical retries are compared by link identity,
+lease mode, exact IEEE-754 target bits (including NaN payloads) and observed
+outcome. Failed-command evidence also distinguishes the exact error reason.
+A different command, failure mode or later successful same-time retry remains
+independently verifiable. No follower history is committed for failed attempts.
+
+**Verification and limits:** a Rust regression repeats identical rejected
+commands, checks stable ledger sizes, distinguishes NaN payloads and lease
+failure from invalid-target failure, then authenticates a successful same-time
+retry through SYS-02 lease audit. The extra insertion scan is O(R) for R
+unique attempts on the same ordered pair and timestamp; stored evidence is
+O(U) for U distinct attempts rather than O(C) for all repeated calls. This
+is not a global memory cap, a continuous servo or a single-pass fault/lease
+actuator runtime. No scenario schema or external dependency changes.
+
 ## SYS-02 typed PAT command identity preflight
 
 Typed PAT Command transitions now reject empty and whitespace-only link IDs
