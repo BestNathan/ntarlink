@@ -841,7 +841,8 @@ fn audit_pat_head_leases(
         let PatRuntimeTransitionKind::Sample {
             index,
             reservation_index,
-        } = event.kind else {
+        } = event.kind
+        else {
             continue;
         };
         let sample = &scenario.optical_body_following_samples[index];
