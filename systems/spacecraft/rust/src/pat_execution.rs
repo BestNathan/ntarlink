@@ -200,6 +200,8 @@ impl PatExecutionRuntime {
     /// Outcomes retain their caller-provided context in execution order.
     /// Same-time, same-phase contention for any head is rejected before the
     /// batch begins, rather than selecting a winner by caller input order.
+    /// Multiple fault batches for the same link and instant are also rejected
+    /// before any earlier event in the batch can mutate runtime state.
     ///
     /// This is fail-stop, not a transaction: an invalid later event can leave
     /// earlier transitions committed. Callers must discard the runtime after
@@ -213,9 +215,15 @@ impl PatExecutionRuntime {
         // Check the entire batch before any fault, lease or command mutation.
         // Release -> Reserve -> Command handoff at one instant remains legal.
         let mut occupied = HashSet::new();
+        let mut fault_instants = HashSet::new();
         for (transition, _) in &events {
             let (at_ns, phase, from_head, to_head) = match transition {
-                PatExecutionTransition::FaultBatch { .. } => continue,
+                PatExecutionTransition::FaultBatch { link_id, at_ns, .. } => {
+                    if !fault_instants.insert((*at_ns, *link_id)) {
+                        return Err("duplicate PAT execution fault batch at timestamp".into());
+                    }
+                    continue;
+                },
                 PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
                     at_ns,
                     from_head,
@@ -1086,6 +1094,110 @@ mod tests {
                 BodyHeadPatRuntimeOutcome::Command(Ok(_))
             ));
         }
+    }
+
+    #[test]
+    fn split_same_instant_fault_batches_reject_before_any_batch_mutation() {
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let up = [(FaultCause::Administrative, LinkAction::Up)];
+        for second in [&down[..], &up[..]] {
+            for reverse in [false, true] {
+                let mut runtime =
+                    PatExecutionRuntime::new(&heads(), &[("isl", true), ("backup", true)]).unwrap();
+                let mut events = vec![
+                    (
+                        PatExecutionTransition::FaultBatch {
+                            link_id: "backup",
+                            at_ns: 1,
+                            edges: &down,
+                        },
+                        "earlier",
+                    ),
+                    (
+                        PatExecutionTransition::FaultBatch {
+                            link_id: "isl",
+                            at_ns: 3,
+                            edges: &down,
+                        },
+                        "first",
+                    ),
+                    (
+                        PatExecutionTransition::FaultBatch {
+                            link_id: "isl",
+                            at_ns: 3,
+                            edges: second,
+                        },
+                        "second",
+                    ),
+                ];
+                if reverse {
+                    events.reverse();
+                }
+                assert_eq!(
+                    runtime.apply_timeline(events).unwrap_err(),
+                    "duplicate PAT execution fault batch at timestamp"
+                );
+                assert!(runtime.fault_state("isl").unwrap().effective_up());
+                assert!(runtime.fault_state("backup").unwrap().effective_up());
+                // A failed preflight must not advance the clock or reserve a head.
+                runtime
+                    .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 0,
+                    })
+                    .unwrap();
+                runtime
+                    .apply(PatExecutionTransition::FaultBatch {
+                        link_id: "backup",
+                        at_ns: 1,
+                        edges: &down,
+                    })
+                    .unwrap();
+                assert!(!runtime.fault_state("backup").unwrap().effective_up());
+            }
+        }
+
+        let mut runtime =
+            PatExecutionRuntime::new(&[], &[("isl", true), ("backup", true)]).unwrap();
+        let outcomes = runtime
+            .apply_timeline(vec![
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "isl",
+                        at_ns: 3,
+                        edges: &down,
+                    },
+                    "isl",
+                ),
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "backup",
+                        at_ns: 3,
+                        edges: &down,
+                    },
+                    "backup",
+                ),
+            ])
+            .unwrap();
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
+            vec!["backup", "isl"]
+        );
+        assert!(!runtime.fault_state("isl").unwrap().effective_up());
+        assert!(!runtime.fault_state("backup").unwrap().effective_up());
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 4,
+                edges: &up,
+            })
+            .unwrap();
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
     }
 
     #[test]
