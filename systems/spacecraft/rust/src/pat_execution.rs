@@ -694,5 +694,4 @@ mod tests {
             BodyHeadPatRuntimeOutcome::Command(Ok(_))
         ));
     }
-
 }
