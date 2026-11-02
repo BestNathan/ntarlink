@@ -1,7 +1,7 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
 use ntarlink_contracts::{
-    OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage, OpticalHeadSlewActuator,
-    OpticalPointing,
+    FaultCause, LinkAction, OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage,
+    OpticalHeadSlewActuator, OpticalPointing,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -217,6 +217,62 @@ impl BodyHeadFollower {
         let target = projection.held_target_body;
         let boresight = projection.observe(at_ns, target)?;
         Ok((boresight, target))
+    }
+}
+
+/// One optical link's administrative and sampled-pointing fault domains.
+/// The packet adapter commits all edges at a virtual timestamp before reading
+/// effective availability. This state does not yet own PAT leases or actuators.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatFaultState {
+    administrative_up: bool,
+    sampled_pointing_up: bool,
+    last_at_ns: Option<u64>,
+}
+
+impl PatFaultState {
+    pub fn new(initial_administrative_up: bool) -> Self {
+        Self {
+            administrative_up: initial_administrative_up,
+            sampled_pointing_up: true,
+            last_at_ns: None,
+        }
+    }
+
+    /// Apply one ordered domain edge. Equal-time edges are permitted so that
+    /// independent fault domains can be folded before evaluating availability.
+    /// An out-of-order edge is rejected without changing either domain.
+    pub fn apply(
+        &mut self,
+        at_ns: u64,
+        cause: FaultCause,
+        action: LinkAction,
+    ) -> Result<(), String> {
+        if self.last_at_ns.is_some_and(|previous| at_ns < previous) {
+            return Err("PAT fault transition order mismatch".into());
+        }
+        let up = matches!(action, LinkAction::Up);
+        match cause {
+            FaultCause::Administrative => self.administrative_up = up,
+            FaultCause::SampledPointing => self.sampled_pointing_up = up,
+        }
+        self.last_at_ns = Some(at_ns);
+        Ok(())
+    }
+
+    pub fn effective_up(&self) -> bool {
+        self.administrative_up && self.sampled_pointing_up
+    }
+
+    /// Administrative failure takes precedence when both domains are down.
+    pub fn down_cause(&self) -> Option<FaultCause> {
+        if !self.administrative_up {
+            Some(FaultCause::Administrative)
+        } else if !self.sampled_pointing_up {
+            Some(FaultCause::SampledPointing)
+        } else {
+            None
+        }
     }
 }
 
@@ -3697,5 +3753,58 @@ mod tests {
             forward.available_intervals("a", "b", 0, 100),
             reverse.available_intervals("a", "b", 0, 100)
         );
+    }
+
+    #[test]
+    fn pat_fault_state_preserves_independent_domains_and_atomic_time_rejection() {
+        let mut state = PatFaultState::new(true);
+        assert!(state.effective_up());
+        assert_eq!(state.down_cause(), None);
+
+        state
+            .apply(10, FaultCause::SampledPointing, LinkAction::Down)
+            .unwrap();
+        state
+            .apply(10, FaultCause::Administrative, LinkAction::Down)
+            .unwrap();
+        assert_eq!(state.down_cause(), Some(FaultCause::Administrative));
+
+        state
+            .apply(20, FaultCause::Administrative, LinkAction::Up)
+            .unwrap();
+        assert!(!state.effective_up());
+        assert_eq!(state.down_cause(), Some(FaultCause::SampledPointing));
+
+        let previous = state;
+        assert!(state
+            .apply(19, FaultCause::SampledPointing, LinkAction::Up)
+            .is_err());
+        assert_eq!(state, previous);
+
+        state
+            .apply(20, FaultCause::SampledPointing, LinkAction::Up)
+            .unwrap();
+        assert!(state.effective_up());
+        assert_eq!(state.down_cause(), None);
+    }
+
+    #[test]
+    fn pat_fault_state_same_time_independent_domains_are_order_independent() {
+        let mut first = PatFaultState::new(false);
+        let mut second = PatFaultState::new(false);
+        first
+            .apply(5, FaultCause::Administrative, LinkAction::Up)
+            .unwrap();
+        first
+            .apply(5, FaultCause::SampledPointing, LinkAction::Down)
+            .unwrap();
+        second
+            .apply(5, FaultCause::SampledPointing, LinkAction::Down)
+            .unwrap();
+        second
+            .apply(5, FaultCause::Administrative, LinkAction::Up)
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.down_cause(), Some(FaultCause::SampledPointing));
     }
 }
