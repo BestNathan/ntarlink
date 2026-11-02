@@ -1831,9 +1831,9 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let first_windows = windows(&interleaved);
-        assert!(first_windows.iter().any(|(link, start, _)| {
-            link == "isl-c-d" && *start >= 80_000_000
-        }));
+        assert!(first_windows
+            .iter()
+            .any(|(link, start, _)| { link == "isl-c-d" && *start >= 80_000_000 }));
         let first_report = run(&interleaved).unwrap();
         interleaved.faults.reverse();
         assert_eq!(windows(&interleaved), first_windows);
