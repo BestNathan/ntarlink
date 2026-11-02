@@ -958,6 +958,50 @@ impl BodyHeadRuntime {
         }
     }
 
+    /// Record a fault-blocked PAT command without changing either actuator.
+    /// Rejections still consume the sampled head phase and retain exact
+    /// command inputs and error provenance for the lease audit.
+    pub(crate) fn reject_pat_command(
+        &mut self,
+        command: BodyHeadPatCommand<'_>,
+        reason: &str,
+    ) -> BodyHeadPatRuntimeOutcome {
+        let retroactive = [command.from_head, command.to_head]
+            .into_iter()
+            .any(|head| {
+                self.last_pat_transition
+                    .get(head)
+                    .is_some_and(|(previous, _)| command.at_ns < *previous)
+            });
+        let rejected: Result<([f64; 3], [f64; 3]), String> = Err(if retroactive {
+            "BODY-frame PAT command precedes previous PAT transition".into()
+        } else {
+            reason.to_owned()
+        });
+        self.record_failed_pair_attempt(
+            command.from_head,
+            command.to_head,
+            command.at_ns,
+            command.from_target_body,
+            command.to_target_body,
+            &rejected,
+        );
+        self.record_typed_pat_attempt(&command, &rejected);
+        if !retroactive
+            && command.from_head != command.to_head
+            && self.heads.contains_key(command.from_head)
+            && self.heads.contains_key(command.to_head)
+        {
+            self.record_pat_transition(
+                command.from_head,
+                command.to_head,
+                command.at_ns,
+                LeaseAuditPhase::Sample,
+            );
+        }
+        BodyHeadPatRuntimeOutcome::Command(rejected)
+    }
+
     fn record_typed_pat_attempt(
         &mut self,
         command: &BodyHeadPatCommand<'_>,

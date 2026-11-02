@@ -1,3 +1,23 @@
+## P1 fault-aware PAT command outcomes
+
+The SYS-02 PatExecutionRuntime checks committed per-link fault state before
+executing typed Command events when links are registered. Administrative
+faults take precedence over sampled-pointing faults, and unknown links fail
+closed. Blocked commands are typed failure observations: neither actuator
+moves, while the existing failed-command ledger retains exact targets, error
+provenance and the sampled virtual-time phase. Recovery permits later commands
+without implicitly changing head leases. Head-only offline replay is unchanged.
+
+**Verification and limits:** Rust regressions cover a reserved link going
+down before a command, unchanged actuator projection, failure provenance,
+command phase chronology, independent fault domains, partial/full recovery
+and unknown-link retry. Existing packet/PAT scenarios remain cross-subsystem
+CI coverage. Fault lookup costs expected O(1) per command and reuses the
+existing attempt ledger. No new persistent state, dependencies or scenario
+schema fields. The packet adapter still projects availability and runs
+provisional planning plus lease audit offline; this is not live single-pass
+Reservation/Command/Fault arbitration.
+
 ## P1 fault-aware PAT reservation admission
 
 The SYS-02 `PatExecutionRuntime` now checks committed per-link fault state

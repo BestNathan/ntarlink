@@ -133,22 +133,61 @@ impl PatExecutionRuntime {
                 PatExecutionOutcome::Fault(outcome)
             }
             PatExecutionTransition::Head(transition) => {
-                // Offline head-only replay has no registered fault links.
-                // Once links are registered, a new lease must be admitted
-                // against their committed fault state. Releases remain legal
-                // while a link is down so its heads can be reassigned.
-                if let BodyHeadPatRuntimeTransition::Reserve { link_id, .. } = &transition {
-                    if !self.faults.is_empty() {
-                        let fault = self
-                            .faults
-                            .get(*link_id)
-                            .ok_or("unknown PAT execution reservation link")?;
-                        if !fault.effective_up() {
-                            return Err("PAT execution reservation link is down".into());
+                let head_outcome = match transition {
+                    BodyHeadPatRuntimeTransition::Reserve {
+                        link_id,
+                        from_head,
+                        to_head,
+                        at_ns,
+                    } => {
+                        // Head-only replay has no registered fault links.
+                        // A registered link must be up to acquire a pair.
+                        if !self.faults.is_empty() {
+                            let fault = self
+                                .faults
+                                .get(link_id)
+                                .ok_or("unknown PAT execution reservation link")?;
+                            if !fault.effective_up() {
+                                return Err("PAT execution reservation link is down".into());
+                            }
+                        }
+                        self.heads
+                            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                                link_id,
+                                from_head,
+                                to_head,
+                                at_ns,
+                            })?
+                    }
+                    BodyHeadPatRuntimeTransition::Command(command) => {
+                        // Fault-blocked commands are failed observations, not
+                        // fatal lease errors or actuator state mutations.
+                        let rejection = if self.faults.is_empty() {
+                            None
+                        } else {
+                            match self.faults.get(command.link_id) {
+                                None => Some("unknown PAT execution command link"),
+                                Some(state) => match state.down_cause() {
+                                    Some(FaultCause::Administrative) => Some(
+                                        "PAT execution command blocked by administrative fault",
+                                    ),
+                                    Some(FaultCause::SampledPointing) => Some(
+                                        "PAT execution command blocked by sampled pointing fault",
+                                    ),
+                                    None => None,
+                                },
+                            }
+                        };
+                        match rejection {
+                            Some(reason) => self.heads.reject_pat_command(command, reason),
+                            None => self.heads.apply_pat_transition(
+                                BodyHeadPatRuntimeTransition::Command(command),
+                            )?,
                         }
                     }
-                }
-                PatExecutionOutcome::Head(self.heads.apply_pat_transition(transition)?)
+                    release => self.heads.apply_pat_transition(release)?,
+                };
+                PatExecutionOutcome::Head(head_outcome)
             }
         };
         self.last_event = Some((at_ns, phase));
@@ -666,6 +705,173 @@ mod tests {
         runtime.apply(reserve("backup", 13)).unwrap();
         assert!(!runtime.fault_state("isl").unwrap().effective_up());
         assert!(runtime.fault_state("backup").unwrap().effective_up());
+    }
+
+    #[test]
+    fn down_link_command_preserves_actuator_and_failure_provenance() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 5,
+            })
+            .unwrap();
+        let command = |at_ns| {
+            BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns,
+                leased: true,
+                from_target_body: target,
+                to_target_body: target,
+            })
+        };
+        assert!(matches!(
+            runtime.apply_head(command(5)).unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+        let before = runtime.head_runtime().predicted_at("a", 10).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+        let outcome = runtime.apply_head(command(10)).unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = outcome else {
+            panic!("down-link command must be an observed failure");
+        };
+        assert_eq!(
+            reason,
+            "PAT execution command blocked by administrative fault"
+        );
+        assert_eq!(
+            runtime.head_runtime().predicted_at("a", 10).unwrap(),
+            before
+        );
+        runtime
+            .head_runtime()
+            .verify_sample_command("a", "b", 10, target, target, &Err(reason))
+            .unwrap();
+        assert_eq!(
+            runtime
+                .apply_head(BodyHeadPatRuntimeTransition::Release {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                })
+                .unwrap_err(),
+            "PAT execution transition order mismatch"
+        );
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Release {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 11,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn command_fault_cause_follows_committed_domains_and_recovery() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        runtime
+            .apply_head(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 1,
+            })
+            .unwrap();
+        let command = |at_ns| {
+            BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns,
+                leased: true,
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [1.0, 0.0, 0.0],
+            })
+        };
+        let down = [
+            (FaultCause::Administrative, LinkAction::Down),
+            (FaultCause::SampledPointing, LinkAction::Down),
+        ];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 10,
+                edges: &down,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime.apply_head(command(10)).unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Err(reason))
+                if reason == "PAT execution command blocked by administrative fault"
+        ));
+        let admin_up = [(FaultCause::Administrative, LinkAction::Up)];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 11,
+                edges: &admin_up,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime.apply_head(command(11)).unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Err(reason))
+                if reason == "PAT execution command blocked by sampled pointing fault"
+        ));
+        let pointing_up = [(FaultCause::SampledPointing, LinkAction::Up)];
+        runtime
+            .apply(PatExecutionTransition::FaultBatch {
+                link_id: "isl",
+                at_ns: 12,
+                edges: &pointing_up,
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime.apply_head(command(12)).unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn unknown_registered_command_link_fails_and_allows_same_time_retry() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        fn command(link_id: &str) -> BodyHeadPatRuntimeTransition<'_> {
+            BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                link_id,
+                from_head: "a",
+                to_head: "b",
+                at_ns: 10,
+                leased: false,
+                from_target_body: [1.0, 0.0, 0.0],
+                to_target_body: [1.0, 0.0, 0.0],
+            })
+        }
+        let outcome = runtime.apply_head(command("missing")).unwrap();
+        let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = outcome else {
+            panic!("unknown command link must be an observed failure");
+        };
+        assert_eq!(reason, "unknown PAT execution command link");
+        runtime
+            .head_runtime()
+            .verify_sample_command("a", "b", 10, [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], &Err(reason))
+            .unwrap();
+        assert!(matches!(
+            runtime.apply_head(command("isl")).unwrap(),
+            BodyHeadPatRuntimeOutcome::Command(Ok(_))
+        ));
     }
 
     #[test]
