@@ -1,3 +1,11 @@
+## P1 causal post-command pointing observation phase
+
+SYS-02 `PatExecutionRuntime` now accepts `PointingObservation` as a sampled-pointing fault result in a distinct phase after same-instant Commands. Its canonical order is Fault, Release, Reserve, Command, Observation. This prevents a command-derived pointing failure from retroactively rejecting the very command that produced the measurement; subsequent commands see the committed sampled-pointing state. Administrative faults may coexist at the same timestamp and retain down-cause precedence.
+
+The runtime rejects duplicate same-link/same-instant observations and an ambiguous pre-command sampled-pointing fault plus post-command observation for the same link and timestamp. Full-batch preflight rejects those combinations before earlier events can mutate state, and the existing transactional snapshot preserves rollback for other late failures. Rust regression tests cover out-of-order caller events, post-command loss/recovery, administrative overlap, duplicate observations and no partial commit.
+
+**Scope and limits:** This is an execution-ordering primitive only. The packet adapter still derives BODY-frame pointing faults in its provisional pass and projects availability offline; it does not yet emit `PointingObservation` into a shared production fault/head timeline. Observations are not authenticated against a preceding command by this API. No scenario schema or packet-accounting semantics changed. The O(S) batch snapshot cost remains unmeasured.
+
 ## P1 transactional packet-adapter PAT head replay
 
 The packet adapter now translates its complete validated SYS-03 Release,
