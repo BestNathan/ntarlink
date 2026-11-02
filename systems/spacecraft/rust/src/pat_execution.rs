@@ -140,6 +140,54 @@ impl PatExecutionRuntime {
         Ok(outcome)
     }
 
+    /// Execute a mixed batch in deterministic virtual-time and phase order.
+    /// The caller may supply events in any order; equal-time events sort by
+    /// Fault -> Release -> Reserve -> Command, then link and head identity.
+    /// Outcomes retain their caller-provided context in execution order.
+    ///
+    /// This is fail-stop, not a transaction: an invalid later event can leave
+    /// earlier transitions committed. Callers must discard the runtime after
+    /// an error. In particular, this does not perform live PAT arbitration.
+    pub fn apply_timeline<'a, T>(
+        &mut self,
+        mut events: Vec<(PatExecutionTransition<'a>, T)>,
+    ) -> Result<Vec<(T, PatExecutionOutcome)>, String> {
+        fn key<'a>(
+            event: &'a PatExecutionTransition<'_>,
+        ) -> (u64, PatExecutionPhase, &'a str, &'a str, &'a str) {
+            match event {
+                PatExecutionTransition::FaultBatch { link_id, at_ns, .. } => {
+                    (*at_ns, PatExecutionPhase::Fault, link_id, "", "")
+                }
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Release {
+                    link_id,
+                    from_head,
+                    to_head,
+                    at_ns,
+                }) => (*at_ns, PatExecutionPhase::Release, link_id, from_head, to_head),
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id,
+                    from_head,
+                    to_head,
+                    at_ns,
+                }) => (*at_ns, PatExecutionPhase::Reserve, link_id, from_head, to_head),
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command)) => (
+                    command.at_ns,
+                    PatExecutionPhase::Command,
+                    command.link_id,
+                    command.from_head,
+                    command.to_head,
+                ),
+            }
+        }
+
+        events.sort_by(|(left, _), (right, _)| key(left).cmp(&key(right)));
+        events
+            .into_iter()
+            .map(|(event, context)| self.apply(event).map(|outcome| (context, outcome)))
+            .collect()
+    }
+
     /// Compatibility bridge for the canonical SYS-03 head-only timeline.
     pub fn apply_head(
         &mut self,
@@ -394,4 +442,98 @@ mod tests {
             })
             .is_err());
     }
+    #[test]
+    fn unordered_fault_lease_and_command_events_share_one_timeline() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let up = [(FaultCause::Administrative, LinkAction::Up)];
+        let target = [1.0, 0.0, 0.0];
+        let events = vec![
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                    BodyHeadPatCommand {
+                        link_id: "isl",
+                        from_head: "a",
+                        to_head: "b",
+                        at_ns: 10,
+                        leased: true,
+                        from_target_body: target,
+                        to_target_body: target,
+                    },
+                )),
+                "command",
+            ),
+            (
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id: "isl",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                }),
+                "reserve",
+            ),
+            (
+                PatExecutionTransition::FaultBatch {
+                    link_id: "isl",
+                    at_ns: 10,
+                    edges: &up,
+                },
+                "recovery",
+            ),
+            (
+                PatExecutionTransition::FaultBatch {
+                    link_id: "isl",
+                    at_ns: 5,
+                    edges: &down,
+                },
+                "outage",
+            ),
+        ];
+        let results = runtime.apply_timeline(events).unwrap();
+        assert_eq!(
+            results.iter().map(|(context, _)| *context).collect::<Vec<_>>(),
+            vec!["outage", "recovery", "reserve", "command"]
+        );
+        assert!(matches!(results[0].1, PatExecutionOutcome::Fault(_)));
+        assert!(matches!(results[1].1, PatExecutionOutcome::Fault(_)));
+        assert!(matches!(results[2].1, PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Lease)));
+        assert!(matches!(
+            results[3].1,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+        ));
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+        assert!(runtime.head_runtime().predicted_at("a", 10).is_ok());
+    }
+
+    #[test]
+    fn timeline_orders_independent_equal_time_faults_by_link_id() {
+        let mut runtime = PatExecutionRuntime::new(&[], &[("z", true), ("a", true)]).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let events = vec![
+            (
+                PatExecutionTransition::FaultBatch {
+                    link_id: "z",
+                    at_ns: 7,
+                    edges: &down,
+                },
+                "z",
+            ),
+            (
+                PatExecutionTransition::FaultBatch {
+                    link_id: "a",
+                    at_ns: 7,
+                    edges: &down,
+                },
+                "a",
+            ),
+        ];
+        let outcomes = runtime.apply_timeline(events).unwrap();
+        assert_eq!(
+            outcomes.into_iter().map(|(link, _)| link).collect::<Vec<_>>(),
+            vec!["a", "z"]
+        );
+        assert!(!runtime.fault_state("a").unwrap().effective_up());
+        assert!(!runtime.fault_state("z").unwrap().effective_up());
+    }
+
 }
