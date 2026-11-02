@@ -1,3 +1,27 @@
+## P1 typed PAT execution event owner
+
+SYS-02 now provides `PatExecutionRuntime`, which owns the existing per-head
+`BodyHeadRuntime` and a registered per-link `PatFaultState` map behind one
+typed event entry point. The event clock enforces Fault Batch -> Release ->
+Reserve -> Command order at equal virtual timestamps, and rejects retroactive
+cross-resource transitions. A rejected fault batch or lease edge does not
+advance this clock or partially change either state domain; a failed sampled
+command remains an observation and consumes the Command phase. Multiple
+registered links may submit fault batches at the same instant.
+
+The packet adapter's canonical SYS-03 head-only timeline now uses this owner
+and extracts its actuator history after replay. Rust regressions exercise
+mixed fault/lease/command ordering, invalid and contradictory fault batches,
+failed commands, cross-link fault edges and same-time recovery. Expected
+per-event chronology checks and fault lookups are O(1), with O(L) fault state
+for L registered links; the existing actuator history costs are unchanged.
+
+**Boundary:** The packet adapter still folds administrative and sampled
+pointing faults into offline availability windows separately from provisional
+PAT planning. This change does not yet run those fault edges and head commands
+in a single packet-event loop, remove the lease-only audit, or support
+shared-head predicted arbitration. No scenario schema or dependencies change.
+
 ## P1 atomic same-time PAT fault batches
 
 SYS-02 now exposes `PatFaultState::apply_batch` for one optical link's
