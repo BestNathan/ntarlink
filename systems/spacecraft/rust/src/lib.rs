@@ -237,6 +237,9 @@ pub struct BodyHeadRuntime {
     /// Latest accepted typed PAT command instant per head, including failed
     /// attempts that leave no successful follower history.
     last_pat_command_ns: HashMap<String, u64>,
+    /// Accepted typed lease edges enforce Release -> Reserve ordering at each
+    /// virtual instant, even when no actuator command has been sampled.
+    last_pat_lease_edge: HashMap<String, (u64, LeaseAuditPhase)>,
     /// Rejected paired commands have no committed head snapshot. Preserve
     /// their exact inputs and error reason for the offline PAT audit.
     failed_pair_attempts: HashMap<(String, String, u64), Vec<FailedPairAttempt>>,
@@ -690,9 +693,43 @@ impl BodyHeadRuntime {
             lease_start_ns: HashMap::new(),
             release_floor_ns: HashMap::new(),
             last_pat_command_ns: HashMap::new(),
+            last_pat_lease_edge: HashMap::new(),
             failed_pair_attempts: HashMap::new(),
             pat_command_attempts: HashMap::new(),
         })
+    }
+
+    /// Reject lease edges that would reverse the canonical same-instant
+    /// Release -> Reserve order on either head. Only accepted typed edges
+    /// advance this clock; legacy direct lease helpers retain their contract.
+    fn check_pat_lease_edge(
+        &self,
+        from_head: &str,
+        to_head: &str,
+        at_ns: u64,
+        phase: LeaseAuditPhase,
+    ) -> Result<(), String> {
+        if [from_head, to_head].into_iter().any(|head| {
+            self.last_pat_lease_edge
+                .get(head)
+                .is_some_and(|previous| *previous > (at_ns, phase))
+        }) {
+            return Err("BODY-frame PAT lease transition order mismatch".into());
+        }
+        Ok(())
+    }
+
+    fn record_pat_lease_edge(
+        &mut self,
+        from_head: &str,
+        to_head: &str,
+        at_ns: u64,
+        phase: LeaseAuditPhase,
+    ) {
+        for head in [from_head, to_head] {
+            self.last_pat_lease_edge
+                .insert(head.to_owned(), (at_ns, phase));
+        }
     }
 
     /// Execute one canonical PAT lease or command event through the actual
@@ -709,7 +746,9 @@ impl BodyHeadRuntime {
                 to_head,
                 at_ns,
             } => {
+                self.check_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Release)?;
                 self.release_pair_at(link_id, from_head, to_head, at_ns)?;
+                self.record_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Release);
                 Ok(BodyHeadPatRuntimeOutcome::Lease)
             }
             BodyHeadPatRuntimeTransition::Reserve {
@@ -718,7 +757,9 @@ impl BodyHeadRuntime {
                 to_head,
                 at_ns,
             } => {
+                self.check_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Reserve)?;
                 self.reserve_pair_for_link(link_id, from_head, to_head, at_ns)?;
+                self.record_pat_lease_edge(from_head, to_head, at_ns, LeaseAuditPhase::Reserve);
                 Ok(BodyHeadPatRuntimeOutcome::Lease)
             }
             BodyHeadPatRuntimeTransition::Command(command) => {
@@ -2396,6 +2437,86 @@ mod tests {
                 .unwrap(),
             BodyHeadPatRuntimeOutcome::Command(Ok(_))
         ));
+    }
+
+    #[test]
+    fn typed_pat_lease_edges_match_audit_phase_order_without_commands() {
+        let actuators = ["a", "b", "c"].map(|head_id| OpticalHeadSlewActuator {
+            head_id: head_id.into(),
+            initial_direction_body: [1.0, 0.0, 0.0],
+            max_slew_rate_deg_per_s: 100.0,
+            max_slew_acceleration_deg_per_s2: None,
+            settling_ns: None,
+        });
+        let mut runtime = BodyHeadRuntime::new(&actuators).unwrap();
+        let mut audit = runtime.lease_audit();
+
+        // An unsampled zero-duration lease must not pass the executable
+        // transition API when the canonical lease audit rejects it.
+        // Failed edges must not consume chronology or change ownership.
+        for (release, link_id, from, to, at_ns, accepted) in [
+            (false, "first", "a", "b", 10, true),
+            (true, "first", "a", "b", 10, false),
+            (true, "first", "a", "b", 11, true),
+            (false, "second", "a", "c", 11, true),
+            (true, "second", "a", "c", 11, false),
+            (true, "second", "a", "c", 12, true),
+            (false, "third", "a", "b", 11, false),
+            (false, "third", "a", "b", 12, true),
+        ] {
+            let actual = if release {
+                runtime.apply_pat_transition(BodyHeadPatRuntimeTransition::Release {
+                    link_id,
+                    from_head: from,
+                    to_head: to,
+                    at_ns,
+                })
+            } else {
+                runtime.apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                    link_id,
+                    from_head: from,
+                    to_head: to,
+                    at_ns,
+                })
+            };
+            let audited = if release {
+                audit.apply_transition(
+                    &runtime,
+                    BodyHeadPatTransition::Release {
+                        link_id,
+                        from_head: from,
+                        to_head: to,
+                        at_ns,
+                    },
+                )
+            } else {
+                audit.apply_transition(
+                    &runtime,
+                    BodyHeadPatTransition::Reserve {
+                        link_id,
+                        from_head: from,
+                        to_head: to,
+                        at_ns,
+                    },
+                )
+            };
+            assert_eq!(actual.is_ok(), accepted, "runtime edge: {link_id} at {at_ns}");
+            assert_eq!(audited.is_ok(), accepted, "audit edge: {link_id} at {at_ns}");
+            if release && !accepted {
+                assert_eq!(
+                    actual.unwrap_err(),
+                    "BODY-frame PAT lease transition order mismatch"
+                );
+                assert_eq!(
+                    audited.unwrap_err(),
+                    "PAT head lease audit transition order mismatch"
+                );
+            }
+        }
+        assert_eq!(runtime.owners.get("a").map(String::as_str), Some("third"));
+        assert_eq!(runtime.owners.get("b").map(String::as_str), Some("third"));
+        assert!(!runtime.owners.contains_key("c"));
+        assert!(runtime.history.is_empty());
     }
 
     #[test]

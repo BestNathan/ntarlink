@@ -1,3 +1,20 @@
+## P1 typed PAT lease-edge phase chronology
+
+The SYS-02 typed PAT transition entry point now tracks the latest accepted
+Release/Reserve edge per optical head. It rejects a Release at the same virtual
+instant as an earlier Reserve, including an unsampled zero-duration lease,
+matching the canonical SYS-03 event order and SYS-02 lease-only audit.
+Failed edges do not advance the phase clock or mutate ownership; a Release
+followed by a Reserve at the same instant remains valid for head handoff.
+
+**Verification and limits:** Rust regression exercises the same ordered lease
+sequence against both the executable runtime and the independent lease audit,
+including rejected edges, retroactive attempts and successful handoffs. The
+phase clock adds O(H) state and O(1) expected checks per head, with no schema
+or dependency changes. Legacy direct lease helpers retain their existing
+contract. PAT planning and lease audit remain separate offline passes; this
+is not live single-owner arbitration or continuous optical tracking.
+
 ## P1 shared validated PAT head timeline
 
 The packet adapter now constructs a single validated SYS-03 PAT head timeline
