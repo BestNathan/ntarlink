@@ -7,6 +7,15 @@ closed-loop servo, calibrated torque model or continuous pointing proof.
 
 ## Lease-only audit without a second follower integration
 
+Typed PAT commands now also retain link ID and execution lease mode alongside
+their exact inputs and result. Provisional execution is unleased, so a later
+audit may legitimately project a PAT reservation onto those same commands. The audit rejects a sample that borrows another link's
+successful or failed command evidence on the same ordered head pair and
+virtual timestamp. Legacy standalone follower observations have no typed
+identity and keep their original history-only verification. The typed
+provenance ledger adds O(C) memory for C attempts; the PAT pipeline remains
+offline and does not implement live shared-head arbitration.
+
 Before lease transitions, SYS-02 now validates the provisional success/error
 ledger against its committed per-head snapshots. A successful paired sample
 must match both stored boresights and both normalized newly latched targets
