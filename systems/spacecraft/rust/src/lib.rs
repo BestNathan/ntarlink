@@ -1672,17 +1672,15 @@ mod tests {
         let invalid = [f64::NAN, 0.0, 0.0];
         let execute = |runtime: &mut BodyHeadRuntime, at_ns, from_target_body| {
             let BodyHeadPatRuntimeOutcome::Command(result) = runtime
-                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(
-                    BodyHeadPatCommand {
-                        link_id: "isl-a",
-                        from_head: "a",
-                        to_head: "b",
-                        at_ns,
-                        leased: false,
-                        from_target_body,
-                        to_target_body: target,
-                    },
-                ))
+                .apply_pat_transition(BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns,
+                    leased: false,
+                    from_target_body,
+                    to_target_body: target,
+                }))
                 .unwrap()
             else {
                 panic!("expected PAT command result");
