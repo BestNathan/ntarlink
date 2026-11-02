@@ -39,13 +39,15 @@ jobs:
         run: cargo build --release -p ntarlink-cli
       - name: Measure deterministic packet throughput
         run: |
-          python scripts/benchmark_packet_runtime.py \
-            --binary target/release/ntarlink-cli \
-            --packet-count 1000 --interval-ns 1000000 \
-            --warmup 1 --samples 3 \
-            --output packet-benchmark.json
-          echo '### Packet performance baseline (end-to-end CLI)' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Measurements include process startup and JSON serialization; not pure event-loop throughput.' >> "$GITHUB_STEP_SUMMARY"
-          echo '~~~json' >> "$GITHUB_STEP_SUMMARY"
-          cat packet-benchmark.json >> "$GITHUB_STEP_SUMMARY"
-          echo '~~~' >> "$GITHUB_STEP_SUMMARY"
+          for count in 1000 10000; do
+            python scripts/benchmark_packet_runtime.py \
+              --binary target/release/ntarlink-cli \
+              --packet-count "$count" --interval-ns 1000000 \
+              --warmup 1 --samples 3 \
+              --output "packet-benchmark-${count}.json"
+            echo "### Packet performance baseline: $count packets" >> "$GITHUB_STEP_SUMMARY"
+            echo 'End-to-end CLI wall time includes startup and JSON serialization; no fixed runner-speed gate.' >> "$GITHUB_STEP_SUMMARY"
+            echo '~~~json' >> "$GITHUB_STEP_SUMMARY"
+            cat "packet-benchmark-${count}.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '~~~' >> "$GITHUB_STEP_SUMMARY"
+          done
