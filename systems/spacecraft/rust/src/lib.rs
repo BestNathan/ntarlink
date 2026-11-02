@@ -630,7 +630,9 @@ impl BodyHeadRuntime {
         if let Some(attempts) = self.pat_command_attempts.get(&key) {
             let matches = attempts.iter().any(|attempt| {
                 attempt.link_id == sample.link_id
-                    && attempt.leased == sample.leased
+                    // Provisional commands run before PAT has assigned leases.
+                    // The audit may legitimately project a lease onto them.
+                    && (!attempt.leased || sample.leased)
                     && attempt.from_target_bits == sample.from_target_body.map(f64::to_bits)
                     && attempt.to_target_bits == sample.to_target_body.map(f64::to_bits)
                     && attempt.outcome == *sample.observed
@@ -1691,7 +1693,7 @@ mod tests {
         let rejected = execute(&mut runtime, 10, invalid);
         assert!(rejected.is_err());
         let mut audit = runtime.lease_audit();
-        for (link_id, leased) in [("isl-b", false), ("isl-a", true)] {
+        for (link_id, leased) in [("isl-b", false), ("isl-b", true)] {
             assert_eq!(
                 audit
                     .apply_transition(
@@ -1727,9 +1729,39 @@ mod tests {
             )
             .unwrap();
 
+        // The provisional pass is intentionally unleased. A separate
+        // reservation audit can project ownership onto the same command.
+        let mut leased_audit = runtime.lease_audit();
+        leased_audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Reserve {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                },
+            )
+            .unwrap();
+        leased_audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 10,
+                    leased: true,
+                    from_target_body: invalid,
+                    to_target_body: target,
+                    observed: &rejected,
+                }),
+            )
+            .unwrap();
+
         let committed = execute(&mut runtime, 20, target);
         assert!(committed.is_ok());
-        for (link_id, leased) in [("isl-b", false), ("isl-a", true)] {
+        for (link_id, leased) in [("isl-b", false), ("isl-b", true)] {
             assert_eq!(
                 audit
                     .apply_transition(
@@ -1758,6 +1790,21 @@ mod tests {
                     to_head: "b",
                     at_ns: 20,
                     leased: false,
+                    from_target_body: target,
+                    to_target_body: target,
+                    observed: &committed,
+                }),
+            )
+            .unwrap();
+        leased_audit
+            .apply_transition(
+                &runtime,
+                BodyHeadPatTransition::Sample(BodyHeadPatSample {
+                    link_id: "isl-a",
+                    from_head: "a",
+                    to_head: "b",
+                    at_ns: 20,
+                    leased: true,
                     from_target_body: target,
                     to_target_body: target,
                     observed: &committed,
