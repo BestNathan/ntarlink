@@ -1,3 +1,24 @@
+## P1 deterministic mixed PAT event-batch execution
+
+SYS-02 now provides `PatExecutionRuntime::apply_timeline` to sort a mixed
+Fault Batch, Release, Reserve and Command input by virtual timestamp, canonical
+phase and stable link/head identity before applying it through one execution
+owner. The API returns caller context with each typed outcome in execution
+order. The packet adapter uses this entry point for its globally ordered
+optical fault replay instead of maintaining a separate adapter-level batch
+sort. SYS-02 Rust regressions cover shuffled mixed fault/lease/command events,
+same-instant recovery before reservation and command, and deterministic
+independent-link ordering. Existing packet-runtime multi-link fault and
+reacquisition tests remain cross-subsystem acceptance evidence.
+
+Sorting E events costs O(E log E) time and O(E) batch storage; the existing
+per-event state costs are unchanged. The batch is **fail-stop, not atomic**:
+earlier successful events remain committed if a later event fails. Callers
+must discard that runtime on error. The packet adapter still projects
+availability offline, and provisional planning plus lease-only audit remain
+separate. This is not yet a live single-pass PAT scheduler or shared-head
+arbitration. No scenario schema or external dependencies change.
+
 ## P1 packet-adapter fault replay through the typed PAT execution owner
 
 The packet adapter now registers every optical PAT link with SYS-02's
