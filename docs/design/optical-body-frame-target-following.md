@@ -5,6 +5,22 @@ previous actuator state and target commands instead of trusting externally
 supplied boresight. It is a sampled rest-to-rest target follower, not a
 closed-loop servo, calibrated torque model or continuous pointing proof.
 
+## Typed fault, lease and command execution boundary
+
+`PatExecutionRuntime` composes SYS-02's actuator/lease owner and per-link
+fault reducers behind one typed virtual-time transition API. At a shared
+timestamp the accepted phase order is Fault Batch, Release, Reserve, Command.
+Failed commands occupy their phase without committing follower history;
+invalid fault batches and lease edges leave the event clock unchanged.
+The packet adapter now executes its canonical SYS-03 head-only timeline
+through this boundary and extracts the committed actuator history for its
+existing offline PAT planning and audit.
+
+The packet adapter does **not** yet submit its precomputed fault windows into
+this execution owner. A later migration must reconcile sampled pointing
+results, administrative faults and acquisition decisions in one event loop
+before claiming live single-pass PAT state ownership or shared-head arbitration.
+
 ## Lease-only audit without a second follower integration
 
 Typed PAT commands now also retain link ID and execution lease mode alongside
