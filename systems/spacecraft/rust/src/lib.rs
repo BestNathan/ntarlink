@@ -1,4 +1,7 @@
 //! SYS-02 deterministic optical-head availability, not physical pointing.
+
+mod pat_execution;
+pub use pat_execution::{PatExecutionOutcome, PatExecutionRuntime, PatExecutionTransition};
 use ntarlink_contracts::{
     FaultCause, LinkAction, OpticalBodyTrackingSample, OpticalGeometry, OpticalHeadOutage,
     OpticalHeadSlewActuator, OpticalPointing,
