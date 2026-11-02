@@ -1,3 +1,28 @@
+## P1 packet-adapter fault replay through the typed PAT execution owner
+
+The packet adapter now registers every optical PAT link with SYS-02's
+`PatExecutionRuntime` and replays grouped administrative and sampled-pointing
+fault edges through its typed `FaultBatch` transition. Batches are sorted
+across links by virtual timestamp and link identity before execution, so the
+single global event clock cannot be violated by link-major input order.
+The adapter derives its effective contact windows, fault causes and packet
+link-state edges from the resulting SYS-02 outcomes; it no longer owns an
+independent `PatFaultState` instance per optical link. Packet-engine fault
+output retains the previous link-major order for compatibility.
+
+A packet-runtime regression exercises interleaved down/recovery events on
+two optical links, confirms reacquisition after recovery, and compares
+contact windows and deterministic packet reports after reversing input fault
+order. Existing overlapping-domain and contradictory-batch tests remain
+cross-subsystem acceptance coverage. Sorting B grouped fault instants costs
+O(B log B) time and O(B) temporary storage, with O(L) SYS-02 link state.
+
+**Boundary:** Faults are still projected into offline availability windows
+before provisional actuator planning and lease-only audit. This does not yet
+combine fault, reservation and command execution in one live packet-event
+loop, or implement shared-head predicted arbitration. No scenario schema or
+external dependencies change.
+
 ## P1 single-commit PAT fault batch timestamps
 
 The typed SYS-02 `PatExecutionRuntime` now commits at most one fault batch per
