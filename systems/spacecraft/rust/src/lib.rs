@@ -2072,7 +2072,9 @@ mod tests {
 
         for _ in 0..3 {
             assert!(matches!(
-                runtime.apply_pat_transition(command(invalid, false)).unwrap(),
+                runtime
+                    .apply_pat_transition(command(invalid, false))
+                    .unwrap(),
                 BodyHeadPatRuntimeOutcome::Command(Err(_))
             ));
         }
@@ -2084,7 +2086,9 @@ mod tests {
         // error message and physical invalidity are the same.
         let other_nan = [f64::from_bits(f64::NAN.to_bits() ^ 1), 0.0, 0.0];
         assert!(matches!(
-            runtime.apply_pat_transition(command(other_nan, false)).unwrap(),
+            runtime
+                .apply_pat_transition(command(other_nan, false))
+                .unwrap(),
             BodyHeadPatRuntimeOutcome::Command(Err(_))
         ));
         assert_eq!(runtime.failed_pair_attempts[&key].len(), 2);
@@ -2100,8 +2104,9 @@ mod tests {
 
         // Failed retries never commit follower history or prevent a valid
         // same-time command from being authenticated by the lease audit.
-        let BodyHeadPatRuntimeOutcome::Command(Ok(observed)) =
-            runtime.apply_pat_transition(command(target, false)).unwrap()
+        let BodyHeadPatRuntimeOutcome::Command(Ok(observed)) = runtime
+            .apply_pat_transition(command(target, false))
+            .unwrap()
         else {
             panic!("valid same-time PAT retry must succeed");
         };
