@@ -1,3 +1,27 @@
+## P1 atomic SYS-02 mixed PAT timeline commit
+
+`PatExecutionRuntime::apply_timeline` now executes a canonically ordered mixed
+Fault/Release/Reserve/Command batch against one private clone of the current
+SYS-02 runtime. The original state is replaced only when every event has
+completed without a fatal transition error. A late invalid reservation or
+release can no longer leave earlier fault-domain updates, leases, actuator
+history, rejected-command evidence or the global phase clock partially
+committed. A fault-blocked command remains a normal, recorded command outcome
+and does not abort the batch. The single-event `apply` API retains its
+existing atomic-transition semantics.
+
+**Verification and limits:** Rust regressions cover rollback after an earlier
+fault, successful actuator command and lease release, preserving the previous
+lease and virtual-time clock for a valid retry. Another regression verifies
+that a fault-blocked command commits its failure observation and consumes the
+command phase. Batch preflight remains O(E), canonical sorting O(E log E), and
+staging costs O(S) time and peak additional memory for a full copy of the
+existing runtime state (heads, historical samples, leases and fault domains).
+This is intentionally one snapshot per batch, not one per event. The packet
+adapter still computes availability and provisional head observations offline
+and performs a separate lease audit; no live single-pass arbitration, scenario
+schema or dependency change is claimed.
+
 ## P1 mixed-timeline optical fault batch preflight
 
 The SYS-02 `PatExecutionRuntime::apply_timeline` now rejects multiple `FaultBatch` events for the same link and virtual timestamp during its full-batch preflight, alongside the existing simultaneous head contention checks. Previously, the first fault batch could commit (along with earlier unrelated events) before the second was rejected by the single-event timestamp guard. The outcome was fail-stop partial mutation even for an input conflict that can be detected without executing any event.
