@@ -1182,5 +1182,4 @@ mod tests {
         assert!(runtime.head_runtime().predicted_at("a", 10).is_ok());
         assert!(runtime.head_runtime().predicted_at("d", 10).is_ok());
     }
-
 }
