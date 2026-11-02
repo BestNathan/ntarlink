@@ -1,3 +1,20 @@
+## P1 shared validated PAT head timeline
+
+The packet adapter now constructs a single validated SYS-03 PAT head timeline
+for each execution or audit invocation. Both the provisional SYS-02 actuator
+executor and the lease-only audit consume the same event ordering, configured
+link lookup, ordered head-pair validation and sampled reservation binding.
+The audit preflights every sampled lease binding and committed command before
+mutating its lease chronology. Unknown reservation links, swapped head pairs
+and unknown sampled links fail consistently in both paths.
+
+**Verification and limits:** Rust regressions compare fail-closed preflight
+across both consumers, and existing packet/PAT scenarios exercise canonical
+acquisition, loss and reacquisition. The validation is linear in reservations
+and samples plus the existing SYS-03 event sort. No schema or dependencies
+change. The provisional follower and lease-only audit remain separate offline
+passes; faults, reservations and commands do not yet have one live state owner.
+
 ## P0 packet CLI per-process resource baseline
 
 The release-mode packet benchmark now records each Linux child process's own
