@@ -1151,13 +1151,20 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             let mut index = 0;
             while index < faults.len() {
                 let at_ns = faults[index].1.at_ns;
-                let was_up = fault_state.effective_up();
+                let start = index;
                 while index < faults.len() && faults[index].1.at_ns == at_ns {
-                    let fault = faults[index].1;
-                    fault_state.apply(at_ns, fault.cause, fault.action.clone())?;
                     index += 1;
                 }
-                let now_up = fault_state.effective_up();
+                // SYS-02 owns atomic same-instant fault folding. A contradictory
+                // same-domain batch must not depend on scenario input order.
+                let transition = fault_state.apply_batch(
+                    at_ns,
+                    faults[start..index]
+                        .iter()
+                        .map(|(_, fault)| (fault.cause, fault.action.clone())),
+                )?;
+                let was_up = transition.was_up;
+                let now_up = transition.now_up;
                 if was_up != now_up {
                     if was_up && cursor < at_ns {
                         windows.push((cursor, at_ns));
@@ -1165,8 +1172,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     if !now_up {
                         down_faults.insert(
                             (config.link_id.as_str(), at_ns),
-                            fault_state
-                                .down_cause()
+                            transition
+                                .down_cause
                                 .expect("effective PAT fault state is down"),
                         );
                     }
@@ -2722,6 +2729,37 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![20_000_000, 90_000_000, 140_000_000]
         );
+    }
+
+    #[test]
+    fn conflicting_same_time_pat_faults_fail_closed_independent_of_input_order() {
+        let mut scenario = pat_fixture();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        let error = run(&scenario).unwrap_err();
+        assert!(
+            error.contains("conflicting PAT fault edges at same timestamp"),
+            "{error}"
+        );
+        scenario.faults.reverse();
+        assert_eq!(run(&scenario).unwrap_err(), error);
+
+        // Repeating the same action is idempotent, not ambiguous.
+        scenario.faults[0].action = LinkAction::Down;
+        scenario.faults[1].action = LinkAction::Down;
+        assert!(run(&scenario).is_ok());
     }
 
     #[test]

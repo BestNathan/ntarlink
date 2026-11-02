@@ -230,7 +230,47 @@ pub struct PatFaultState {
     last_at_ns: Option<u64>,
 }
 
+/// Effective availability across one committed same-time fault batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PatFaultBatchOutcome {
+    pub was_up: bool,
+    pub now_up: bool,
+    pub down_cause: Option<FaultCause>,
+}
+
 impl PatFaultState {
+    /// Commit one virtual-time batch atomically. Conflicting actions for the
+    /// same fault domain at one instant are ambiguous and fail closed, while
+    /// identical duplicates and independent-domain edges are permitted.
+    pub fn apply_batch(
+        &mut self,
+        at_ns: u64,
+        edges: impl IntoIterator<Item = (FaultCause, LinkAction)>,
+    ) -> Result<PatFaultBatchOutcome, String> {
+        let was_up = self.effective_up();
+        let mut staged = *self;
+        let mut administrative = None;
+        let mut sampled_pointing = None;
+        for (cause, action) in edges {
+            let up = matches!(&action, LinkAction::Up);
+            let seen = match cause {
+                FaultCause::Administrative => &mut administrative,
+                FaultCause::SampledPointing => &mut sampled_pointing,
+            };
+            if seen.is_some_and(|previous| previous != up) {
+                return Err("conflicting PAT fault edges at same timestamp".into());
+            }
+            *seen = Some(up);
+            staged.apply(at_ns, cause, action)?;
+        }
+        *self = staged;
+        Ok(PatFaultBatchOutcome {
+            was_up,
+            now_up: self.effective_up(),
+            down_cause: self.down_cause(),
+        })
+    }
+
     pub fn new(initial_administrative_up: bool) -> Self {
         Self {
             administrative_up: initial_administrative_up,
@@ -3786,6 +3826,62 @@ mod tests {
             .unwrap();
         assert!(state.effective_up());
         assert_eq!(state.down_cause(), None);
+    }
+
+    #[test]
+    fn pat_fault_batches_reject_ambiguous_edges_without_partial_commit() {
+        let mut state = PatFaultState::new(true);
+        let down = state
+            .apply_batch(
+                10,
+                [
+                    (FaultCause::Administrative, LinkAction::Down),
+                    (FaultCause::SampledPointing, LinkAction::Down),
+                ],
+            )
+            .unwrap();
+        assert!(down.was_up);
+        assert!(!down.now_up);
+        assert_eq!(down.down_cause, Some(FaultCause::Administrative));
+
+        let committed = state;
+        for actions in [
+            [LinkAction::Up, LinkAction::Down],
+            [LinkAction::Down, LinkAction::Up],
+        ] {
+            assert_eq!(
+                state
+                    .apply_batch(
+                        20,
+                        actions.map(|action| (FaultCause::Administrative, action)),
+                    )
+                    .unwrap_err(),
+                "conflicting PAT fault edges at same timestamp"
+            );
+            assert_eq!(state, committed);
+        }
+        assert_eq!(
+            state
+                .apply_batch(9, [(FaultCause::Administrative, LinkAction::Up)])
+                .unwrap_err(),
+            "PAT fault transition order mismatch"
+        );
+        assert_eq!(state, committed);
+
+        let recovered = state
+            .apply_batch(
+                20,
+                [
+                    (FaultCause::SampledPointing, LinkAction::Up),
+                    (FaultCause::Administrative, LinkAction::Up),
+                    (FaultCause::Administrative, LinkAction::Up),
+                ],
+            )
+            .unwrap();
+        assert!(!recovered.was_up);
+        assert!(recovered.now_up);
+        assert_eq!(recovered.down_cause, None);
+        assert!(state.effective_up());
     }
 
     #[test]
