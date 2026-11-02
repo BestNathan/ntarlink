@@ -1,3 +1,20 @@
+## SYS-02 typed PAT command identity preflight
+
+Typed PAT Command transitions now reject empty and whitespace-only link IDs
+before touching either optical-head follower, including unleased fault-gap
+commands. Previously the unleased path could commit valid head history with
+an unnamed link, while lease audit could accept a matching unnamed failed
+sample. Rejected commands retain exact-input/error provenance and consume
+the existing per-head virtual-time watermark. The lease audit also rejects
+unnamed samples without changing ownership or chronology.
+
+**Verification and limits:** Rust regression exercises blank and whitespace
+link IDs in unleased and leased modes, authenticated rejected attempts,
+audit rejection without state mutation, and a valid same-timestamp retry.
+The guard adds constant-time identifier validation and no new schema fields,
+dependencies or persistent state. The system still uses offline provisional
+planning plus lease audit, not a live fault/actuator arbitration owner.
+
 ## SYS-02 typed PAT audit rejects legacy fallback in mixed runtimes
 
 Once a SYS-02 runtime has recorded any typed PAT command, its lease-only

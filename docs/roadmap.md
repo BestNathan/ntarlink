@@ -15,6 +15,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Reject blank or whitespace-only typed SYS-02 PAT link identities before actuator mutation, including provisional fault-gap commands; preserve exact failed-command provenance, audit atomicity and valid same-time retries. This remains offline two-phase PAT planning. See [status](implementation-status.md).
+
 - [x] Fail closed when a typed SYS-02 PAT runtime audits a sample lacking typed link provenance, even if legacy paired follower history matches; retain standalone legacy compatibility and audit atomicity regression. Offline two-phase planning remains. See [status](implementation-status.md).
 
 
