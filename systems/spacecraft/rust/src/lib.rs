@@ -1847,9 +1847,7 @@ mod tests {
             panic!("expected typed PAT command result");
         };
         assert!(typed.is_ok());
-        let legacy = runtime
-            .observe_pair("a", "b", 20, target, target)
-            .unwrap();
+        let legacy = runtime.observe_pair("a", "b", 20, target, target).unwrap();
         // The legacy observation has valid committed head history but no
         // typed link identity. It cannot be borrowed by an audited PAT link.
         runtime
