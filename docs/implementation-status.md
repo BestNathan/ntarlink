@@ -1,3 +1,25 @@
+## P1 atomic same-time PAT fault batches
+
+SYS-02 now exposes `PatFaultState::apply_batch` for one optical link's
+same-instant administrative and sampled-pointing edges. It stages all changes
+and commits once, returning the before/after effective availability and
+down-reason projection. Opposing Up and Down actions for the same domain at
+one timestamp are ambiguous and fail closed without advancing the fault
+clock or partially changing either domain. Repeated identical edges are
+idempotent; different fault domains may still change together in any order.
+The packet adapter groups edges by link and virtual timestamp, then consumes
+this atomic SYS-02 outcome instead of applying each edge independently.
+
+**Verification and limits:** SYS-02 Rust regression covers contradictory
+edge order, unchanged state after rejection, retroactive batch rejection,
+duplicate actions and multi-domain recovery. Packet-runtime regression
+rejects contradictory administrative edges in both input orders and accepts
+identical duplicates. Batch processing is O(E) for E same-time edges and
+requires O(1) additional staged state; the packet adapter retains its
+existing per-link sorting. No schema or external dependencies change.
+Faults still feed offline PAT planning: this does not yet combine fault,
+reservation and actuator commands into a single live runtime.
+
 ## P1 typed PAT fault-domain state reducer
 
 SYS-02 now provides `PatFaultState` for one optical link's independent
