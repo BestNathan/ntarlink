@@ -13,7 +13,8 @@ The [benchmark harness](../../scripts/benchmark_packet_runtime.py) derives a
 single-flow workload from [minimal.json](../../scenarios/minimal.json), keeping
 its six-node, five-link topology, queue capacities, propagation delays and
 routing unchanged. The default workload injects 1,000 packets at 1 ms virtual
-intervals. The duration is extended to allow every injected packet to finish.
+intervals. CI additionally runs a 10,000-packet scale point using the same
+1 ms virtual injection spacing. The duration is extended to allow every injected packet to finish.
 The source scenario is not modified. The generated scenario is canonicalized
 and hashed before execution.
 
