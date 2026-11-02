@@ -1,3 +1,21 @@
+## SYS-02 typed PAT failed-command chronology
+
+Typed PAT commands now maintain a per-head virtual-time watermark for both
+successful and rejected attempts. Previously a rejected command could leave
+no follower history, allowing a subsequent Reserve or Release to be applied
+at an earlier timestamp. SYS-02 now rejects retroactive typed commands and
+lease boundaries even when the latest command failed, without committing
+boresight or target history. Failed attempts remain available for exact-input
+provenance verification; same-timestamp retries and handoffs remain valid.
+
+**Verification and limits:** Rust regressions cover a rejected leased command,
+retroactive release and reservation, an unleased fault-gap rejection,
+retroactive command provenance and successful same-instant retry. The
+watermark adds O(1) expected map access per head per transition and O(H)
+memory for H heads. This protects the typed PAT execution path; the
+provisional planner and separate lease audit remain offline, and there is
+no continuous servo or live shared-head arbitration.
+
 ## SYS-02 leased PAT commands require explicit reservation
 
 The typed SYS-02 actuator transition boundary now rejects a leased PAT Command
