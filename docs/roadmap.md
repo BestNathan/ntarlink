@@ -8,8 +8,8 @@
 - [x] Multi-hop user terminal -> user RF -> space ISL -> feeder ground station -> terrestrial PoP -> internet sink.
 - [x] Finite link queues, propagation/serialization/processing delay, per-packet trace and deterministic output.
 - [x] Link-down event and delayed route reconvergence, validated through backup ISL fixture.
-- [ ] Verified CI on merged `main` branch and performance benchmarks.
-- [ ] Run and verify the release-mode P0 packet CLI performance baseline, including input/binary digests, deterministic repeated output and packet accounting. The [benchmark method](design/packet-runtime-benchmark.md) measures end-to-end wall time rather than isolated scheduler throughput; fixed-hardware regression thresholds remain future work.
+- [ ] Define fixed-hardware packet throughput and peak-memory regression thresholds; hosted-runner CI and release-mode benchmarks are verified, but not a stable performance gate.
+- [x] Run and verify the release-mode P0 packet CLI baseline with input/binary digests, deterministic repeated output, packet accounting, and per-child Linux peak RSS/CPU measurements. The [benchmark method](design/packet-runtime-benchmark.md) measures end-to-end wall time rather than isolated scheduler throughput; pinned-hardware thresholds remain future work.
 - [ ] Generated Rust/Python/TypeScript bindings from canonical schema.
 
 P0 is **static-contact, packet-level simulation**, not physical radio or orbital simulation. See [status](implementation-status.md).
