@@ -1140,8 +1140,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // Replay all optical fault edges through the same typed SYS-02 event owner
     // used by head transitions. The planner still projects availability
     // windows offline, but no longer owns a separate per-link fault reducer.
-    // Sort across links before replay: a per-link loop would violate the
-    // execution owner's global virtual-time clock.
+    // The SYS-02 timeline executor sorts across links before replay, so
+    // link-major input order cannot violate the global virtual-time clock.
     let initial_links: Vec<_> = scenario
         .optical_pat
         .iter()
@@ -1171,18 +1171,26 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             batches.push((at_ns, link_id, edges));
         }
     }
-    batches.sort_by_key(|(at_ns, link_id, _)| (*at_ns, *link_id));
+    let events = batches
+        .iter()
+        .map(|(at_ns, link_id, edges)| {
+            (
+                PatExecutionTransition::FaultBatch {
+                    link_id,
+                    at_ns: *at_ns,
+                    edges,
+                },
+                (*at_ns, *link_id),
+            )
+        })
+        .collect();
 
     let mut admin_windows: HashMap<&str, Vec<(u64, u64)>> = HashMap::new();
     let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
     let mut effective_faults_by_link: HashMap<&str, Vec<Fault>> = HashMap::new();
     let mut cursors: HashMap<&str, u64> = HashMap::new();
-    for (at_ns, link_id, edges) in batches {
-        let transition = match fault_runtime.apply(PatExecutionTransition::FaultBatch {
-            link_id,
-            at_ns,
-            edges: &edges,
-        })? {
+    for ((at_ns, link_id), outcome) in fault_runtime.apply_timeline(events)? {
+        let transition = match outcome {
             PatExecutionOutcome::Fault(outcome) => outcome,
             PatExecutionOutcome::Head(_) => unreachable!("fault batch returned head outcome"),
         };

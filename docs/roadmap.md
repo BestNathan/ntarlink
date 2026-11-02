@@ -16,6 +16,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 
 ## P1 — physical contact and radio/link realism
 
+- [x] Provide a deterministic SYS-02 mixed Fault/Release/Reserve/Command event-batch executor, with stable same-instant link/head ordering and typed outcomes. Route packet-adapter optical fault replay through this API and test shuffled mixed events. Execution is fail-stop, not transactional; PAT availability projection and lease audit remain offline. See [status](implementation-status.md).
+
 - [x] Replay optical PAT administrative and sampled-pointing fault batches through the typed SYS-02 `PatExecutionRuntime` rather than an independent packet-adapter `PatFaultState`. Sort batches globally by virtual timestamp and link identity while retaining link-major packet fault output. Verify interleaved multi-link failures and recovery with order-independent contact and packet results. This is still offline availability projection, not single-pass live PAT arbitration. See [status](implementation-status.md).
 
 - [x] Reject a second successful SYS-02 PAT fault batch for the same link and virtual timestamp, even when individual batches are valid or identical. Keep independent links concurrent, allow a retry after a rejected contradictory batch, and preserve atomic fault state. This closes a split-batch ordering ambiguity in the typed execution owner; the packet adapter still plans fault windows offline. See [status](implementation-status.md).
