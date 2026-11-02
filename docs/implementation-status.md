@@ -1,3 +1,21 @@
+## P1 typed PAT fault-domain state reducer
+
+SYS-02 now provides `PatFaultState` for one optical link's independent
+administrative and sampled-pointing availability domains. The packet adapter
+feeds ordered fault edges to this state and evaluates effective availability
+only after all edges at the same virtual timestamp have been applied.
+Administrative failure retains reason precedence when both domains are down;
+recovery of one domain cannot reopen a link while the other remains down.
+Retroactive fault edges fail without mutating the state.
+
+**Verification and limits:** SYS-02 Rust regressions cover overlapping domains,
+same-time order independence, initially down links, partial recovery, and atomic
+retroactive rejection. Existing packet-runtime PAT fault/reacquisition tests
+remain cross-subsystem acceptance checks. Each edge takes O(1) time and each
+link holds O(1) fault state. This is a first state-ownership extraction, **not**
+a single live Reservation/Command/Fault owner: PAT planning and lease audit
+still execute in separate offline passes. No schema or dependencies change.
+
 ## P1 unified typed PAT per-head phase clock
 
 SYS-02 now uses one per-head virtual-time phase clock for typed Release,
