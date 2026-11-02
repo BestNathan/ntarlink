@@ -1089,7 +1089,8 @@ impl BodyHeadRuntime {
                 || self
                     .last_pat_command_ns
                     .get(head_id)
-                    .is_some_and(|last| at_ns < *last)
+                    // Lease edges must precede commands at the same instant.
+                    .is_some_and(|last| at_ns <= *last)
             {
                 return Err(
                     "BODY-frame pair reservation conflicts with head history or owner".into(),
@@ -1171,7 +1172,8 @@ impl BodyHeadRuntime {
                 || self
                     .last_pat_command_ns
                     .get(head_id)
-                    .is_some_and(|last| at_ns < *last)
+                    // Lease edges must precede commands at the same instant.
+                    .is_some_and(|last| at_ns <= *last)
             {
                 return Err("BODY-frame runtime lease release precedes head history".into());
             }
@@ -1981,7 +1983,7 @@ mod tests {
         }
 
         let BodyHeadPatRuntimeOutcome::Command(Err(reason)) = runtime
-            .apply_pat_transition(command("isl", 10, target))
+            .apply_pat_transition(command("isl", 9, target))
             .unwrap()
         else {
             panic!("unreserved PAT command must fail");
@@ -1991,7 +1993,7 @@ mod tests {
             "BODY-frame PAT command requires an active pair reservation"
         );
         runtime
-            .verify_sample_command("a", "b", 10, target, target, &Err(reason))
+            .verify_sample_command("a", "b", 9, target, target, &Err(reason))
             .unwrap();
         assert!(!runtime.history.contains_key("a"));
         assert!(!runtime.history.contains_key("b"));
@@ -2272,7 +2274,7 @@ mod tests {
                 link_id: "isl",
                 from_head: "a",
                 to_head: "b",
-                at_ns: 20,
+                at_ns: 21,
             })
             .unwrap();
         assert!(runtime
@@ -2289,7 +2291,7 @@ mod tests {
                 link_id: "next",
                 from_head: "a",
                 to_head: "b",
-                at_ns: 20,
+                at_ns: 21,
             })
             .unwrap();
         assert!(matches!(
@@ -2298,7 +2300,7 @@ mod tests {
                     link_id: "next",
                     from_head: "a",
                     to_head: "b",
-                    at_ns: 20,
+                    at_ns: 21,
                     leased: true,
                     from_target_body: target,
                     to_target_body: target,
@@ -2364,12 +2366,20 @@ mod tests {
                 at_ns: 19,
             })
             .is_err());
-        runtime
+        assert!(runtime
             .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
                 link_id: "isl",
                 from_head: "a",
                 to_head: "b",
                 at_ns: 20,
+            })
+            .is_err());
+        runtime
+            .apply_pat_transition(BodyHeadPatRuntimeTransition::Reserve {
+                link_id: "isl",
+                from_head: "a",
+                to_head: "b",
+                at_ns: 21,
             })
             .unwrap();
         assert!(matches!(
@@ -2378,7 +2388,7 @@ mod tests {
                     link_id: "isl",
                     from_head: "a",
                     to_head: "b",
-                    at_ns: 20,
+                    at_ns: 21,
                     leased: true,
                     from_target_body: target,
                     to_target_body: target,
