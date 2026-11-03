@@ -219,6 +219,8 @@ P0 is **static-contact, packet-level simulation**, not physical radio or orbital
 - [ ] Terminal modem and beam selection, user RF budget, frequency reuse, full MAC admission and handover (SYS-04/05).
 - [ ] Ground antenna/feeder allocation with rain fade and site state (SYS-06/12).
 
+- [x] SYS-02 command-derived pointing-loss observations require a successful same-link command at the same virtual instant; recovery observations remain externally supplied (not a live pointing probe or a unified packet execution loop).
+
 ## P2 — core services and network realism
 
 - [ ] Subscriber service authorization, session and IPv4/IPv6 IPAM (SYS-08).

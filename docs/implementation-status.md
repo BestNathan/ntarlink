@@ -1871,6 +1871,15 @@ still an offline sampled fault plan, not native runtime steering evaluation.
 Between-probe excursions and already-admitted packet interruption
 remain unmodeled. See [optical attitude adapter](design/orbital-optical-attitude-adapter.md).
 
+
+SYS-02 now rejects a sampled-pointing **loss** observation unless a successful
+command for the same link was committed at that virtual instant. A failed,
+unknown-link or unrelated command cannot authorize the loss; mixed timeline
+rollback preserves this provenance. Recovery observations remain externally
+supplied because a down link cannot execute a successful command to recover.
+This is command-result provenance gating, not a verified sensor source or a
+single live Packet Adapter execution loop.
+
 ## Remaining subsystem work
 
 P1 next: externally archived IERS source and independent multi-epoch frame verification (the production provider now accepts pinned EOP, but no authentic IERS archive is bundled or multi-epoch calibrated), large-scale orbit catalog and columnar ephemerides with benchmarks, physically calibrated time-resolved Doppler/PHY correction, beam/interference RF budget, MAC access/scheduler, optical PAT and spacecraft constraints. Per-packet sampled geometric delay is implemented, but signal travel-time iteration and continuous path prediction are not.
