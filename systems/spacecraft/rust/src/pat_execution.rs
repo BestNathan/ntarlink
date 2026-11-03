@@ -176,7 +176,7 @@ impl PatExecutionRuntime {
                 // A loss must follow a successful command at the same instant.
                 // Recovery can come from an external pointing probe: a down
                 // link cannot issue successful commands to recover itself.
-                if action == LinkAction::Down
+                if matches!(action, LinkAction::Down)
                     && self.last_successful_command_at.get(link_id).copied() != Some(at_ns)
                 {
                     return Err("PAT pointing loss has no successful command at timestamp".into());
