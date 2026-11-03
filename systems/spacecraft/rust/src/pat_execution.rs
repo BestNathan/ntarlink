@@ -503,11 +503,13 @@ mod tests {
     #[test]
     fn pointing_loss_requires_successful_same_link_command() {
         let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
-        let loss = |link_id, at_ns| PatExecutionTransition::PointingObservation {
+        fn loss(link_id: &str, at_ns: u64) -> PatExecutionTransition<'_> {
+            PatExecutionTransition::PointingObservation {
             link_id,
             at_ns,
             action: LinkAction::Down,
-        };
+            }
+        }
         assert_eq!(
             runtime.apply(loss("isl", 10)).unwrap_err(),
             "PAT pointing loss has no successful command at timestamp"
