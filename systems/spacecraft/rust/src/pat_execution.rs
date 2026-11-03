@@ -253,7 +253,8 @@ impl PatExecutionRuntime {
                 };
                 if matches!(&head_outcome, BodyHeadPatRuntimeOutcome::Command(Ok(_))) {
                     if let Some((link_id, command_at_ns)) = command_source {
-                        self.last_successful_command_at.insert(link_id, command_at_ns);
+                        self.last_successful_command_at
+                            .insert(link_id, command_at_ns);
                     }
                 }
                 PatExecutionOutcome::Head(head_outcome)
@@ -502,12 +503,13 @@ mod tests {
 
     #[test]
     fn pointing_loss_requires_successful_same_link_command() {
-        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
+        let mut runtime =
+            PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
         fn loss(link_id: &str, at_ns: u64) -> PatExecutionTransition<'_> {
             PatExecutionTransition::PointingObservation {
-            link_id,
-            at_ns,
-            action: LinkAction::Down,
+                link_id,
+                at_ns,
+                action: LinkAction::Down,
             }
         }
         assert_eq!(
@@ -524,9 +526,11 @@ mod tests {
             to_target_body: [1.0, 0.0, 0.0],
         };
         assert!(matches!(
-            runtime.apply(PatExecutionTransition::Head(
-                BodyHeadPatRuntimeTransition::Command(command)
-            )).unwrap(),
+            runtime
+                .apply(PatExecutionTransition::Head(
+                    BodyHeadPatRuntimeTransition::Command(command)
+                ))
+                .unwrap(),
             PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
         ));
         assert_eq!(
@@ -535,11 +539,13 @@ mod tests {
         );
         assert!(runtime.apply(loss("isl", 10)).is_ok());
         assert!(!runtime.fault_state("isl").unwrap().effective_up());
-        runtime.apply(PatExecutionTransition::PointingObservation {
-            link_id: "isl",
-            at_ns: 11,
-            action: LinkAction::Up,
-        }).unwrap();
+        runtime
+            .apply(PatExecutionTransition::PointingObservation {
+                link_id: "isl",
+                at_ns: 11,
+                action: LinkAction::Up,
+            })
+            .unwrap();
         assert!(runtime.fault_state("isl").unwrap().effective_up());
     }
 
