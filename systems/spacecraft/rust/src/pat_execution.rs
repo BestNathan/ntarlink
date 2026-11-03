@@ -58,6 +58,8 @@ pub struct PatExecutionRuntime {
     last_fault_batch_at: HashMap<String, u64>,
     last_sampled_fault_at: HashMap<String, u64>,
     last_pointing_observation_at: HashMap<String, u64>,
+    /// Last successful command timestamp for each registered link.
+    last_successful_command_at: HashMap<String, u64>,
     last_event: Option<(u64, PatExecutionPhase)>,
 }
 
@@ -83,6 +85,7 @@ impl PatExecutionRuntime {
             last_fault_batch_at: HashMap::new(),
             last_sampled_fault_at: HashMap::new(),
             last_pointing_observation_at: HashMap::new(),
+            last_successful_command_at: HashMap::new(),
             last_event: None,
         })
     }
@@ -170,6 +173,14 @@ impl PatExecutionRuntime {
                 if self.last_sampled_fault_at.get(link_id).copied() == Some(at_ns) {
                     return Err("ambiguous PAT sampled-pointing transition at timestamp".into());
                 }
+                // A loss must follow a successful command at the same instant.
+                // Recovery can come from an external pointing probe: a down
+                // link cannot issue successful commands to recover itself.
+                if action == LinkAction::Down
+                    && self.last_successful_command_at.get(link_id).copied() != Some(at_ns)
+                {
+                    return Err("PAT pointing loss has no successful command at timestamp".into());
+                }
                 let state = self
                     .faults
                     .get_mut(link_id)
@@ -180,6 +191,12 @@ impl PatExecutionRuntime {
                 PatExecutionOutcome::Fault(outcome)
             }
             PatExecutionTransition::Head(transition) => {
+                let command_source = match &transition {
+                    BodyHeadPatRuntimeTransition::Command(command) => {
+                        Some((command.link_id.to_owned(), command.at_ns))
+                    }
+                    _ => None,
+                };
                 let head_outcome = match transition {
                     BodyHeadPatRuntimeTransition::Reserve {
                         link_id,
@@ -234,6 +251,11 @@ impl PatExecutionRuntime {
                     }
                     release => self.heads.apply_pat_transition(release)?,
                 };
+                if matches!(&head_outcome, BodyHeadPatRuntimeOutcome::Command(Ok(_))) {
+                    if let Some((link_id, command_at_ns)) = command_source {
+                        self.last_successful_command_at.insert(link_id, command_at_ns);
+                    }
+                }
                 PatExecutionOutcome::Head(head_outcome)
             }
         };
@@ -479,6 +501,47 @@ mod tests {
     }
 
     #[test]
+    fn pointing_loss_requires_successful_same_link_command() {
+        let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
+        let loss = |link_id, at_ns| PatExecutionTransition::PointingObservation {
+            link_id,
+            at_ns,
+            action: LinkAction::Down,
+        };
+        assert_eq!(
+            runtime.apply(loss("isl", 10)).unwrap_err(),
+            "PAT pointing loss has no successful command at timestamp"
+        );
+        let command = BodyHeadPatCommand {
+            link_id: "isl",
+            from_head: "a",
+            to_head: "b",
+            at_ns: 10,
+            leased: false,
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [1.0, 0.0, 0.0],
+        };
+        assert!(matches!(
+            runtime.apply(PatExecutionTransition::Head(
+                BodyHeadPatRuntimeTransition::Command(command)
+            )).unwrap(),
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+        ));
+        assert_eq!(
+            runtime.apply(loss("other", 10)).unwrap_err(),
+            "PAT pointing loss has no successful command at timestamp"
+        );
+        assert!(runtime.apply(loss("isl", 10)).is_ok());
+        assert!(!runtime.fault_state("isl").unwrap().effective_up());
+        runtime.apply(PatExecutionTransition::PointingObservation {
+            link_id: "isl",
+            at_ns: 11,
+            action: LinkAction::Up,
+        }).unwrap();
+        assert!(runtime.fault_state("isl").unwrap().effective_up());
+    }
+
+    #[test]
     fn pointing_observation_conflicts_fail_before_any_timeline_mutation() {
         let mut runtime = PatExecutionRuntime::new(&heads(), &[("isl", true)]).unwrap();
         let admin = [(FaultCause::Administrative, LinkAction::Down)];
@@ -522,7 +585,7 @@ mod tests {
                     PatExecutionTransition::PointingObservation {
                         link_id: "isl",
                         at_ns: 10,
-                        action: LinkAction::Down,
+                        action: LinkAction::Up,
                     },
                     "observed",
                 ),
