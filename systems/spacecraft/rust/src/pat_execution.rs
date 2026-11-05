@@ -1833,7 +1833,7 @@ mod tests {
             }
             // An earlier successful command must also roll back if a later
             // duplicate link command fails the batch preflight.
-            let earlier_command = BodyHeadPatCommand {
+            let earlier_command = || BodyHeadPatCommand {
                 link_id: "other",
                 from_head: "c",
                 to_head: "d",
@@ -1845,7 +1845,7 @@ mod tests {
             let mut events = vec![
                 (
                     PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
-                        earlier_command.clone(),
+                        earlier_command(),
                     )),
                     "earlier-command",
                 ),
@@ -1883,7 +1883,7 @@ mod tests {
             assert!(matches!(
                 runtime
                     .apply(PatExecutionTransition::Head(
-                        BodyHeadPatRuntimeTransition::Command(earlier_command)
+                        BodyHeadPatRuntimeTransition::Command(earlier_command())
                     ))
                     .unwrap(),
                 PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
