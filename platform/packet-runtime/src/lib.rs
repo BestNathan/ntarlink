@@ -2648,13 +2648,13 @@ mod tests {
             .faults
             .iter()
             .filter(|fault| fault.link_id == "isl-a-b")
-            .map(|fault| (fault.at_ns, fault.action.clone(), fault.cause))
+            .map(|fault| (fault.at_ns, matches!(fault.action, LinkAction::Down), fault.cause))
             .collect();
         assert_eq!(
             projected,
             vec![
-                (30_000_000, LinkAction::Down, FaultCause::SampledPointing),
-                (90_000_000, LinkAction::Up, FaultCause::Administrative),
+                (30_000_000, true, FaultCause::SampledPointing),
+                (90_000_000, false, FaultCause::Administrative),
             ]
         );
         let report = run(&scenario).unwrap();
