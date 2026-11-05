@@ -288,6 +288,9 @@ impl PatExecutionRuntime {
         // Release -> Reserve -> Command handoff at one instant remains legal.
         let mut occupied = HashSet::new();
         let mut fault_instants = HashSet::new();
+        // A link has one commanded pointing result per instant, even when
+        // distinct head pairs would pass the head-contention preflight.
+        let mut command_instants = HashSet::new();
         let mut sampled_fault_instants = HashSet::new();
         let mut observation_instants = HashSet::new();
         for (transition, _) in &events {
@@ -326,12 +329,17 @@ impl PatExecutionRuntime {
                     to_head,
                     ..
                 }) => (*at_ns, PatExecutionPhase::Reserve, *from_head, *to_head),
-                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command)) => (
-                    command.at_ns,
-                    PatExecutionPhase::Command,
-                    command.from_head,
-                    command.to_head,
-                ),
+                PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command)) => {
+                    if !command_instants.insert((command.at_ns, command.link_id)) {
+                        return Err("duplicate PAT link command at timestamp".into());
+                    }
+                    (
+                        command.at_ns,
+                        PatExecutionPhase::Command,
+                        command.from_head,
+                        command.to_head,
+                    )
+                }
             };
             // Invalid self-pairs retain their existing typed transition error
             // or failed-command observation instead of changing API semantics.
@@ -1799,5 +1807,120 @@ mod tests {
                 at_ns: 3,
             })
             .unwrap();
+    }
+
+    #[test]
+    fn duplicate_link_commands_on_disjoint_heads_fail_before_fault_commit() {
+        let heads: Vec<_> = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|head_id| OpticalHeadSlewActuator {
+                head_id: head_id.into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            })
+            .collect();
+        let target = [1.0, 0.0, 0.0];
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+
+        for reverse in [false, true] {
+            let mut runtime =
+                PatExecutionRuntime::new(&heads, &[("isl", true), ("other", true)]).unwrap();
+            let mut commands = vec![
+                ("a", "b", "first"),
+                ("c", "d", "second"),
+            ];
+            if reverse {
+                commands.reverse();
+            }
+            let mut events = vec![(
+                PatExecutionTransition::FaultBatch {
+                    link_id: "other",
+                    at_ns: 4,
+                    edges: &down,
+                },
+                "fault",
+            )];
+            events.extend(commands.into_iter().map(|(from_head, to_head, label)| {
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        BodyHeadPatCommand {
+                            link_id: "isl",
+                            from_head,
+                            to_head,
+                            at_ns: 5,
+                            leased: false,
+                            from_target_body: target,
+                            to_target_body: target,
+                        },
+                    )),
+                    label,
+                )
+            }));
+            assert_eq!(
+                runtime.apply_timeline(events).unwrap_err(),
+                "duplicate PAT link command at timestamp"
+            );
+            assert!(runtime.fault_state("other").unwrap().effective_up());
+            assert!(runtime.fault_state("isl").unwrap().effective_up());
+            assert_eq!(
+                runtime
+                    .apply(PatExecutionTransition::FaultBatch {
+                        link_id: "other",
+                        at_ns: 4,
+                        edges: &down,
+                    })
+                    .is_ok(),
+                true
+            );
+        }
+    }
+
+    #[test]
+    fn simultaneous_commands_on_distinct_links_and_heads_remain_valid() {
+        let heads: Vec<_> = ["a", "b", "c", "d"]
+            .into_iter()
+            .map(|head_id| OpticalHeadSlewActuator {
+                head_id: head_id.into(),
+                initial_direction_body: [1.0, 0.0, 0.0],
+                max_slew_rate_deg_per_s: 100.0,
+                max_slew_acceleration_deg_per_s2: None,
+                settling_ns: None,
+            })
+            .collect();
+        let mut runtime =
+            PatExecutionRuntime::new(&heads, &[("isl", true), ("other", true)]).unwrap();
+        let target = [1.0, 0.0, 0.0];
+        let outcomes = runtime
+            .apply_timeline(
+                [("other", "c", "d"), ("isl", "a", "b")]
+                    .into_iter()
+                    .map(|(link_id, from_head, to_head)| {
+                        (
+                            PatExecutionTransition::Head(
+                                BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                                    link_id,
+                                    from_head,
+                                    to_head,
+                                    at_ns: 5,
+                                    leased: false,
+                                    from_target_body: target,
+                                    to_target_body: target,
+                                }),
+                            ),
+                            link_id,
+                        )
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.iter().all(|(_, outcome)| matches!(
+            outcome,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+        )));
+        assert_eq!(outcomes[0].0, "isl");
+        assert_eq!(outcomes[1].0, "other");
     }
 }
