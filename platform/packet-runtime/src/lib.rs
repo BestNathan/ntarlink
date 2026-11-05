@@ -2648,7 +2648,13 @@ mod tests {
             .faults
             .iter()
             .filter(|fault| fault.link_id == "isl-a-b")
-            .map(|fault| (fault.at_ns, matches!(fault.action, LinkAction::Down), fault.cause))
+            .map(|fault| {
+                (
+                    fault.at_ns,
+                    matches!(fault.action, LinkAction::Down),
+                    fault.cause,
+                )
+            })
             .collect();
         assert_eq!(
             projected,
