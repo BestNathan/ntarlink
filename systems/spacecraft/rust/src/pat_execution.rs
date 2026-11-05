@@ -1861,16 +1861,13 @@ mod tests {
             );
             assert!(runtime.fault_state("other").unwrap().effective_up());
             assert!(runtime.fault_state("isl").unwrap().effective_up());
-            assert_eq!(
-                runtime
-                    .apply(PatExecutionTransition::FaultBatch {
-                        link_id: "other",
-                        at_ns: 4,
-                        edges: &down,
-                    })
-                    .is_ok(),
-                true
-            );
+            assert!(runtime
+                .apply(PatExecutionTransition::FaultBatch {
+                    link_id: "other",
+                    at_ns: 4,
+                    edges: &down,
+                })
+                .is_ok());
         }
     }
 
