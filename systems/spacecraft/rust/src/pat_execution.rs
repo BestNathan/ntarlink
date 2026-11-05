@@ -1827,10 +1827,7 @@ mod tests {
         for reverse in [false, true] {
             let mut runtime =
                 PatExecutionRuntime::new(&heads, &[("isl", true), ("other", true)]).unwrap();
-            let mut commands = vec![
-                ("a", "b", "first"),
-                ("c", "d", "second"),
-            ];
+            let mut commands = vec![("a", "b", "first"), ("c", "d", "second")];
             if reverse {
                 commands.reverse();
             }
@@ -1898,8 +1895,8 @@ mod tests {
                     .into_iter()
                     .map(|(link_id, from_head, to_head)| {
                         (
-                            PatExecutionTransition::Head(
-                                BodyHeadPatRuntimeTransition::Command(BodyHeadPatCommand {
+                            PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                                BodyHeadPatCommand {
                                     link_id,
                                     from_head,
                                     to_head,
@@ -1907,8 +1904,8 @@ mod tests {
                                     leased: false,
                                     from_target_body: target,
                                     to_target_body: target,
-                                }),
-                            ),
+                                },
+                            )),
                             link_id,
                         )
                     })
