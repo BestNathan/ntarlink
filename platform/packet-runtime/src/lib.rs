@@ -675,6 +675,34 @@ impl<'a> Runtime<'a> {
     }
 }
 
+/// Internal bridge between SYS-02's causal fault-domain result and the
+/// packet engine's metadata-free effective link state. The packet scenario
+/// cannot carry SampledPointing faults after optical_pat is stripped, so the
+/// original down cause is retained separately for PAT trace attribution.
+struct PatEffectivePacketEdge {
+    link_id: String,
+    at_ns: u64,
+    now_up: bool,
+    down_cause: Option<FaultCause>,
+}
+
+impl PatEffectivePacketEdge {
+    fn packet_fault(self) -> Fault {
+        Fault {
+            at_ns: self.at_ns,
+            link_id: self.link_id,
+            action: if self.now_up {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
+            // This is an effective packet-state edge, not a raw SYS-02
+            // administrative observation. Keep the prepared Scenario valid.
+            cause: FaultCause::Administrative,
+        }
+    }
+}
+
 /// Canonical, preflighted PAT timeline shared by provisional execution and
 /// lease-only audit. It owns neither actuator history nor live reservations.
 struct ValidatedPatHeadTimeline<'a> {
@@ -1200,7 +1228,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
 
     let mut admin_windows: HashMap<&str, Vec<(u64, u64)>> = HashMap::new();
     let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
-    let mut effective_faults_by_link: HashMap<&str, Vec<Fault>> = HashMap::new();
+    let mut effective_faults_by_link: HashMap<&str, Vec<PatEffectivePacketEdge>> =
+        HashMap::new();
     let mut cursors: HashMap<&str, u64> = HashMap::new();
     for ((at_ns, link_id), outcome) in fault_runtime.apply_timeline(events)? {
         let transition = match outcome {
@@ -1215,11 +1244,16 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     .or_default()
                     .push((*cursor, at_ns));
             }
-            if !transition.now_up {
+            let edge = PatEffectivePacketEdge {
+                at_ns,
+                link_id: link_id.to_owned(),
+                now_up: transition.now_up,
+                down_cause: transition.down_cause,
+            };
+            if !edge.now_up {
                 down_faults.insert(
                     (link_id, at_ns),
-                    transition
-                        .down_cause
+                    edge.down_cause
                         .expect("effective PAT fault state is down"),
                 );
             }
@@ -1227,16 +1261,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             effective_faults_by_link
                 .entry(link_id)
                 .or_default()
-                .push(Fault {
-                    at_ns,
-                    link_id: link_id.to_owned(),
-                    action: if transition.now_up {
-                        LinkAction::Up
-                    } else {
-                        LinkAction::Down
-                    },
-                    cause: FaultCause::Administrative,
-                });
+                .push(edge);
         }
     }
     let mut effective_faults = Vec::new();
@@ -1255,7 +1280,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         // Preserve the packet engine's previous link-major fault ordering.
         // Only the SYS-02 replay is globally chronological.
         if let Some(faults) = effective_faults_by_link.remove(link_id) {
-            effective_faults.extend(faults);
+            effective_faults.extend(faults.into_iter().map(PatEffectivePacketEdge::packet_fault));
         }
     }
 
@@ -1987,6 +2012,32 @@ mod tests {
             serde_json::to_vec(&report).unwrap(),
             serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn effective_pat_packet_edge_normalizes_cause_without_losing_provenance() {
+        let edge = PatEffectivePacketEdge {
+            link_id: "isl".into(),
+            at_ns: 10,
+            now_up: false,
+            down_cause: Some(FaultCause::SampledPointing),
+        };
+        assert_eq!(edge.down_cause, Some(FaultCause::SampledPointing));
+        let packet = edge.packet_fault();
+        assert_eq!(packet.link_id, "isl");
+        assert_eq!(packet.at_ns, 10);
+        assert!(matches!(packet.action, LinkAction::Down));
+        assert_eq!(packet.cause, FaultCause::Administrative);
+
+        let recovery = PatEffectivePacketEdge {
+            link_id: "isl".into(),
+            at_ns: 11,
+            now_up: true,
+            down_cause: None,
+        }
+        .packet_fault();
+        assert!(matches!(recovery.action, LinkAction::Up));
+        assert_eq!(recovery.cause, FaultCause::Administrative);
     }
 
     #[test]
