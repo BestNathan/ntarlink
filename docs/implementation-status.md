@@ -1,3 +1,21 @@
+## P1 typed SYS-02 effective-edge to packet-state boundary
+
+The packet adapter now represents SYS-02 fault transitions internally as
+`PatEffectivePacketEdge`, retaining the effective up/down state and original
+down-cause independently. Only the final conversion into the PAT-metadata-free
+packet `Scenario` normalizes the edge to a packet-engine administrative
+`Fault`; PAT loss traces continue using the original SYS-02 cause. This
+explicit boundary prevents the invalid `SampledPointing`-without-`optical_pat`
+scenario discovered in the rejected #138 approach, without weakening public
+scenario validation. A Rust regression checks both down and recovery conversion,
+while existing overlapping-domain and packet-accounting tests remain required
+cross-subsystem evidence.
+
+**Limits:** This is an internal representation and conversion refactor, not a
+single-pass shared Fault/Head/Observation scheduler. Provisional BODY-frame
+planning, offline contact projection and lease-only audit remain separate.
+There is no schema change, new dependency or new runtime scheduling pass.
+
 ## P1 causal post-command pointing observation phase
 
 SYS-02 `PatExecutionRuntime` now accepts `PointingObservation` as a sampled-pointing fault result in a distinct phase after same-instant Commands. Its canonical order is Fault, Release, Reserve, Command, Observation. This prevents a command-derived pointing failure from retroactively rejecting the very command that produced the measurement; subsequent commands see the committed sampled-pointing state. Administrative faults may coexist at the same timestamp and retain down-cause precedence.
