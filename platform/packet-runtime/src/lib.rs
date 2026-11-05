@@ -1228,8 +1228,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
 
     let mut admin_windows: HashMap<&str, Vec<(u64, u64)>> = HashMap::new();
     let mut down_faults: HashMap<(&str, u64), FaultCause> = HashMap::new();
-    let mut effective_faults_by_link: HashMap<&str, Vec<PatEffectivePacketEdge>> =
-        HashMap::new();
+    let mut effective_faults_by_link: HashMap<&str, Vec<PatEffectivePacketEdge>> = HashMap::new();
     let mut cursors: HashMap<&str, u64> = HashMap::new();
     for ((at_ns, link_id), outcome) in fault_runtime.apply_timeline(events)? {
         let transition = match outcome {
@@ -1253,8 +1252,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             if !edge.now_up {
                 down_faults.insert(
                     (link_id, at_ns),
-                    edge.down_cause
-                        .expect("effective PAT fault state is down"),
+                    edge.down_cause.expect("effective PAT fault state is down"),
                 );
             }
             *cursor = at_ns;
