@@ -1831,14 +1831,33 @@ mod tests {
             if reverse {
                 commands.reverse();
             }
-            let mut events = vec![(
-                PatExecutionTransition::FaultBatch {
-                    link_id: "other",
-                    at_ns: 4,
-                    edges: &down,
-                },
-                "fault",
-            )];
+            // An earlier successful command must also roll back if a later
+            // duplicate link command fails the batch preflight.
+            let earlier_command = BodyHeadPatCommand {
+                link_id: "other",
+                from_head: "c",
+                to_head: "d",
+                at_ns: 3,
+                leased: false,
+                from_target_body: target,
+                to_target_body: target,
+            };
+            let mut events = vec![
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        earlier_command.clone(),
+                    )),
+                    "earlier-command",
+                ),
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "other",
+                        at_ns: 4,
+                        edges: &down,
+                    },
+                    "fault",
+                ),
+            ];
             events.extend(commands.into_iter().map(|(from_head, to_head, label)| {
                 (
                     PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
@@ -1861,6 +1880,14 @@ mod tests {
             );
             assert!(runtime.fault_state("other").unwrap().effective_up());
             assert!(runtime.fault_state("isl").unwrap().effective_up());
+            assert!(matches!(
+                runtime
+                    .apply(PatExecutionTransition::Head(
+                        BodyHeadPatRuntimeTransition::Command(earlier_command)
+                    ))
+                    .unwrap(),
+                PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+            ));
             assert!(runtime
                 .apply(PatExecutionTransition::FaultBatch {
                     link_id: "other",
