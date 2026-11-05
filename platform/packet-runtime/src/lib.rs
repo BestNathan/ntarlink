@@ -1235,7 +1235,16 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     } else {
                         LinkAction::Down
                     },
-                    cause: FaultCause::Administrative,
+                    // Preserve the authoritative SYS-02 cause on loss.
+                    // Recovery is a synthesized effective-up edge, not a
+                    // recovery of any one original fault domain.
+                    cause: if transition.now_up {
+                        FaultCause::Administrative
+                    } else {
+                        transition
+                            .down_cause
+                            .expect("effective PAT fault state is down")
+                    },
                 });
         }
     }
@@ -2598,6 +2607,57 @@ mod tests {
         assert!(optical_hops
             .iter()
             .any(|hop| (90_000_000..120_000_000).contains(&hop.transmit_started_ns)));
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn packet_projection_preserves_sys02_effective_down_cause() {
+        let mut scenario = pat_fixture();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::SampledPointing,
+            },
+            Fault {
+                at_ns: 40_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 60_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::SampledPointing,
+            },
+            Fault {
+                at_ns: 90_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        let projected: Vec<_> = prepared
+            .faults
+            .iter()
+            .filter(|fault| fault.link_id == "isl-a-b")
+            .map(|fault| (fault.at_ns, fault.action.clone(), fault.cause))
+            .collect();
+        assert_eq!(
+            projected,
+            vec![
+                (30_000_000, LinkAction::Down, FaultCause::SampledPointing),
+                (90_000_000, LinkAction::Up, FaultCause::Administrative),
+            ]
+        );
+        let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert_eq!(
             serde_json::to_vec(&report).unwrap(),
