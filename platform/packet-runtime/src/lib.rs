@@ -2743,6 +2743,21 @@ mod tests {
             scenario.flows[0].interval_ns = 10_000_000;
             let (prepared, _) = prepare_pat(&scenario).unwrap();
             prepared.validate().unwrap();
+            // SYS-02 owns cause precedence; the PAT-free packet scenario
+            // carries only effective link edges, never raw pointing causes.
+            let packet_edges: Vec<_> = prepared
+                .faults
+                .iter()
+                .filter(|fault| fault.link_id == "isl-a-b")
+                .map(|fault| (fault.at_ns, fault.action.clone(), fault.cause))
+                .collect();
+            assert_eq!(packet_edges.len(), 2);
+            assert_eq!(packet_edges[0].0, 30_000_000);
+            assert!(matches!(packet_edges[0].1, LinkAction::Down));
+            assert_eq!(packet_edges[0].2, FaultCause::Administrative);
+            assert_eq!(packet_edges[1].0, 70_000_000);
+            assert!(matches!(packet_edges[1].1, LinkAction::Up));
+            assert_eq!(packet_edges[1].2, FaultCause::Administrative);
             let windows: Vec<_> = prepared
                 .contacts
                 .iter()
