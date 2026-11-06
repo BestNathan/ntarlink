@@ -1973,6 +1973,42 @@ mod tests {
     }
 
     #[test]
+    fn body_follower_and_administrative_fault_order_preserves_packet_report() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        // Administrative outages are independent of sampled BODY-frame losses.
+        // Reordering their input must not change the provisional prediction,
+        // effective SYS-02 fault projection, or packet accounting.
+        scenario.faults.extend([
+            Fault {
+                at_ns: 45_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 85_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ]);
+        let expected = run(&scenario).unwrap();
+        assert_eq!(expected.injected, expected.delivered + expected.dropped);
+        let mut reversed = scenario.clone();
+        // BODY-frame samples are a chronological stream by contract; only
+        // independent administrative fault inputs may be reordered.
+        reversed.faults.reverse();
+        let actual = run(&reversed).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&expected).unwrap(),
+            serde_json::to_vec(&actual).unwrap()
+        );
+    }
+
+    #[test]
     fn predicted_body_follower_lag_interrupts_pat_and_reacquires() {
         let scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
