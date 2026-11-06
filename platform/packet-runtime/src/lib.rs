@@ -967,6 +967,50 @@ fn replay_pat_head_leases(
     execute_pat_head_timeline(scenario, reservations, Some(expected)).map(|(runtime, _)| runtime)
 }
 
+/// Preserve command identity while projecting provisional BODY-frame results
+/// into the sampled-pointing fault domain used by offline contact planning.
+/// A successful command may still observe a down link; a rejected command
+/// never provides evidence that the link has recovered.
+fn project_body_following_faults(
+    samples: &[OpticalBodyFollowingSample],
+    predicted: &PredictedObservations,
+) -> Result<Vec<Fault>, String> {
+    samples
+        .iter()
+        .map(|command| {
+            let observed = predicted
+                .get(&(command.link_id.clone(), command.at_ns))
+                .ok_or("missing provisional BODY-frame observation")?;
+            let allowed = match observed {
+                Ok((from_boresight_body, to_boresight_body)) => {
+                    body_tracking_error_allowed(&OpticalBodyTrackingSample {
+                        link_id: command.link_id.clone(),
+                        at_ns: command.at_ns,
+                        frame: command.frame.clone(),
+                        from_target_body: command.from_target_body,
+                        to_target_body: command.to_target_body,
+                        from_boresight_body: *from_boresight_body,
+                        to_boresight_body: *to_boresight_body,
+                        from_max_error_deg: command.from_max_error_deg,
+                        to_max_error_deg: command.to_max_error_deg,
+                    })
+                }
+                Err(_) => false,
+            };
+            Ok(Fault {
+                at_ns: command.at_ns,
+                link_id: command.link_id.clone(),
+                action: if allowed {
+                    LinkAction::Up
+                } else {
+                    LinkAction::Down
+                },
+                cause: FaultCause::SampledPointing,
+            })
+        })
+        .collect()
+}
+
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
     let mut prepared = scenario.clone();
     if scenario.optical_pat.is_empty() {
@@ -1058,37 +1102,10 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         let (runtime, observations) = execute_pat_head_timeline(scenario, &[], None)?;
         follower_runtime = Some(runtime);
         predicted_observations = observations;
-        for command in &scenario.optical_body_following_samples {
-            let observed = predicted_observations
-                .get(&(command.link_id.clone(), command.at_ns))
-                .ok_or("missing provisional BODY-frame observation")?;
-            let allowed = match observed {
-                Ok((from_boresight_body, to_boresight_body)) => {
-                    body_tracking_error_allowed(&OpticalBodyTrackingSample {
-                        link_id: command.link_id.clone(),
-                        at_ns: command.at_ns,
-                        frame: command.frame.clone(),
-                        from_target_body: command.from_target_body,
-                        to_target_body: command.to_target_body,
-                        from_boresight_body: *from_boresight_body,
-                        to_boresight_body: *to_boresight_body,
-                        from_max_error_deg: command.from_max_error_deg,
-                        to_max_error_deg: command.to_max_error_deg,
-                    })
-                }
-                Err(_) => false,
-            };
-            steering_faults.push(Fault {
-                at_ns: command.at_ns,
-                link_id: command.link_id.clone(),
-                action: if allowed {
-                    LinkAction::Up
-                } else {
-                    LinkAction::Down
-                },
-                cause: FaultCause::SampledPointing,
-            });
-        }
+        steering_faults.extend(project_body_following_faults(
+            &scenario.optical_body_following_samples,
+            &predicted_observations,
+        )?);
     }
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
