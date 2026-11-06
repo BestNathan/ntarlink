@@ -1998,8 +1998,9 @@ mod tests {
         let expected = run(&scenario).unwrap();
         assert_eq!(expected.injected, expected.delivered + expected.dropped);
         let mut reversed = scenario.clone();
+        // BODY-frame samples are a chronological stream by contract; only
+        // independent administrative fault inputs may be reordered.
         reversed.faults.reverse();
-        reversed.optical_body_following_samples.reverse();
         let actual = run(&reversed).unwrap();
         assert_eq!(
             serde_json::to_vec(&expected).unwrap(),
