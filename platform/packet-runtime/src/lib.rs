@@ -1713,10 +1713,7 @@ mod tests {
         assert_eq!(faults[0].action, LinkAction::Down);
 
         // A successful command can still measure a pointing failure.
-        let misaligned = HashMap::from([(
-            key.clone(),
-            Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
-        )]);
+        let misaligned = HashMap::from([(key.clone(), Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])))]);
         let faults = project_body_following_faults(&samples, &misaligned).unwrap();
         assert_eq!(faults[0].action, LinkAction::Down);
 
