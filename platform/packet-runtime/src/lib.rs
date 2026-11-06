@@ -1710,12 +1710,12 @@ mod tests {
         assert_eq!(faults[0].link_id, sample.link_id);
         assert_eq!(faults[0].at_ns, sample.at_ns);
         assert_eq!(faults[0].cause, FaultCause::SampledPointing);
-        assert_eq!(faults[0].action, LinkAction::Down);
+        assert!(matches!(faults[0].action, LinkAction::Down));
 
         // A successful command can still measure a pointing failure.
         let misaligned = HashMap::from([(key.clone(), Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])))]);
         let faults = project_body_following_faults(&samples, &misaligned).unwrap();
-        assert_eq!(faults[0].action, LinkAction::Down);
+        assert!(matches!(faults[0].action, LinkAction::Down));
 
         // Missing command provenance must not be silently interpreted as Up.
         assert_eq!(
