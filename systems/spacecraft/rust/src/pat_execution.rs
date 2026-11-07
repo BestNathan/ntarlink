@@ -514,7 +514,7 @@ mod tests {
         let mut runtime =
             PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
         let down = [(FaultCause::Administrative, LinkAction::Down)];
-        let command = BodyHeadPatCommand {
+        let command = || BodyHeadPatCommand {
             link_id: "isl",
             from_head: "a",
             to_head: "b",
@@ -538,7 +538,7 @@ mod tests {
                 ),
                 (
                     PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
-                        command.clone(),
+                        command(),
                     )),
                     "command",
                 ),
@@ -564,7 +564,7 @@ mod tests {
             .apply_timeline(vec![
                 (
                     PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
-                        command,
+                        command(),
                     )),
                     "command",
                 ),
