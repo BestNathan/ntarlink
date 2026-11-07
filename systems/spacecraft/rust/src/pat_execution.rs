@@ -537,9 +537,7 @@ mod tests {
                     "invalid-observation",
                 ),
                 (
-                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
-                        command(),
-                    )),
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command())),
                     "command",
                 ),
                 (
@@ -563,9 +561,7 @@ mod tests {
         let outcomes = runtime
             .apply_timeline(vec![
                 (
-                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
-                        command(),
-                    )),
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(command())),
                     "command",
                 ),
                 (
