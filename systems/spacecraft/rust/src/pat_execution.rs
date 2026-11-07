@@ -510,6 +510,90 @@ mod tests {
     }
 
     #[test]
+    fn late_unproven_pointing_loss_rolls_back_prior_command_and_fault() {
+        let mut runtime =
+            PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
+        let down = [(FaultCause::Administrative, LinkAction::Down)];
+        let command = BodyHeadPatCommand {
+            link_id: "isl",
+            from_head: "a",
+            to_head: "b",
+            at_ns: 10,
+            leased: false,
+            from_target_body: [1.0, 0.0, 0.0],
+            to_target_body: [1.0, 0.0, 0.0],
+        };
+
+        // The final observation has no successful command for its own link.
+        // Its failure must also roll back an earlier valid command and fault.
+        let error = runtime
+            .apply_timeline(vec![
+                (
+                    PatExecutionTransition::PointingObservation {
+                        link_id: "other",
+                        at_ns: 11,
+                        action: LinkAction::Down,
+                    },
+                    "invalid-observation",
+                ),
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        command.clone(),
+                    )),
+                    "command",
+                ),
+                (
+                    PatExecutionTransition::FaultBatch {
+                        link_id: "other",
+                        at_ns: 9,
+                        edges: &down,
+                    },
+                    "fault",
+                ),
+            ])
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "PAT pointing loss has no successful command at timestamp"
+        );
+        assert!(runtime.fault_state("other").unwrap().effective_up());
+
+        // The failed batch did not advance the clock or retain actuator
+        // history: the same command can be committed in a fresh timeline.
+        let outcomes = runtime
+            .apply_timeline(vec![
+                (
+                    PatExecutionTransition::Head(BodyHeadPatRuntimeTransition::Command(
+                        command,
+                    )),
+                    "command",
+                ),
+                (
+                    PatExecutionTransition::PointingObservation {
+                        link_id: "isl",
+                        at_ns: 10,
+                        action: LinkAction::Down,
+                    },
+                    "observation",
+                ),
+            ])
+            .unwrap();
+        assert_eq!(
+            outcomes
+                .iter()
+                .map(|(context, _)| *context)
+                .collect::<Vec<_>>(),
+            ["command", "observation"]
+        );
+        assert!(matches!(
+            &outcomes[0].1,
+            PatExecutionOutcome::Head(BodyHeadPatRuntimeOutcome::Command(Ok(_)))
+        ));
+        assert!(!runtime.fault_state("isl").unwrap().effective_up());
+        assert!(runtime.fault_state("other").unwrap().effective_up());
+    }
+
+    #[test]
     fn pointing_loss_requires_successful_same_link_command() {
         let mut runtime =
             PatExecutionRuntime::new(&heads(), &[("isl", true), ("other", true)]).unwrap();
