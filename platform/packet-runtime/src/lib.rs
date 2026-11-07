@@ -1694,6 +1694,37 @@ mod tests {
     }
 
     #[test]
+    fn body_command_projection_preserves_failed_and_successful_observation_provenance() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let sample = scenario.optical_body_following_samples[0].clone();
+        let key = (sample.link_id.clone(), sample.at_ns);
+        let samples = [sample.clone()];
+
+        // A rejected command is evidence of loss, never external recovery.
+        let rejected = HashMap::from([(key.clone(), Err("head command rejected".into()))]);
+        let faults = project_body_following_faults(&samples, &rejected).unwrap();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].link_id, sample.link_id);
+        assert_eq!(faults[0].at_ns, sample.at_ns);
+        assert_eq!(faults[0].cause, FaultCause::SampledPointing);
+        assert!(matches!(faults[0].action, LinkAction::Down));
+
+        // A successful command can still measure a pointing failure.
+        let misaligned = HashMap::from([(key.clone(), Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])))]);
+        let faults = project_body_following_faults(&samples, &misaligned).unwrap();
+        assert!(matches!(faults[0].action, LinkAction::Down));
+
+        // Missing command provenance must not be silently interpreted as Up.
+        assert_eq!(
+            project_body_following_faults(&samples, &HashMap::new()).unwrap_err(),
+            "missing provisional BODY-frame observation"
+        );
+    }
+
+    #[test]
     fn reaches_internet_through_all_five_link_types() {
         let result = run(&basic()).unwrap();
         assert_eq!(result.injected, 3);
