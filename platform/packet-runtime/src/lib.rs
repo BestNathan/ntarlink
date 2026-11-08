@@ -1725,6 +1725,45 @@ mod tests {
     }
 
     #[test]
+    fn body_command_projection_keeps_recovery_and_loss_attached_to_sample_identity() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let recovered = scenario.optical_body_following_samples[0].clone();
+        let mut lost = recovered.clone();
+        lost.at_ns += 1;
+        let predicted = HashMap::from([
+            (
+                (recovered.link_id.clone(), recovered.at_ns),
+                Ok((recovered.from_target_body, recovered.to_target_body)),
+            ),
+            (
+                (lost.link_id.clone(), lost.at_ns),
+                Err("command rejected".to_string()),
+            ),
+        ]);
+
+        for samples in [
+            vec![recovered.clone(), lost.clone()],
+            vec![lost.clone(), recovered.clone()],
+        ] {
+            let projected = project_body_following_faults(&samples, &predicted).unwrap();
+            assert_eq!(projected.len(), samples.len());
+            for (sample, fault) in samples.iter().zip(projected.iter()) {
+                assert_eq!(fault.link_id, sample.link_id);
+                assert_eq!(fault.at_ns, sample.at_ns);
+                assert_eq!(fault.cause, FaultCause::SampledPointing);
+                if sample.at_ns == recovered.at_ns {
+                    assert!(matches!(fault.action, LinkAction::Up));
+                } else {
+                    assert!(matches!(fault.action, LinkAction::Down));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn reaches_internet_through_all_five_link_types() {
         let result = run(&basic()).unwrap();
         assert_eq!(result.injected, 3);
