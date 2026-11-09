@@ -1,10 +1,12 @@
 # GitHub Pages: Platform Showcase and Mission Control Demo
 
-The [Platform Showcase](https://bestnathan.github.io/ntarlink/) is the engineering introduction to the complete 16-subsystem architecture. The separate [Mission Control Demo](https://bestnathan.github.io/ntarlink/demo/) is a multi-view system prototype with its own overview, navigation and subsystem pages. Sources are [pages/index.html](../applications/console/pages/index.html) and [pages/demo/index.html](../applications/console/pages/demo/index.html), published together by [.github/workflows/pages.yml](../.github/workflows/pages.yml). See the detailed [Demo Console design](demo-console.md).
+The [Platform Showcase](https://bestnathan.github.io/ntarlink/) introduces the long-term Space Computing & Networking Infrastructure mission and the current 16-subsystem LEO communication foundation. The separate [Mission Control Demo](https://bestnathan.github.io/ntarlink/demo/) is a multi-view system prototype with its own overview, navigation and subsystem pages. Sources are [pages/index.html](../applications/console/pages/index.html) and [pages/demo/index.html](../applications/console/pages/demo/index.html), published together by [.github/workflows/pages.yml](../.github/workflows/pages.yml). See the detailed [Demo Console design](demo-console.md).
 
 **This is an architecture demonstration, not an operational ground or space network.** Every satellite count, orbit illustration, link state, throughput, RTT, subscriber count and event in the dashboard is **synthetic mock data**. The currently implemented Rust packet runtime and Python SGP4/Skyfield contact compiler are documented separately in [implementation status](implementation-status.md).
 
 ## Platform Showcase capabilities
+
+The showcase now separates the existing satellite-network foundation from the **planned** orbital compute/workload and hardware attachment milestones. The separate [Compute Fabric Lab](https://bestnathan.github.io/ntarlink/demo/#/compute) is a synthetic analytical comparison workspace, not a live compute cluster or Rust workload executor.
 
 - A responsive mission control interface displaying an illustrative constellation, optical ISLs, ground feeders and telemetry.
 - Sixteen individual subsystem panels with their most important capability groups, implementation status, dependency candidates and links to detailed English design documents.
@@ -14,6 +16,8 @@ The [Platform Showcase](https://bestnathan.github.io/ntarlink/) is the engineeri
 - No external map tiles, no external JavaScript CDNs, no secrets and no real-world telemetry.
 
 ## Demo Console features
+
+- A dedicated hash-routed Compute Fabric Lab shows synthetic compute-capable satellite and ground nodes, three workloads, network fault conditions and ground/onboard/peer placement alternatives. Its estimates and resource profiles are disclosed illustrative assumptions; no GPU, CPU worker, or real orbital AI execution is connected.
 
 - A separate Mission Control overview with synthetic constellation health, conceptual network topology, a clickable packet journey and mock scenario presets.
 - Sixteen subsystem workspaces grouped by their architectural segment; each has four deep-linkable views: Overview, Assets & Inventory, Operations and Telemetry & Analytics.
@@ -33,6 +37,6 @@ The site is intentionally a self-contained HTML/CSS/JavaScript prototype under t
 
 ## Validation
 
-CI executes `python scripts/check_pages_site.py` for the showcase and `node scripts/test_demo_console.cjs` for the demo. The latter tests all 16 subsystems × 4 routed views (64 screens), overview, mock-data labels and graph generation. Both checks gate the Pages workflow. Browser-level interaction and responsive screenshot tests are planned follow-ups.
+CI executes `python scripts/check_pages_site.py` for the showcase and `node scripts/test_demo_console.cjs` for the demo. The latter tests all 16 subsystems × 4 routed views (64 screens), overview, synthetic compute-fabric interactions and link-fault behavior, mock-data labels and graph generation. Both checks gate the Pages workflow. Browser-level interaction and responsive screenshot tests are planned follow-ups.
 
 Updates to `applications/console/pages/**` or `.github/workflows/pages.yml` on `main` trigger automatic re-deployment. Changes to engineering documents alone do not trigger the static site workflow unless the presentation itself needs to change.
