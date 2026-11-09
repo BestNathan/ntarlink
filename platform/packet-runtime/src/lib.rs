@@ -967,48 +967,97 @@ fn replay_pat_head_leases(
     execute_pat_head_timeline(scenario, reservations, Some(expected)).map(|(runtime, _)| runtime)
 }
 
-/// Preserve command identity while projecting provisional BODY-frame results
-/// into the sampled-pointing fault domain used by offline contact planning.
-/// A successful command may still observe a down link; a rejected command
-/// never provides evidence that the link has recovered.
-fn project_body_following_faults(
+/// Preserve command outcome provenance independently from the speculative
+/// fault edge. Only successful commands can authorize a later SYS-02
+/// PointingObservation; rejected commands remain planning-only loss evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BodyCommandEvidence {
+    SuccessfulObservation { allowed: bool },
+    RejectedCommand { reason: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BodyCommandProjection {
+    link_id: String,
+    at_ns: u64,
+    evidence: BodyCommandEvidence,
+}
+
+impl BodyCommandProjection {
+    fn planning_fault(&self) -> Fault {
+        let allowed = matches!(
+            self.evidence,
+            BodyCommandEvidence::SuccessfulObservation { allowed: true }
+        );
+        Fault {
+            at_ns: self.at_ns,
+            link_id: self.link_id.clone(),
+            action: if allowed { LinkAction::Up } else { LinkAction::Down },
+            cause: FaultCause::SampledPointing,
+        }
+    }
+
+    /// A successful command can provide a post-command pointing-loss
+    /// observation. Neither rejected commands nor predicted Up edges are
+    /// proof of an independently sourced recovery.
+    fn command_derived_loss(&self) -> bool {
+        matches!(
+            self.evidence,
+            BodyCommandEvidence::SuccessfulObservation { allowed: false }
+        )
+    }
+}
+
+fn project_body_command_evidence(
     samples: &[OpticalBodyFollowingSample],
     predicted: &PredictedObservations,
-) -> Result<Vec<Fault>, String> {
+) -> Result<Vec<BodyCommandProjection>, String> {
     samples
         .iter()
         .map(|command| {
             let observed = predicted
                 .get(&(command.link_id.clone(), command.at_ns))
                 .ok_or("missing provisional BODY-frame observation")?;
-            let allowed = match observed {
+            let evidence = match observed {
                 Ok((from_boresight_body, to_boresight_body)) => {
-                    body_tracking_error_allowed(&OpticalBodyTrackingSample {
-                        link_id: command.link_id.clone(),
-                        at_ns: command.at_ns,
-                        frame: command.frame.clone(),
-                        from_target_body: command.from_target_body,
-                        to_target_body: command.to_target_body,
-                        from_boresight_body: *from_boresight_body,
-                        to_boresight_body: *to_boresight_body,
-                        from_max_error_deg: command.from_max_error_deg,
-                        to_max_error_deg: command.to_max_error_deg,
-                    })
+                    BodyCommandEvidence::SuccessfulObservation {
+                        allowed: body_tracking_error_allowed(&OpticalBodyTrackingSample {
+                            link_id: command.link_id.clone(),
+                            at_ns: command.at_ns,
+                            frame: command.frame.clone(),
+                            from_target_body: command.from_target_body,
+                            to_target_body: command.to_target_body,
+                            from_boresight_body: *from_boresight_body,
+                            to_boresight_body: *to_boresight_body,
+                            from_max_error_deg: command.from_max_error_deg,
+                            to_max_error_deg: command.to_max_error_deg,
+                        }),
+                    }
                 }
-                Err(_) => false,
-            };
-            Ok(Fault {
-                at_ns: command.at_ns,
-                link_id: command.link_id.clone(),
-                action: if allowed {
-                    LinkAction::Up
-                } else {
-                    LinkAction::Down
+                Err(reason) => BodyCommandEvidence::RejectedCommand {
+                    reason: reason.clone(),
                 },
-                cause: FaultCause::SampledPointing,
+            };
+            Ok(BodyCommandProjection {
+                link_id: command.link_id.clone(),
+                at_ns: command.at_ns,
+                evidence,
             })
         })
         .collect()
+}
+
+/// Compatibility projection for the offline PAT planner. This is not a
+/// committed SYS-02 observation stream: rejected commands produce predicted
+/// Down faults but cannot authorize a post-command loss or recovery.
+fn project_body_following_faults(
+    samples: &[OpticalBodyFollowingSample],
+    predicted: &PredictedObservations,
+) -> Result<Vec<Fault>, String> {
+    Ok(project_body_command_evidence(samples, predicted)?
+        .iter()
+        .map(BodyCommandProjection::planning_fault)
+        .collect())
 }
 
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
@@ -1722,6 +1771,68 @@ mod tests {
             project_body_following_faults(&samples, &HashMap::new()).unwrap_err(),
             "missing provisional BODY-frame observation"
         );
+    }
+
+    #[test]
+    fn body_command_evidence_separates_rejected_commands_from_causal_observations() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let base = scenario.optical_body_following_samples[0].clone();
+        let mut loss = base.clone();
+        loss.at_ns += 1;
+        let mut rejection = base.clone();
+        rejection.at_ns += 2;
+        let predicted = HashMap::from([
+            (
+                (base.link_id.clone(), base.at_ns),
+                Ok((base.from_target_body, base.to_target_body)),
+            ),
+            (
+                (loss.link_id.clone(), loss.at_ns),
+                Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
+            ),
+            (
+                (rejection.link_id.clone(), rejection.at_ns),
+                Err("head command rejected".to_owned()),
+            ),
+        ]);
+        for samples in [
+            vec![base.clone(), loss.clone(), rejection.clone()],
+            vec![rejection.clone(), base.clone(), loss.clone()],
+        ] {
+            let evidence = project_body_command_evidence(&samples, &predicted).unwrap();
+            assert_eq!(evidence.len(), samples.len());
+            for (sample, projected) in samples.iter().zip(evidence.iter()) {
+                assert_eq!(projected.link_id, sample.link_id);
+                assert_eq!(projected.at_ns, sample.at_ns);
+                if sample.at_ns == base.at_ns {
+                    assert_eq!(
+                        projected.evidence,
+                        BodyCommandEvidence::SuccessfulObservation { allowed: true }
+                    );
+                    assert!(!projected.command_derived_loss());
+                    assert!(matches!(projected.planning_fault().action, LinkAction::Up));
+                } else if sample.at_ns == loss.at_ns {
+                    assert_eq!(
+                        projected.evidence,
+                        BodyCommandEvidence::SuccessfulObservation { allowed: false }
+                    );
+                    assert!(projected.command_derived_loss());
+                    assert!(matches!(projected.planning_fault().action, LinkAction::Down));
+                } else {
+                    assert_eq!(
+                        projected.evidence,
+                        BodyCommandEvidence::RejectedCommand {
+                            reason: "head command rejected".to_owned()
+                        }
+                    );
+                    assert!(!projected.command_derived_loss());
+                    assert!(matches!(projected.planning_fault().action, LinkAction::Down));
+                }
+            }
+        }
     }
 
     #[test]
