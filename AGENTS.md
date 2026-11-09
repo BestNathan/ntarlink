@@ -1,6 +1,6 @@
 # ntarlink engineering rules (English-only repository)
 
-ntarlink aims to model a complete, reproducible, Starlink-like LEO broadband satellite internet system, not a reproduction of undisclosed SpaceX protocols.
+ntarlink's long-term mission is a reproducible Space Computing & Networking Infrastructure Simulator. A Starlink-like LEO broadband satellite internet system is its first network reference architecture, not the platform's final scope. Future milestones add modeled compute/storage nodes and opt-in real computing-hardware attachment through explicit emulation/HIL interfaces; this is not a reproduction of undisclosed SpaceX protocols. See [VISION.md](VISION.md).
 
 ## Language and organization
 
