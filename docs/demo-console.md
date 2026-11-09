@@ -2,10 +2,10 @@
 
 ## Product positioning
 
-The GitHub Pages site has two independent experiences:
+The GitHub Pages site has a showcase and a demo, with a new compute-fabric workspace inside the existing demo:
 
-1. **Platform Showcase** — `/ntarlink/` ([source](../applications/console/pages/index.html)): explain the Starlink-like engineering goals, architecture, implementation status and subsystem boundaries.
-2. **Mission Control Demo** — `/ntarlink/demo/` ([source](../applications/console/pages/demo/index.html)): an actual navigable product prototype with a system-level operations overview and 16 subsystem workspaces. All built-in values, entities and operations are **synthetic client-side examples**.
+1. **Platform Showcase** — `/ntarlink/` ([source](../applications/console/pages/index.html)): explain the Space Computing & Networking Infrastructure long-term goal, current Starlink-like network foundation, proposed compute-node and hardware milestones, implementation status and subsystem boundaries.
+2. **Mission Control Demo** — `/ntarlink/demo/` ([source](../applications/console/pages/demo/index.html)): a navigable product prototype with a network operations overview, a separate **Compute Fabric Lab** workspace and the same 16 subsystem workspaces. All built-in values, entities and operations are **synthetic client-side examples**.
 
 The demo has its own application shell and route state. It is not an extension of the marketing/showcase dashboard. Its initial screen is a network operations workspace, not an introduction.
 
@@ -22,6 +22,12 @@ The demo has its own application shell and route state. It is not an extension o
   ├── End-to-end packet journey and event feed
   ├── Six grouped subsystem entry points (16 systems)
   └── Import local Rust SimulationReport JSON / export mock snapshot
+/ntarlink/demo/#/compute
+  ├── Network-attached satellite and ground compute-node topology (illustrative)
+  ├── Three synthetic workload presets and network fault contexts
+  ├── Ground-only, onboard-first, peer-via-ISL placement comparison
+  ├── Assumed compute service time, data transfer, synthetic energy and deadlines
+  └── Planned C0-C3 milestones / fidelity limits
 /ntarlink/demo/#/system/{id}/overview
   Subsystem capabilities, internal components, ownership and links to docs
 /ntarlink/demo/#/system/{id}/assets
@@ -61,7 +67,7 @@ The navigator groups these logical bounded contexts by space, access, ground/cor
 
 The demo uses `applications/console/pages/demo/data.js` as a local illustrative catalog. Its `version`, `groups`, `systems` and `scenarios` are read by `app.js`. No HTTP requests are made to a simulation server or operator network. UI mock actions only change an in-memory status override, append a local event and display a confirmation. Reloading the browser resets this state.
 
-Changing scenario presets updates aggregate sample KPI values and visual topology degradation. The clock slider and play control advance a *synthetic* time label; they do not advance the Rust event scheduler. The inventory tables, charts and mock actions are explicitly labeled. Status "WORKING COMPONENTS" denotes code that exists in the repository and **does not mean the displayed dashboard figures came from that code**.
+Changing scenario presets updates aggregate sample KPI values and visual topology degradation. The Compute Fabric Lab also changes its disclosed, deterministic **analytical example** transfer and completion estimates for network-condition presets, workload selection and placement strategy; it does **not** call the Rust runtime, run model inference, attach GPUs or calculate independently validated orbital compute energy. The reference CPU/accelerator service rates, active watts and network waits are synthetic assumptions. Compute energy excludes network and cooling power. A disabled illustrative optical ISL makes the peer placement unavailable. The clock slider and play control advance a *synthetic* time label; they do not advance the Rust event scheduler. The inventory tables, charts and mock actions are explicitly labeled. Status "WORKING COMPONENTS" denotes code that exists in the repository and **does not mean the displayed dashboard figures came from that code**.
 
 ### Import a real simulation report
 
@@ -75,6 +81,7 @@ The initial app is plain HTML/CSS/JavaScript, served as a static Pages subdirect
 
 - `CatalogProvider`: subsystem registry, ownership, views and capability descriptors.
 - `ScenarioProvider`: scenario configuration and source type (synthetic vs real experiment).
+- `ComputeFabricProvider` (future): typed network-attached compute resources, workload/artifact lifecycle, resource ownership, placement decisions and hardware-worker provenance. The present `demo/compute.js` is local synthetic data, **not this provider**.
 - `SimulationRunsProvider`: read-only runs/trace/manifest fetch, start/pause/fault commands to the authorized run API.
 - `OrbitalProvider`: propagated ephemeris snapshots and frame-aware positions.
 - `SubsystemProvider`: per-domain typed queries, state snapshots and authorized operations.
@@ -101,11 +108,12 @@ Run:
 ```bash
 python scripts/check_pages_site.py
 node --check applications/console/pages/demo/data.js
+node --check applications/console/pages/demo/compute.js
 node --check applications/console/pages/demo/app.js
 node scripts/test_demo_console.cjs
 ```
 
-The dependency-free Node smoke test mounts the client application in a stub DOM, checks the home screen, navigates through all 16 systems and all four routed tabs (64 subsystem screens), and confirms labels, inventory tables, mock actions and charts. These tests gate both PR CI and Pages publication. A later browser E2E suite should test real click interactions and responsive screenshots against desktop/mobile viewports.
+The dependency-free Node smoke test mounts the client application in a stub DOM, checks the home screen, navigates through all 16 systems and all four routed tabs (64 subsystem screens), checks the Compute Fabric Lab route, deterministic assumptions, link-fault blockage, three placement policies, workload selection, and confirms labels, inventory tables, mock actions and charts. These tests gate both PR CI and Pages publication. A later browser E2E suite should test real click interactions and responsive screenshots against desktop/mobile viewports.
 
 ## Next design iterations
 
