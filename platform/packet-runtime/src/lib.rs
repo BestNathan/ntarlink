@@ -985,10 +985,11 @@ struct BodyCommandProjection {
 
 impl BodyCommandProjection {
     fn planning_fault(&self) -> Fault {
-        let allowed = matches!(
-            self.evidence,
-            BodyCommandEvidence::SuccessfulObservation { allowed: true }
-        );
+        let allowed = !self.command_derived_loss()
+            && matches!(
+                self.evidence,
+                BodyCommandEvidence::SuccessfulObservation { allowed: true }
+            );
         Fault {
             at_ns: self.at_ns,
             link_id: self.link_id.clone(),
