@@ -993,7 +993,11 @@ impl BodyCommandProjection {
         Fault {
             at_ns: self.at_ns,
             link_id: self.link_id.clone(),
-            action: if allowed { LinkAction::Up } else { LinkAction::Down },
+            action: if allowed {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
             cause: FaultCause::SampledPointing,
         }
     }
@@ -1821,7 +1825,10 @@ mod tests {
                         BodyCommandEvidence::SuccessfulObservation { allowed: false }
                     );
                     assert!(projected.command_derived_loss());
-                    assert!(matches!(projected.planning_fault().action, LinkAction::Down));
+                    assert!(matches!(
+                        projected.planning_fault().action,
+                        LinkAction::Down
+                    ));
                 } else {
                     assert_eq!(
                         projected.evidence,
@@ -1830,7 +1837,10 @@ mod tests {
                         }
                     );
                     assert!(!projected.command_derived_loss());
-                    assert!(matches!(projected.planning_fault().action, LinkAction::Down));
+                    assert!(matches!(
+                        projected.planning_fault().action,
+                        LinkAction::Down
+                    ));
                 }
             }
         }
