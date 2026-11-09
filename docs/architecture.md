@@ -1,6 +1,8 @@
 # Architecture: domain-driven LEO satellite internet simulator
 
-**Architecture status:** in progress. The first deterministic packet slice has moved into `platform/contracts`, `platform/simulation`, `platform/packet-runtime`, `systems/network-control` and `applications/cli`; Python orbital helpers live under `systems/orbital/python` and TypeScript contracts under `applications/console`. These are real modules, not the complete sixteen-subsystem implementation. See [implementation status](implementation-status.md).
+**Architecture status:** in progress. The long-term mission is a [Space Computing & Networking Infrastructure Simulator](../VISION.md) with a Starlink-like network as its first foundation. Proposed compute nodes, workloads, and optional real CPU/GPU hardware attachment are **future capabilities**, not implemented subsystems. See [compute/network/hardware integration](design/compute-network-integration.md).
+
+**Current implementation status:** in progress. The first deterministic packet slice has moved into `platform/contracts`, `platform/simulation`, `platform/packet-runtime`, `systems/network-control` and `applications/cli`; Python orbital helpers live under `systems/orbital/python` and TypeScript contracts under `applications/console`. These are real modules, not the complete sixteen-subsystem implementation. See [implementation status](implementation-status.md).
 
 ## 1. Bounded contexts, segments and planes
 

@@ -1,6 +1,8 @@
 # ntarlink
 
-**Open-source-first LEO broadband satellite internet simulation and emulation platform.**
+**Open-source-first Space Computing & Networking Infrastructure Simulator (long-term vision).**
+
+The current, implemented foundation is a Starlink-like LEO broadband communication-network simulator. The long-term platform will place modeled computing and storage nodes on satellite, ground and terrestrial infrastructure, and optionally connect real CPU/GPU hardware through an explicit wall-clock emulation/HIL boundary. Those compute and hardware capabilities are **planned, not implemented**. See [VISION.md](VISION.md) and the [compute/network/hardware integration design](docs/design/compute-network-integration.md).
 
 ntarlink is organized by **subsystem responsibility**, not by programming language. Rust drives deterministic packet and event simulation, Python provides orbital/geometry experiments, and TypeScript describes console-facing scenario and trace data. Existing ns-3, SNS3, OpenSAND and SDR tools remain potential external adapters, not claimed to be integrated.
 

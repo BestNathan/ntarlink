@@ -6,6 +6,12 @@ ntarlink is an **open-source-first research and engineering platform** to simula
 
 The objective is **behavioral fidelity and traceable evidence**, not imitation of undocumented proprietary SpaceX protocols. Broadband user terminals are the baseline architecture. 3GPP NR-NTN/direct-to-device is a **separate optional profile**, not the default air interface. Physical models are approximations until validated against published references.
 
+## Long-term expansion: space computing and hardware-connected infrastructure
+
+The Starlink-like broadband network remains the first implemented reference system, while the long-term [Space Computing & Networking Infrastructure Simulator vision](../VISION.md) adds compute and storage nodes on satellites, at ground stations/gateways, and at terrestrial data centers. Workloads must move input and output across modeled network capacity and compete for bounded compute, memory, storage, spacecraft power and thermal resources. A later optional emulation/HIL mode will attach real CPU/GPU workers through explicitly synchronized wall-clock network adapters; this does not imply real hardware is currently attached or in orbit.
+
+A future Space Compute & Workload bounded context (candidate SYS-17) is proposed, **not implemented or part of the 16-subsystem catalog yet**. The existing physical/network owners remain authoritative. See the [compute/network/hardware integration boundary](design/compute-network-integration.md). The current 16-entry Pages demo remains unchanged until a reviewed catalog/UI migration.
+
 ## Physical segments and logical subsystems
 
 | Physical or operational segment | Subsystem | Core ownership |
