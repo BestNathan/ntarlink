@@ -1,5 +1,17 @@
 # Engineering roadmap
 
+## Long-term platform trajectory: Space Computing & Networking Infrastructure Simulator
+
+The existing P0/P1/P2/P3 items below remain the communications and network-simulation foundation. They are an engineering ledger, not the complete product milestone hierarchy. The long-term goal adds compute-capable nodes and real compute-hardware attachment **on top of** the Starlink-like reference network; it does not replace it. See [vision](../VISION.md) and [compute/network/hardware boundaries](design/compute-network-integration.md). All compute phases below are **planned, not completed**.
+
+- [ ] **C0: orbital edge workload vertical slice.** Introduce opt-in typed workloads, data artifacts, simulated compute-node resources and a single-satellite execution path; compare local processing/downlink against raw-data ground-only processing. Validate resource admission, deadlines, transfer accounting and deterministic trace.
+- [ ] **C1: multi-node space/ground scheduling.** Add network-attached compute resources at satellite and ground sites, contact-aware placement, storage/queue constraints, power/thermal derating and failure/retry semantics. Compare ground-only, onboard-first and earliest-feasible-completion policies with stable seeds and explainable decisions.
+- [ ] **C2: real-IP infrastructure bridge.** Use versioned Linux netns/veth/tc/FRRouting adapters to carry real application traffic over time-varying satellite-network emulation, with wall-clock synchronization and drift reporting. Keep the virtual-time simulator authoritative only for offline modeled runs.
+- [ ] **C3: real compute hardware attachment.** Connect an authenticated isolated CPU/GPU compute worker or cluster node through the emulated network, with explicit capability discovery, reservations, artifact staging, execution telemetry and cancellation. Report real hardware measurements separately from analytical satellite models.
+- [ ] **C4: advanced orbital compute research.** Evaluate calibrated energy/thermal constraints, fault-tolerant distributed storage, compute-aware optical interconnect and potentially multi-node AI training only when validated models or hardware evidence support the fidelity claim.
+
+**Near-term convergence:** finish the active SYS-02 Packet Adapter Fault/Head/Observation integration and preserve existing packet/PAT deterministic acceptance. Do not turn the ongoing PAT PR into a compute implementation PR. Future proposed Space Compute & Workload ownership is a bounded context (candidate SYS-17), not a requirement to deploy another service or immediately change the existing 16-subsystem Pages catalog.
+
 ## P0 — deterministic packet-transport vertical slice
 
 - [x] Subsystem-oriented workspace layout and English-only engineering documentation.
