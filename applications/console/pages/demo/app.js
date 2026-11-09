@@ -2,6 +2,8 @@
   "use strict";
   const data = window.NTARLINK_DEMO;
   if (!data || data.systems.length !== 16) throw new Error("The demo catalog is missing.");
+  const computeLab = window.NTARLINK_COMPUTE_LAB;
+  if (!computeLab || typeof computeLab.evaluate !== "function") throw new Error("The compute lab model is missing.");
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
   const groups = Object.fromEntries(data.groups.map((g) => [g.id, g]));
@@ -13,6 +15,8 @@
     timer: null,
     filter: "all",
     query: "",
+    computeWorkload: "earth-image",
+    computePolicy: "onboard",
     statuses: {},
     activity: {},
     imported: null,
@@ -23,6 +27,7 @@
   const sourceNote = "All shown telemetry, actions and entity details are synthetic unless explicitly marked as an imported local Rust simulation report.";
   const page = () => {
     const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+    if (parts[0] === "compute") return {kind:"compute"};
     if (parts[0] === "system" && systems[parts[1]]) {
       return {kind:"system", id:parts[1], tab:["overview","assets","operations","telemetry"].includes(parts[2]) ? parts[2] : "overview"};
     }
@@ -50,6 +55,7 @@
   const nav = (current) => {
     let out = '<div class="nav-label">WORKSPACE</div>';
     out += '<a class="nav-item ' + (current.kind === "overview" ? "active" : "") + '" href="#/overview"><span class="nav-code">◎</span><span>Mission Overview</span><span class="arr">↗</span></a>';
+    out += '<a class="nav-item ' + (current.kind === "compute" ? "active" : "") + '" href="#/compute"><span class="nav-code">◇</span><span>Compute Fabric Lab</span><span class="arr">↗</span></a>';
     for (const g of data.groups) {
       out += '<div class="nav-group">' + esc(g.label) + '</div>';
       for (const s of data.systems.filter((x) => x.group === g.id)) {
@@ -62,13 +68,13 @@
     const active = current.kind === "system" ? systems[current.id] : null;
     return '<div class="layout ' + (state.menu ? "menu-open" : "") + '" id="layout">' +
       '<aside class="sidebar" id="sidebar" aria-label="Subsystem navigation">' +
-        '<a class="brand" href="#/overview"><span class="brand-icon">N</span><span><strong>ntarlink</strong><small>DEMO CONSOLE / V1</small></span></a>' +
+        '<a class="brand" href="#/overview"><span class="brand-icon">N</span><span><strong>ntarlink</strong><small>SPACE · NETWORK · COMPUTE</small></span></a>' +
         '<nav class="nav-sections" aria-label="System sections">' + nav(current) + '</nav>' +
         '<div class="sidebar-footer"><div class="local-indicator"><b>● LOCAL SIMULATION ONLY</b><p>No network control commands or external telemetry are executed by this prototype.</p></div>' +
           '<a href="../index.html">← Platform showcase</a><a href="https://github.com/BestNathan/ntarlink/tree/main/docs/subsystems" target="_blank" rel="noopener">Engineering documentation ↗</a></div>' +
       '</aside><div class="workspace">' +
         '<header class="topbar"><div class="topbar-left"><button class="menu-button" type="button" aria-label="Toggle menu" data-menu>☰</button>' +
-          '<div class="breadcrumb"><b>NTARLINK</b><span>/</span>DEMO' + (active ? '<span>/</span>' + esc(active.name) : '<span>/</span>MISSION CONTROL') + '</div></div>' +
+          '<div class="breadcrumb"><b>NTARLINK</b><span>/</span>DEMO' + (active ? '<span>/</span>' + esc(active.name) : '<span>/</span>' + (current.kind === "compute" ? "COMPUTE FABRIC" : "MISSION CONTROL")) + '</div></div>' +
           '<div class="topbar-right"><span class="live-pill">SYNTHETIC DATA</span><a class="top-link" href="../index.html">Platform ↗</a><a class="top-link" target="_blank" rel="noopener" href="https://github.com/BestNathan/ntarlink">GitHub ↗</a></div></header>' +
         '<div class="content" id="content">' + content +
           '<footer class="footer">ntarlink / Interactive architectural demo • No real spacecraft, radio equipment or subscriber service is controlled. <a href="https://github.com/BestNathan/ntarlink" target="_blank" rel="noopener">Source & documentation ↗</a></footer>' +
@@ -151,9 +157,9 @@
     const metricGrid = metrics.map((m)=>kpi(...m)).join("");
     const filters = [{id:"all",label:"All 16"},...data.groups.map((g)=>({id:g.id,label:g.label}))].map((g)=>
       '<button type="button" class="' + (state.filter===g.id?"active":"") + '" data-filter="' + esc(g.id) + '" aria-pressed="' + (state.filter===g.id?"true":"false") + '">' + esc(g.label) + '</button>').join("");
-    return '<div class="hero-intro"><div><div class="eyebrow">MISSION CONTROL / NETWORK OPERATIONS</div><h1>Satellite Network Overview</h1>' +
-      '<p>One operating picture for the complete LEO broadband system. Explore network paths, inspect simulated events, and drill into all 16 subsystem workspaces.</p></div>' +
-      '<div class="hero-buttons"><button class="btn secondary" type="button" data-scroll="systems">Explore subsystems ↘</button><a class="btn" href="' + href("simulation") + '">Open simulation ↗</a><button class="btn tertiary" type="button" data-export>Export mock snapshot</button></div></div>' +
+    return '<div class="hero-intro"><div><div class="eyebrow">MISSION CONTROL / SPACE COMPUTING & NETWORKING</div><h1>Satellite Network Overview</h1>' +
+      '<p>Explore the current LEO network foundation and the long-term computing infrastructure: orbital edge nodes, network-attached ground compute, workload placement and future physical GPU/CPU integration.</p></div>' +
+      '<div class="hero-buttons"><a class="btn" href="#/compute">Explore compute fabric ↗</a><button class="btn secondary" type="button" data-scroll="systems">Explore 16 subsystems ↘</button><button class="btn tertiary" type="button" data-export>Export mock snapshot</button></div></div>' +
       '<div class="system-alert"><span><strong>DEMO ENVIRONMENT.</strong> ' + esc(sourceNote) + '</span><span class="source">● MOCK / OFFLINE</span></div>' +
       '<div class="metric-grid">' + metricGrid + '</div>' +
       '<div class="home-panels">' +
@@ -163,6 +169,12 @@
           '<div class="scenario-stack">' + scenarioCards() + '</div>' +
           '<div class="timeline"><button type="button" data-play aria-label="Play or pause simulated clock">' + (state.playing ? "Ⅱ" : "▶") + '</button><input aria-label="Simulated time" type="range" min="0" max="120" step="1" value="' + state.time + '" id="clock-range"><label id="clock-value">' + nowLabel() + '</label></div>' +
         '</section></div>' +
+      '<section class="panel panel-pad compute-preview" aria-labelledby="compute-preview-title"><div class="panel-head"><h2 id="compute-preview-title">Space Computing Infrastructure / Future Platform</h2><span class="pill demo">PLANNED · SYNTHETIC PREVIEW</span></div>' +
+        '<p>The Starlink-like network is the foundation. Attach modeled compute nodes to satellites and ground sites, compare data transfers and future hardware worker connections. This panel does not execute an AI workload.</p>' +
+        '<div class="compute-preview-grid"><div><b>01 / Network foundation</b><span>LEO, optical ISL, gateways, packet routes</span><small>CURRENT ENGINEERING BASE</small></div>' +
+        '<div><b>02 / Workload & resources</b><span>Orbital CPU, data artifacts, ground compute</span><small>C0–C1 / PLANNED</small></div>' +
+        '<div><b>03 / Real hardware bridge</b><span>Linux network emulation, CPU/GPU workers</span><small>C2–C3 / PLANNED</small></div></div>' +
+        '<a href="#/compute" class="btn secondary">Open synthetic Compute Fabric Lab ↗</a></section>' +
       '<div class="lower-panels">' +
         '<section class="panel panel-pad"><div class="panel-head"><h2>Broadband Packet Journey</h2><a class="micro-link" href="' + href("network-control") + '">Routing controls ↗</a></div><div class="flow-list">' + flowStrip() + '</div></section>' +
         '<section class="panel panel-pad"><div class="panel-head"><h2>Illustrative Event Stream</h2><span class="pill demo">MOCK EVENTS</span></div><ol class="event-feed">' + eventFeed() + '</ol></section></div>' +
@@ -172,6 +184,72 @@
         '<div class="filter-list">' + filters + '</div></div><div class="system-grid" id="system-grid">' + catalogHTML() + '</div></section>' +
       reportPanel() + '<input type="file" accept=".json,application/json" id="report-file" class="import-report" aria-label="Import local simulation report">';
   };
+
+  const computePage = () => {
+    const model = computeLab.evaluate(state.computeWorkload, state.scenario);
+    const w = model.workload;
+    const selected = model.results.find((r) => r.id === state.computePolicy) || model.results[0];
+    const ranked = model.results.filter((r) => r.feasible).sort((a,b) => a.seconds - b.seconds);
+    const fastest = ranked.length ? ranked[0] : null;
+    const fmt = (n) => Number(n).toLocaleString("en-US", {maximumFractionDigits:2});
+    const nodeCards = computeLab.nodes.map((node) =>
+      '<div class="fabric-node"><small>' + esc(node.site) + '</small><strong>' + esc(node.label) + '</strong>' +
+      '<span>' + esc(node.computeGopsPerS) + ' synthetic GOP/s · ' + esc(node.memoryGB) + ' GB memory</span>' +
+      '<span>' + esc(node.activePowerW) + ' W assumed active compute power</span></div>').join('<div class="fabric-connection" aria-hidden="true">⇄</div>');
+    const workloadOptions = computeLab.workloads.map((item) =>
+      '<button class="compute-option ' + (w.id === item.id ? "selected" : "") + '" type="button" data-workload="' + esc(item.id) + '" aria-pressed="' + (w.id === item.id) + '">' +
+      '<strong>' + esc(item.label) + '</strong><small>' + fmt(item.inputMB) + ' MB input · ' + fmt(item.operationsGop) + ' synthetic GOP</small></button>').join("");
+    const policyCards = model.results.map((result) =>
+      '<button type="button" class="placement-card ' + (selected.id === result.id ? "selected" : "") + '" data-placement="' + esc(result.id) + '" aria-pressed="' + (selected.id === result.id) + '">' +
+      '<div class="placement-head"><strong>' + esc(result.label) + '</strong>' +
+      (fastest && fastest.id === result.id ? '<span class="pill green">FASTEST MODELED</span>' : '') + '</div>' +
+      '<span class="placement-time">' + (result.feasible ? fmt(result.seconds) + ' <small>s to output</small>' : "Unavailable") + '</span>' +
+      '<span class="placement-status ' + (!result.feasible || !result.deadlineMet ? "at-risk" : "") + '">' + esc(result.reason) + '</span>' +
+      '<small>' + esc(result.explanation) + '</small></button>').join("");
+    const journey = selected.id === "ground" ?
+      ["SAT-A / Source", "Feeder downlink / Full input", "GROUND / Execute", "Ground output ready"] :
+      selected.id === "onboard" ?
+      ["SAT-A / Source", "SAT-A / Execute", "Feeder downlink / Result", "Ground output ready"] :
+      ["SAT-A / Source", "Optical ISL / Full input", "SAT-B / Execute", "Feeder downlink / Result"];
+    const milestoneCards = [
+      ["C0","Orbital edge workload","PLANNED","Synthetic local-vs-ground comparison is a UI experiment, not a Rust compute simulation."],
+      ["C1","Multi-node placement","PLANNED","Explicit ISL, contact windows, finite capacity and compute resource ownership."],
+      ["C2","Real-IP emulation","PLANNED","Linux namespaces and time-varying link impairments for real application traffic."],
+      ["C3","CPU/GPU hardware bridge","PLANNED","Authenticated isolated hardware workers and artifact transfer over the emulated network."]
+    ].map((m) => '<div class="milestone-card"><small>' + m[0] + ' / ' + m[2] + '</small><strong>' + m[1] + '</strong><p>' + m[3] + '</p></div>').join("");
+    return '<div class="compute-hero"><div class="eyebrow">MISSION CONTROL / COMPUTING INFRASTRUCTURE</div>' +
+      '<h1>Compute Fabric Lab</h1><p>Explore how compute nodes could be attached to orbital and terrestrial network infrastructure. Switch a workload and a network condition to compare three illustrative placement policies.</p>' +
+      '<div class="detail-actions"><span class="pill demo">SYNTHETIC ANALYTICAL ESTIMATES</span><span class="pill">NO GPU / NO LIVE EXECUTION</span>' +
+      '<a class="btn tertiary small" href="#/overview">← Network foundation</a></div></div>' +
+      '<div class="metric-grid">' +
+      kpi("Input artifact",fmt(w.inputMB),"MB","Synthetic source at SAT-A") +
+      kpi("Output artifact",fmt(w.outputMB),"MB","Modeled reduction") +
+      kpi("Compute demand",fmt(w.operationsGop),"GOP","Assumed operation units") +
+      kpi("Completion deadline",fmt(w.deadlineS),"s","Synthetic workload constraint") + '</div>' +
+      '<section class="panel panel-pad compute-section"><div class="panel-head"><h2>Network-attached compute topology</h2><span class="pill demo">CONCEPTUAL</span></div>' +
+      '<div class="compute-fabric-map">' + nodeCards + '</div><p class="compute-explain">SAT-A is the input source; SAT-B is a peer via optical ISL; GROUND represents a network-attached terrestrial compute facility. These are synthetic capabilities, not actual deployed servers or spacecraft.</p></section>' +
+      '<div class="compute-controls">' +
+        '<section class="panel panel-pad"><div class="panel-head"><h2>01 / Choose a workload</h2><span class="hint">LOCAL EXAMPLE DATA</span></div><div class="compute-options">' + workloadOptions + '</div>' +
+        '<div class="note-box">The payload and device rates are arbitrary, disclosed planning assumptions. No model inference is executed.</div></section>' +
+        '<section class="panel panel-pad"><div class="panel-head"><h2>02 / Network condition</h2><span class="hint">LINK-LAYER SCENARIO</span></div><div class="scenario-stack">' + scenarioCards() + '</div></section>' +
+      '</div>' +
+      '<section class="compute-section"><div class="section-heading"><div><div class="eyebrow">COMPUTE–NETWORK CO-DESIGN</div><h2>03 / Compare task placement</h2>' +
+      '<p>Illustrative elapsed time includes modeled network waits, input/output transfer and compute service time. Compute energy excludes network and cooling energy.</p></div></div>' +
+      '<div class="placement-grid">' + policyCards + '</div>' +
+      '<div class="panel panel-pad compute-analysis"><div class="panel-head"><h2>Selected policy / ' + esc(selected.label) + '</h2><span class="pill demo">SIMULATED PLAN ONLY</span></div>' +
+      '<div class="compute-stage-list">' + journey.map((step,i) => '<div class="compute-stage"><span>' + String(i+1).padStart(2,"0") + '</span><strong>' + esc(step) + '</strong></div>').join("") + '</div>' +
+      '<div class="compute-ledger">' +
+      '<div><small>Input transfer + wait</small><strong>' + fmt(selected.inputTransferSeconds) + ' s</strong></div>' +
+      '<div><small>Compute execution</small><strong>' + fmt(selected.computeSeconds) + ' s</strong></div>' +
+      '<div><small>Output transfer + wait</small><strong>' + fmt(selected.outputTransferSeconds) + ' s</strong></div>' +
+      '<div><small>Bytes crossing links</small><strong>' + fmt(selected.transferredMB) + ' MB</strong></div>' +
+      '<div><small>Modeled compute energy</small><strong>' + fmt(selected.energyWh) + ' Wh</strong></div></div>' +
+      '<div class="note-box"><b>' + esc(selected.reason) + '</b> · ' + esc(computeLab.fidelity) + '. Transfers are aggregate analytical estimates, not packet-runtime output. Network/thermal power, contention, retransmission and checkpointing are not calibrated in this illustration.</div></div></section>' +
+      '<section class="compute-section"><div class="section-heading"><div><div class="eyebrow">ENGINEERING ROADMAP</div><h2>From model to hardware</h2><p>Milestones below describe planned capabilities, not a delivered orbital AI cluster.</p></div>' +
+      '<a class="micro-link" href="https://github.com/BestNathan/ntarlink/pull/147" target="_blank" rel="noopener">Long-term vision design ↗</a></div>' +
+      '<div class="milestone-grid">' + milestoneCards + '</div></section>';
+  };
+
   const detailHeader = (s) =>
     '<div class="detail-hero"><div><div class="system-code">SYS-' + idOf(s) + ' / ' + esc(groups[s.group].label.toUpperCase()) + '</div>' +
     '<h1>' + esc(s.name) + '</h1><p>' + esc(s.summary) + '</p><div class="detail-actions">' + modelStatus(s.model) +
@@ -233,10 +311,10 @@
     const current = page();
     const scroller = document.querySelector(".sidebar");
     const oldScroll = scroller ? scroller.scrollTop : 0;
-    $("app").innerHTML = layout(current, current.kind==="overview" ? home() : detail(systems[current.id],current.tab));
+    $("app").innerHTML = layout(current, current.kind==="overview" ? home() : current.kind==="compute" ? computePage() : detail(systems[current.id],current.tab));
     if ($("sidebar")) $("sidebar").scrollTop = oldScroll;
     if (state.imported && $("report-file")) $("report-file").value = "";
-    document.title = (current.kind==="overview" ? "Mission Control" : systems[current.id].name + " / " + current.tab) + " | ntarlink Demo";
+    document.title = (current.kind==="overview" ? "Mission Control" : current.kind==="compute" ? "Compute Fabric Lab" : systems[current.id].name + " / " + current.tab) + " | ntarlink Demo";
   }
   function announce(title,message) {
     const root = $("toast-root");
@@ -305,7 +383,7 @@
     },380);
   }
   function exportDemo() {
-    const json={kind:"ntarlink-demo-local-state",source:"SYNTHETIC",generated_at:new Date().toISOString(),scenario:state.scenario,time_minutes:state.time,system_count:16,actions:state.activity,status_overrides:state.statuses};
+    const json={kind:"ntarlink-demo-local-state",source:"SYNTHETIC",generated_at:new Date().toISOString(),scenario:state.scenario,time_minutes:state.time,compute_workload:state.computeWorkload,compute_policy:state.computePolicy,system_count:16,actions:state.activity,status_overrides:state.statuses};
     const blob=new Blob([JSON.stringify(json,null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");a.href=url;a.download="ntarlink-demo-snapshot.json";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -334,6 +412,10 @@
     if(menu){state.menu=!state.menu;render();return;}
     const scroll=target.closest("[data-scroll]");
     if(scroll){const section=$(scroll.getAttribute("data-scroll"));if(section)section.scrollIntoView({behavior:"smooth",block:"start"});return;}
+    const workload=target.closest("[data-workload]");
+    if(workload){const id=workload.getAttribute("data-workload");if(computeLab.workloads.some((w)=>w.id===id)){state.computeWorkload=id;render();}return;}
+    const placement=target.closest("[data-placement]");
+    if(placement){const id=placement.getAttribute("data-placement");if(computeLab.policies.some((p)=>p.id===id)){state.computePolicy=id;render();}return;}
     const n=target.closest("[data-scenario]");
     if(n){switchScenario(n.getAttribute("data-scenario"));return;}
     const go=target.closest("[data-go]");
