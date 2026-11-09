@@ -41,7 +41,28 @@ def main() -> None:
         path.write_text(scripts[0], encoding="utf-8")
         subprocess.run(["node", "--check", str(path)], check=True)
 
-    print("Pages site smoke checks passed: 16 systems, working links and valid JavaScript.")
+    required_compute = [
+        "Space Computing & Networking Infrastructure",
+        'href="demo/#/compute"',
+        'id="compute"',
+        "16 network foundation systems",
+        "Synthetic lab, not orbital GPU telemetry.",
+    ]
+    for marker in required_compute:
+        if marker not in html:
+            raise AssertionError(f"Missing long-term compute vision element: {marker}")
+
+    demo_root = ROOT / "applications" / "console" / "pages" / "demo"
+    demo_html = (demo_root / "index.html").read_text(encoding="utf-8")
+    for file_name in ("data.js", "compute.js", "app.js", "styles.css"):
+        if f'./{file_name}' not in demo_html:
+            raise AssertionError(f"Missing demo asset reference: {file_name}")
+        if not (demo_root / file_name).is_file():
+            raise AssertionError(f"Missing demo asset: {file_name}")
+    for file_name in ("data.js", "compute.js", "app.js"):
+        subprocess.run(["node", "--check", str(demo_root / file_name)], check=True)
+
+    print("Pages site smoke checks passed: 16 systems, compute lab links, and valid JavaScript.")
 
 
 if __name__ == "__main__":
