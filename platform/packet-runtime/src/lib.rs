@@ -1134,6 +1134,19 @@ fn verified_body_pointing_losses(
         if evidence.link_id != sample.link_id || evidence.at_ns != sample.at_ns {
             return Err("BODY command evidence lost its sample provenance".into());
         }
+        // Validate every command outcome, including successful commands that
+        // did not produce a loss. A fabricated success or altered rejection
+        // must never pass through this provenance boundary unnoticed.
+        let observed = predicted
+            .get(&(sample.link_id.clone(), sample.at_ns))
+            .ok_or("missing committed BODY command evidence")?;
+        let expected = project_body_command_evidence(
+            std::slice::from_ref(sample),
+            predicted,
+        )?;
+        if evidence.evidence != expected[0].evidence {
+            return Err("BODY command evidence diverged from provisional outcome".into());
+        }
         let Some((link_id, at_ns)) = evidence.committed_loss_candidate() else {
             continue;
         };
@@ -1143,9 +1156,6 @@ fn verified_body_pointing_losses(
         let pat = configs
             .get(link_id)
             .ok_or("unknown committed BODY command link")?;
-        let observed = predicted
-            .get(&(sample.link_id.clone(), sample.at_ns))
-            .ok_or("missing committed BODY command evidence")?;
         runtime.verify_sample_command(
             &pat.from_head,
             &pat.to_head,
