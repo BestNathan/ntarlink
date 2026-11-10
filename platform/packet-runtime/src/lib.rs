@@ -2740,15 +2740,19 @@ mod tests {
         assert!(prepared.faults.iter().any(|fault| {
             fault.at_ns == 30_000_000 && matches!(fault.action, LinkAction::Down)
         }));
-        assert!(prepared.faults.iter().any(|fault| {
-            fault.at_ns == 90_000_000 && matches!(fault.action, LinkAction::Up)
-        }));
+        assert!(prepared
+            .faults
+            .iter()
+            .any(|fault| { fault.at_ns == 90_000_000 && matches!(fault.action, LinkAction::Up) }));
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, 7);
         assert_eq!(report.injected, report.delivered + report.dropped);
         scenario.faults.reverse();
         let reordered = run(&scenario).unwrap();
-        assert_eq!(serde_json::to_vec(&report).unwrap(), serde_json::to_vec(&reordered).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&reordered).unwrap()
+        );
     }
 
     #[test]
