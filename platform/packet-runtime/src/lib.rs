@@ -783,7 +783,26 @@ fn execute_pat_head_timeline(
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
-    let mut runtime = PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
+    // Register the same directed optical links used by packet fault replay.
+    // This keeps the provisional and lease-verified head histories attached to
+    // the authoritative SYS-02 link registry. The planning fault projection
+    // remains speculative until the combined committed timeline is wired in.
+    let initial_links = scenario
+        .optical_pat
+        .iter()
+        .map(|config| {
+            let link = scenario
+                .links
+                .iter()
+                .find(|link| link.id == config.link_id)
+                .ok_or("PAT execution references unknown optical link")?;
+            Ok((config.link_id.as_str(), link.up))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut runtime = PatExecutionRuntime::new(
+        &scenario.optical_head_slew_actuators,
+        &initial_links,
+    )?;
     // Build the complete canonical head timeline before touching actuator state.
     // SYS-02 now validates and commits this batch transactionally rather than
     // allowing a late invalid lease edge to leave earlier head motion behind.
