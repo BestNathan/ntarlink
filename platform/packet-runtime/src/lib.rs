@@ -1865,6 +1865,36 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 "committed PAT effective edges diverged from planned packet contacts".into(),
             );
         }
+        // Edge equality alone cannot prove that a packet contact is usable:
+        // every acquired interval must lie wholly inside the committed up
+        // state. Check both its beginning and every subsequent Down edge.
+        for contact in &prepared.contacts {
+            if !configs.contains_key(contact.link_id.as_str()) {
+                continue;
+            }
+            let mut up = true;
+            for edge in committed_edges
+                .iter()
+                .filter(|edge| edge.link_id == contact.link_id)
+            {
+                if edge.at_ns <= contact.start_ns {
+                    up = edge.now_up;
+                } else if edge.at_ns < contact.end_ns && !edge.now_up {
+                    return Err(format!(
+                        "committed PAT contact crosses a down edge on {}",
+                        contact.link_id
+                    ));
+                } else if edge.at_ns >= contact.end_ns {
+                    break;
+                }
+            }
+            if !up {
+                return Err(format!(
+                    "committed PAT contact starts while link {} is down",
+                    contact.link_id
+                ));
+            }
+        }
         prepared.faults.extend(
             committed_edges
                 .into_iter()
