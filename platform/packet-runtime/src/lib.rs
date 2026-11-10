@@ -2800,7 +2800,7 @@ mod tests {
             },
         ]);
         let (_, observations, edges) =
-            execute_pat_head_timeline_with_losses(&scenario, &[], None, &[]).unwrap();
+            execute_pat_head_timeline_with_losses(&scenario, &[], None, &[], &[]).unwrap();
         assert!(observations.is_empty());
         // The fixture also has its own later administrative faults.
         // Verify the injected outage/recovery without dropping those edges.
