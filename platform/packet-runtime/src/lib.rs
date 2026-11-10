@@ -1732,9 +1732,10 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         // is available; never silently turn a rejected command into Up.
         let terminal_losses = !committed_losses.is_empty()
             && committed_losses.iter().all(|loss| {
-                !scenario.optical_body_following_samples.iter().any(|sample| {
-                    sample.link_id == loss.link_id && sample.at_ns > loss.at_ns
-                })
+                !scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .any(|sample| sample.link_id == loss.link_id && sample.at_ns > loss.at_ns)
             });
         if terminal_losses {
             execute_pat_head_timeline_with_losses(
