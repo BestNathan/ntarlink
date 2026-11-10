@@ -883,7 +883,27 @@ fn execute_pat_head_timeline_with_losses(
                 .any(|pat| pat.link_id == fault.link_id)
         })
         .collect();
-    external_faults.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
+    external_faults.sort_by(|a, b| {
+        // Canonicalize equal-time external fault inputs before committing
+        // the mixed SYS-02 timeline. A caller's fault array order must not
+        // select which independent fault domain is evaluated first.
+        let action_rank = |action: &LinkAction| match action {
+            LinkAction::Down => 0_u8,
+            LinkAction::Up => 1_u8,
+        };
+        (
+            a.at_ns,
+            &a.link_id,
+            a.cause,
+            action_rank(&a.action),
+        )
+            .cmp(&(
+                b.at_ns,
+                &b.link_id,
+                b.cause,
+                action_rank(&b.action),
+            ))
+    });
     let mut fault_batches: Vec<PatFaultBatch<'_>> = Vec::new();
     for fault in external_faults {
         if let Some((at_ns, link_id, edges)) = fault_batches.last_mut() {
