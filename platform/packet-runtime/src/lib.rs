@@ -825,7 +825,14 @@ fn execute_pat_head_timeline_with_losses(
     ),
     String,
 > {
-    execute_pat_head_timeline_impl(scenario, reservations, expected, losses, sampled_faults, true)
+    execute_pat_head_timeline_impl(
+        scenario,
+        reservations,
+        expected,
+        losses,
+        sampled_faults,
+        true,
+    )
 }
 
 /// The provisional pass intentionally excludes external link faults: it is a
