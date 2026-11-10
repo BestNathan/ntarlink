@@ -24,6 +24,8 @@ const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
 
 type PredictedPair = ([f64; 3], [f64; 3]);
 type PredictedObservations = HashMap<(String, u64), Result<PredictedPair, String>>;
+// External fault events grouped by virtual timestamp and registered optical link.
+type PatFaultBatch<'a> = (u64, &'a str, Vec<(FaultCause, LinkAction)>);
 
 /// Piecewise-linear delay at the completion of packet serialization.
 /// Integer arithmetic and nearest-nanosecond rounding preserve reproducibility.
@@ -882,7 +884,7 @@ fn execute_pat_head_timeline_with_losses(
         })
         .collect();
     external_faults.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
-    let mut fault_batches: Vec<(u64, &str, Vec<(FaultCause, LinkAction)>)> = Vec::new();
+    let mut fault_batches: Vec<PatFaultBatch<'_>> = Vec::new();
     for fault in external_faults {
         if let Some((at_ns, link_id, edges)) = fault_batches.last_mut() {
             if *at_ns == fault.at_ns && *link_id == fault.link_id {
