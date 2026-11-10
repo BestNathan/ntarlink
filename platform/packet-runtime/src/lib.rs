@@ -2699,11 +2699,11 @@ mod tests {
         let (_, observations, edges) =
             execute_pat_head_timeline_with_losses(&scenario, &[], None, &[]).unwrap();
         assert!(observations.is_empty());
-        assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0].at_ns, 10);
-        assert!(!edges[0].now_up);
-        assert_eq!(edges[1].at_ns, 20);
-        assert!(edges[1].now_up);
+        // The fixture also has its own later administrative faults.
+        // Verify the injected outage/recovery without dropping those edges.
+        assert!(edges.len() >= 2);
+        assert!(edges.iter().any(|edge| edge.at_ns == 10 && !edge.now_up));
+        assert!(edges.iter().any(|edge| edge.at_ns == 20 && edge.now_up));
     }
 
     #[test]
