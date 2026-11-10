@@ -803,7 +803,7 @@ fn execute_pat_head_timeline(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
-    execute_pat_head_timeline_with_losses(scenario, reservations, expected, &[])
+    execute_pat_head_timeline_impl(scenario, reservations, expected, &[], false)
 }
 
 /// Commit validated command-derived pointing loss in the same SYS-02 batch
@@ -814,6 +814,19 @@ fn execute_pat_head_timeline_with_losses(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
+) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
+    execute_pat_head_timeline_impl(scenario, reservations, expected, losses, true)
+}
+
+/// The provisional pass intentionally excludes external link faults: it is a
+/// speculative head-motion forecast, not an authoritative fault replay.
+/// Committed mixed execution explicitly enables pre-command fault batches.
+fn execute_pat_head_timeline_impl(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: Option<&PredictedObservations>,
+    losses: &[CommittedBodyPointingLoss],
+    include_external_faults: bool,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
@@ -877,10 +890,11 @@ fn execute_pat_head_timeline_with_losses(
         .faults
         .iter()
         .filter(|fault| {
-            scenario
-                .optical_pat
-                .iter()
-                .any(|pat| pat.link_id == fault.link_id)
+            include_external_faults
+                && scenario
+                    .optical_pat
+                    .iter()
+                    .any(|pat| pat.link_id == fault.link_id)
         })
         .collect();
     external_faults.sort_by(|a, b| {
@@ -1710,15 +1724,26 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             &predicted_observations,
             runtime,
         )?;
-        // Execute observations after their authorizing commands in one
-        // transactional SYS-02 batch, rather than merely constructing events.
-        // External faults and effective packet edges still require convergence.
-        execute_pat_head_timeline_with_losses(
-            scenario,
-            &plan.reservations,
-            Some(&predicted_observations),
-            &committed_losses,
-        )?;
+        // A terminal pointing loss can be committed without inventing a
+        // recovery. A later BODY command requires an independently sourced Up
+        // observation before the committed runtime may execute it. Existing
+        // scenario-v1 samples provide only command-derived predictions, so
+        // keep that legacy case speculative until an external recovery input
+        // is available; never silently turn a rejected command into Up.
+        let terminal_losses = !committed_losses.is_empty()
+            && committed_losses.iter().all(|loss| {
+                !scenario.optical_body_following_samples.iter().any(|sample| {
+                    sample.link_id == loss.link_id && sample.at_ns > loss.at_ns
+                })
+            });
+        if terminal_losses {
+            execute_pat_head_timeline_with_losses(
+                scenario,
+                &plan.reservations,
+                Some(&predicted_observations),
+                &committed_losses,
+            )?;
+        }
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
