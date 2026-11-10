@@ -1167,10 +1167,7 @@ fn verified_body_pointing_losses(
         let observed = predicted
             .get(&(sample.link_id.clone(), sample.at_ns))
             .ok_or("missing committed BODY command evidence")?;
-        let expected = project_body_command_evidence(
-            std::slice::from_ref(sample),
-            predicted,
-        )?;
+        let expected = project_body_command_evidence(std::slice::from_ref(sample), predicted)?;
         if evidence.evidence != expected[0].evidence {
             return Err("BODY command evidence diverged from provisional outcome".into());
         }
@@ -1932,8 +1929,7 @@ mod tests {
             }
         };
         assert_eq!(
-            verified_body_pointing_losses(&scenario, &evidence, &predicted, &runtime)
-                .unwrap_err(),
+            verified_body_pointing_losses(&scenario, &evidence, &predicted, &runtime).unwrap_err(),
             "BODY command evidence diverged from provisional outcome"
         );
     }
