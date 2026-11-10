@@ -853,10 +853,16 @@ fn execute_pat_head_timeline_impl(
     // Build the complete canonical head timeline before touching actuator state.
     // SYS-02 now validates and commits this batch transactionally rather than
     // allowing a late invalid lease edge to leave earlier head motion behind.
+    // A legacy PAT scenario without configured actuators has no registered
+    // SYS-02 heads to reserve. Its geometric PAT planner already owns head
+    // contention; commit only registered link faults in this case instead of
+    // inventing actuator ownership that does not exist in the scenario.
+    let has_registered_heads = !scenario.optical_head_slew_actuators.is_empty();
     let mut events = timeline
         .events
         .iter()
         .enumerate()
+        .filter(|_| has_registered_heads || !scenario.optical_body_following_samples.is_empty())
         .map(|(event_index, event)| {
             let transition = match event.kind {
                 PatRuntimeTransitionKind::Release(index) => {
@@ -898,7 +904,7 @@ fn execute_pat_head_timeline_impl(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    let head_event_count = timeline.events.len();
+    let head_event_count = events.len();
     // External administrative faults are independent of command-derived
     // pointing observations. Commit both domains in the authoritative SYS-02
     // transaction so fault ordering can affect command acceptance.
