@@ -2718,6 +2718,44 @@ mod tests {
     }
 
     #[test]
+    fn packet_adapter_commits_administrative_pat_recovery_end_to_end() {
+        let mut scenario = pat_fixture();
+        scenario.optical_steering_samples.clear();
+        scenario.optical_body_tracking_samples.clear();
+        scenario.optical_geometry_samples.clear();
+        scenario.optical_body_following_samples.clear();
+        let link_id = scenario.optical_pat[0].link_id.clone();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: link_id.clone(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 90_000_000,
+                link_id,
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        assert!(prepared.optical_pat.is_empty());
+        assert!(prepared.faults.iter().any(|fault| {
+            fault.at_ns == 30_000_000 && matches!(fault.action, LinkAction::Down)
+        }));
+        assert!(prepared.faults.iter().any(|fault| {
+            fault.at_ns == 90_000_000 && matches!(fault.action, LinkAction::Up)
+        }));
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, 7);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        scenario.faults.reverse();
+        let reordered = run(&scenario).unwrap();
+        assert_eq!(serde_json::to_vec(&report).unwrap(), serde_json::to_vec(&reordered).unwrap());
+    }
+
+    #[test]
     fn committed_pat_timeline_accepts_independent_external_fault_recovery() {
         let mut scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
