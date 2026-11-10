@@ -1788,12 +1788,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // speculative prediction: SYS-02 owns both the link and actuator state,
     // and the packet adapter verifies its effective edges before forwarding.
     if follower_runtime.is_none() && steering_faults.is_empty() {
-        let (_, _, edges) = execute_pat_head_timeline_with_losses(
-            scenario,
-            &plan.reservations,
-            None,
-            &[],
-        )?;
+        let (_, _, edges) =
+            execute_pat_head_timeline_with_losses(scenario, &plan.reservations, None, &[])?;
         committed_packet_edges = Some(edges);
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
