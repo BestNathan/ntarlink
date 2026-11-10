@@ -801,6 +801,18 @@ fn execute_pat_head_timeline(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
+    execute_pat_head_timeline_with_losses(scenario, reservations, expected, &[])
+}
+
+/// Commit validated command-derived pointing loss in the same SYS-02 batch
+/// as the commands that authorize it. This is a head/observation slice; the
+/// external fault stream is not yet part of this transaction.
+fn execute_pat_head_timeline_with_losses(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: Option<&PredictedObservations>,
+    losses: &[CommittedBodyPointingLoss],
+) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
     // Both provisional head execution and fault replay must share the exact
@@ -810,7 +822,7 @@ fn execute_pat_head_timeline(
     // Build the complete canonical head timeline before touching actuator state.
     // SYS-02 now validates and commits this batch transactionally rather than
     // allowing a late invalid lease edge to leave earlier head motion behind.
-    let events = timeline
+    let mut events = timeline
         .events
         .iter()
         .enumerate()
@@ -855,8 +867,23 @@ fn execute_pat_head_timeline(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let head_event_count = timeline.events.len();
+    events.extend(losses.iter().enumerate().map(|(index, loss)| {
+        (loss.transition(), head_event_count + index)
+    }));
+
     let mut observations = HashMap::new();
     for (event_index, outcome) in runtime.apply_timeline(events)? {
+        if event_index >= head_event_count {
+            let loss = &losses[event_index - head_event_count];
+            let PatExecutionOutcome::Fault(edge) = outcome else {
+                return Err("pointing observation returned head outcome".into());
+            };
+            if edge.now_up || edge.down_cause != Some(FaultCause::SampledPointing) {
+                return Err(format!("committed pointing loss did not close link {}", loss.link_id));
+            }
+            continue;
+        }
         let PatRuntimeTransitionKind::Sample { index, .. } = timeline.events[event_index].kind
         else {
             continue;
@@ -1609,17 +1636,15 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             &predicted_observations,
             runtime,
         )?;
-        for loss in &committed_losses {
-            // Keep the typed SYS-02 event boundary checked even while the
-            // packet planner still consumes its separate provisional edges.
-            let PatExecutionTransition::PointingObservation {
-                action: LinkAction::Down,
-                ..
-            } = loss.transition()
-            else {
-                return Err("invalid committed BODY pointing-loss event".into());
-            };
-        }
+        // Execute observations after their authorizing commands in one
+        // transactional SYS-02 batch, rather than merely constructing events.
+        // External faults and effective packet edges still require convergence.
+        execute_pat_head_timeline_with_losses(
+            scenario,
+            &plan.reservations,
+            Some(&predicted_observations),
+            &committed_losses,
+        )?;
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
