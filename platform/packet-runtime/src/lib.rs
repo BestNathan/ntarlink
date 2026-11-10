@@ -874,7 +874,12 @@ fn execute_pat_head_timeline_with_losses(
     let mut external_faults: Vec<_> = scenario
         .faults
         .iter()
-        .filter(|fault| scenario.optical_pat.iter().any(|pat| pat.link_id == fault.link_id))
+        .filter(|fault| {
+            scenario
+                .optical_pat
+                .iter()
+                .any(|pat| pat.link_id == fault.link_id)
+        })
         .collect();
     external_faults.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
     let mut fault_batches: Vec<(u64, &str, Vec<(FaultCause, LinkAction)>)> = Vec::new();
