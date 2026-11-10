@@ -1886,6 +1886,34 @@ mod tests {
     }
 
     #[test]
+    fn committed_body_loss_rejects_forged_command_provenance() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let (runtime, predicted) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let mut evidence =
+            project_body_command_evidence(&scenario.optical_body_following_samples, &predicted)
+                .unwrap();
+        assert!(!evidence.is_empty());
+        evidence[0].evidence = match &evidence[0].evidence {
+            BodyCommandEvidence::RejectedCommand { .. } => {
+                BodyCommandEvidence::SuccessfulObservation { allowed: false }
+            }
+            BodyCommandEvidence::SuccessfulObservation { .. } => {
+                BodyCommandEvidence::RejectedCommand {
+                    reason: "forged rejection".into(),
+                }
+            }
+        };
+        assert_eq!(
+            verified_body_pointing_losses(&scenario, &evidence, &predicted, &runtime)
+                .unwrap_err(),
+            "BODY command evidence diverged from provisional outcome"
+        );
+    }
+
+    #[test]
     fn body_command_projection_preserves_failed_and_successful_observation_provenance() {
         let scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
