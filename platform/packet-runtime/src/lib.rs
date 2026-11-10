@@ -1034,6 +1034,14 @@ impl BodyCommandProjection {
             BodyCommandEvidence::SuccessfulObservation { allowed: false }
         )
     }
+
+    /// A planning Down is not a committed sensor event. Only a successful
+    /// command with measured pointing loss may become a post-command
+    /// observation, after SYS-02 has verified its command history.
+    fn committed_loss_candidate(&self) -> Option<(&str, u64)> {
+        self.command_derived_loss()
+            .then_some((self.link_id.as_str(), self.at_ns))
+    }
 }
 
 fn project_body_command_evidence(
@@ -1078,14 +1086,11 @@ fn project_body_command_evidence(
 /// Compatibility projection for the offline PAT planner. This is not a
 /// committed SYS-02 observation stream: rejected commands produce predicted
 /// Down faults but cannot authorize a post-command loss or recovery.
-fn project_body_following_faults(
-    samples: &[OpticalBodyFollowingSample],
-    predicted: &PredictedObservations,
-) -> Result<Vec<Fault>, String> {
-    Ok(project_body_command_evidence(samples, predicted)?
+fn project_body_following_faults(evidence: &[BodyCommandProjection]) -> Vec<Fault> {
+    evidence
         .iter()
         .map(BodyCommandProjection::planning_fault)
-        .collect())
+        .collect()
 }
 
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
@@ -1175,14 +1180,16 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // projections; lease replay verifies it after reservations are planned.
     let mut follower_runtime = None;
     let mut predicted_observations = HashMap::new();
+    let mut body_command_evidence = Vec::new();
     if !scenario.optical_body_following_samples.is_empty() {
         let (runtime, observations) = execute_pat_head_timeline(scenario, &[], None)?;
         follower_runtime = Some(runtime);
         predicted_observations = observations;
-        steering_faults.extend(project_body_following_faults(
+        body_command_evidence = project_body_command_evidence(
             &scenario.optical_body_following_samples,
             &predicted_observations,
-        )?);
+        )?;
+        steering_faults.extend(project_body_following_faults(&body_command_evidence));
     }
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
@@ -1514,6 +1521,35 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             &predicted_observations,
             runtime,
         )?;
+        // Keep speculative Down edges distinct from commit-eligible
+        // observations. The SYS-02 command history, not the offline fault
+        // projection, must authorize any future post-Command loss.
+        for (sample, evidence) in scenario
+            .optical_body_following_samples
+            .iter()
+            .zip(&body_command_evidence)
+        {
+            let Some((link_id, at_ns)) = evidence.committed_loss_candidate() else {
+                continue;
+            };
+            if link_id != sample.link_id || at_ns != sample.at_ns {
+                return Err("BODY command evidence lost its sample provenance".into());
+            }
+            let pat = configs
+                .get(link_id)
+                .ok_or("unknown committed BODY command link")?;
+            let observed = predicted_observations
+                .get(&(sample.link_id.clone(), sample.at_ns))
+                .ok_or("missing committed BODY command evidence")?;
+            runtime.verify_sample_command(
+                &pat.from_head,
+                &pat.to_head,
+                at_ns,
+                sample.from_target_body,
+                sample.to_target_body,
+                observed,
+            )?;
+        }
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
