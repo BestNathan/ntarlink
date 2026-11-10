@@ -681,6 +681,7 @@ impl<'a> Runtime<'a> {
 /// packet engine's metadata-free effective link state. The packet scenario
 /// cannot carry SampledPointing faults after optical_pat is stripped, so the
 /// original down cause is retained separately for PAT trace attribution.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PatEffectivePacketEdge {
     link_id: String,
     at_ns: u64,
@@ -804,6 +805,7 @@ fn execute_pat_head_timeline(
     expected: Option<&PredictedObservations>,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     execute_pat_head_timeline_impl(scenario, reservations, expected, &[], false)
+        .map(|(heads, observations, _)| (heads, observations))
 }
 
 /// Commit validated command-derived pointing loss in the same SYS-02 batch
@@ -814,7 +816,7 @@ fn execute_pat_head_timeline_with_losses(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
-) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
+) -> Result<(BodyHeadRuntime, PredictedObservations, Vec<PatEffectivePacketEdge>), String> {
     execute_pat_head_timeline_impl(scenario, reservations, expected, losses, true)
 }
 
@@ -827,7 +829,7 @@ fn execute_pat_head_timeline_impl(
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
     include_external_faults: bool,
-) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
+) -> Result<(BodyHeadRuntime, PredictedObservations, Vec<PatEffectivePacketEdge>), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
     // Both provisional head execution and fault replay must share the exact
@@ -955,6 +957,7 @@ fn execute_pat_head_timeline_impl(
     );
 
     let mut observations = HashMap::new();
+    let mut effective_edges = Vec::new();
     for (event_index, outcome) in runtime.apply_timeline(events)? {
         if event_index >= loss_offset {
             let loss = &losses[event_index - loss_offset];
@@ -967,11 +970,28 @@ fn execute_pat_head_timeline_impl(
                     loss.link_id
                 ));
             }
+            if edge.was_up != edge.now_up {
+                effective_edges.push(PatEffectivePacketEdge {
+                    link_id: loss.link_id.clone(),
+                    at_ns: loss.at_ns,
+                    now_up: edge.now_up,
+                    down_cause: edge.down_cause,
+                });
+            }
             continue;
         }
         if event_index >= head_event_count {
-            if !matches!(outcome, PatExecutionOutcome::Fault(_)) {
+            let PatExecutionOutcome::Fault(edge) = outcome else {
                 return Err("external fault returned head outcome".into());
+            };
+            if edge.was_up != edge.now_up {
+                let (at_ns, link_id, _) = &fault_batches[event_index - head_event_count];
+                effective_edges.push(PatEffectivePacketEdge {
+                    link_id: (*link_id).to_owned(),
+                    at_ns: *at_ns,
+                    now_up: edge.now_up,
+                    down_cause: edge.down_cause,
+                });
             }
             continue;
         }
@@ -994,7 +1014,10 @@ fn execute_pat_head_timeline_impl(
         }
         observations.insert((sample.link_id.clone(), sample.at_ns), observed);
     }
-    Ok((runtime.into_heads(), observations))
+    effective_edges.sort_by(|a, b| {
+        (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns))
+    });
+    Ok((runtime.into_heads(), observations, effective_edges))
 }
 
 /// Audit PAT command ownership using the already-computed provisional results.
@@ -1707,6 +1730,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             )?
         }
     };
+    let mut committed_packet_edges = None;
     if let Some(runtime) = follower_runtime.as_ref() {
         // SYS-02 owns the lease audit state as well as the single provisional
         // actuator history; the audit never re-integrates follower motion.
@@ -1738,12 +1762,13 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     .any(|sample| sample.link_id == loss.link_id && sample.at_ns > loss.at_ns)
             });
         if terminal_losses {
-            execute_pat_head_timeline_with_losses(
+            let (_, _, edges) = execute_pat_head_timeline_with_losses(
                 scenario,
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
             )?;
+            committed_packet_edges = Some(edges);
         }
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
@@ -1807,7 +1832,31 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared
         .faults
         .retain(|fault| !configs.contains_key(fault.link_id.as_str()));
-    prepared.faults.extend(effective_faults);
+    if let Some(committed_edges) = committed_packet_edges {
+        // Reject inconsistent planner and authoritative SYS-02 link histories.
+        // Packet forwarding consumes the committed timeline only after the
+        // complete edge sequence (including causes) has been reconciled.
+        let mut planned_edges = effective_faults
+            .iter()
+            .map(|fault| PatEffectivePacketEdge {
+                link_id: fault.link_id.clone(),
+                at_ns: fault.at_ns,
+                now_up: matches!(fault.action, LinkAction::Up),
+                down_cause: down_faults
+                    .get(&(fault.link_id.as_str(), fault.at_ns))
+                    .copied(),
+            })
+            .collect::<Vec<_>>();
+        planned_edges.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+        if committed_edges != planned_edges {
+            return Err("committed PAT effective edges diverged from planned packet contacts".into());
+        }
+        prepared
+            .faults
+            .extend(committed_edges.into_iter().map(PatEffectivePacketEdge::packet_fault));
+    } else {
+        prepared.faults.extend(effective_faults);
+    }
     prepared.optical_head_slew_actuators.clear();
     prepared.optical_pat_slew_targets.clear();
     prepared.optical_body_tracking_samples.clear();
@@ -2631,9 +2680,14 @@ mod tests {
                 cause: FaultCause::Administrative,
             },
         ]);
-        let (_, observations) =
+        let (_, observations, edges) =
             execute_pat_head_timeline_with_losses(&scenario, &[], None, &[]).unwrap();
         assert!(observations.is_empty());
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].at_ns, 10);
+        assert!(!edges[0].now_up);
+        assert_eq!(edges[1].at_ns, 20);
+        assert!(edges[1].now_up);
     }
 
     #[test]
