@@ -1806,7 +1806,7 @@ mod tests {
 
         // A rejected command is evidence of loss, never external recovery.
         let rejected = HashMap::from([(key.clone(), Err("head command rejected".into()))]);
-        let faults = project_body_following_faults(&samples, &rejected).unwrap();
+        let faults = project_body_following_faults(&project_body_command_evidence(&samples, &rejected).unwrap());
         assert_eq!(faults.len(), 1);
         assert_eq!(faults[0].link_id, sample.link_id);
         assert_eq!(faults[0].at_ns, sample.at_ns);
@@ -1815,12 +1815,12 @@ mod tests {
 
         // A successful command can still measure a pointing failure.
         let misaligned = HashMap::from([(key.clone(), Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])))]);
-        let faults = project_body_following_faults(&samples, &misaligned).unwrap();
+        let faults = project_body_following_faults(&project_body_command_evidence(&samples, &misaligned).unwrap());
         assert!(matches!(faults[0].action, LinkAction::Down));
 
         // Missing command provenance must not be silently interpreted as Up.
         assert_eq!(
-            project_body_following_faults(&samples, &HashMap::new()).unwrap_err(),
+            project_body_command_evidence(&samples, &HashMap::new()).unwrap_err(),
             "missing provisional BODY-frame observation"
         );
     }
@@ -1917,7 +1917,7 @@ mod tests {
             vec![recovered.clone(), lost.clone()],
             vec![lost.clone(), recovered.clone()],
         ] {
-            let projected = project_body_following_faults(&samples, &predicted).unwrap();
+            let projected = project_body_following_faults(&project_body_command_evidence(&samples, &predicted).unwrap());
             assert_eq!(projected.len(), samples.len());
             for (sample, fault) in samples.iter().zip(projected.iter()) {
                 assert_eq!(fault.link_id, sample.link_id);
