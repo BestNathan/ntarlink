@@ -766,6 +766,26 @@ impl<'a> ValidatedPatHeadTimeline<'a> {
     }
 }
 
+/// Construct the common SYS-02 registry for both PAT planning passes.
+/// Registering an optical link with its actual initial state is required even
+/// when a pass only consumes head or fault events. This is the same inventory
+/// a future committed mixed timeline must use.
+fn new_pat_execution_runtime(scenario: &Scenario) -> Result<PatExecutionRuntime, String> {
+    let initial_links = scenario
+        .optical_pat
+        .iter()
+        .map(|config| {
+            let link = scenario
+                .links
+                .iter()
+                .find(|link| link.id == config.link_id)
+                .ok_or("PAT execution references unknown optical link")?;
+            Ok((config.link_id.as_str(), link.up))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &initial_links)
+}
+
 /// Apply deterministic PAT acquisition before the packet event engine runs.
 /// Only opted-in optical links are gated; other contacts are unchanged.
 /// Administrative down/up transitions interrupt tracking, release optical
@@ -783,26 +803,10 @@ fn execute_pat_head_timeline(
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
-    // Register the same directed optical links used by packet fault replay.
-    // This keeps the provisional and lease-verified head histories attached to
-    // the authoritative SYS-02 link registry. The planning fault projection
-    // remains speculative until the combined committed timeline is wired in.
-    let initial_links = scenario
-        .optical_pat
-        .iter()
-        .map(|config| {
-            let link = scenario
-                .links
-                .iter()
-                .find(|link| link.id == config.link_id)
-                .ok_or("PAT execution references unknown optical link")?;
-            Ok((config.link_id.as_str(), link.up))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let mut runtime = PatExecutionRuntime::new(
-        &scenario.optical_head_slew_actuators,
-        &initial_links,
-    )?;
+    // Both provisional head execution and fault replay must share the exact
+    // same registered link/actuator inventory before a mixed transaction can
+    // replace their separate planning passes.
+    let mut runtime = new_pat_execution_runtime(scenario)?;
     // Build the complete canonical head timeline before touching actuator state.
     // SYS-02 now validates and commits this batch transactionally rather than
     // allowing a late invalid lease edge to leave earlier head motion behind.
@@ -1273,19 +1277,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // windows offline, but no longer owns a separate per-link fault reducer.
     // The SYS-02 timeline executor sorts across links before replay, so
     // link-major input order cannot violate the global virtual-time clock.
-    let initial_links: Vec<_> = scenario
-        .optical_pat
-        .iter()
-        .map(|config| {
-            let link = scenario
-                .links
-                .iter()
-                .find(|link| link.id == config.link_id)
-                .expect("validated optical PAT link");
-            (config.link_id.as_str(), link.up)
-        })
-        .collect();
-    let mut fault_runtime = PatExecutionRuntime::new(&[], &initial_links)?;
+    let mut fault_runtime = new_pat_execution_runtime(scenario)?;
     let mut batches = Vec::new();
     for (&link_id, faults) in &faults_by_link {
         let mut index = 0;
