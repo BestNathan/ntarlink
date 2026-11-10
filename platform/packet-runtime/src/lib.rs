@@ -876,9 +876,7 @@ fn execute_pat_head_timeline_with_losses(
         .iter()
         .filter(|fault| scenario.optical_pat.iter().any(|pat| pat.link_id == fault.link_id))
         .collect();
-    external_faults.sort_by(|a, b| {
-        (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id))
-    });
+    external_faults.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
     let mut fault_batches: Vec<(u64, &str, Vec<(FaultCause, LinkAction)>)> = Vec::new();
     for fault in external_faults {
         if let Some((at_ns, link_id, edges)) = fault_batches.last_mut() {
@@ -2552,6 +2550,33 @@ mod tests {
             prepare_pat(&unknown).unwrap_err(),
             "unknown predicted PAT link"
         );
+    }
+
+    #[test]
+    fn committed_pat_timeline_accepts_independent_external_fault_recovery() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let link_id = scenario.optical_pat[0].link_id.clone();
+        scenario.optical_body_following_samples.clear();
+        scenario.faults.extend([
+            Fault {
+                at_ns: 10,
+                link_id: link_id.clone(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 20,
+                link_id,
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ]);
+        let (_, observations) =
+            execute_pat_head_timeline_with_losses(&scenario, &[], None, &[]).unwrap();
+        assert!(observations.is_empty());
     }
 
     #[test]
