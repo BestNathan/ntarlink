@@ -1093,6 +1093,80 @@ fn project_body_following_faults(evidence: &[BodyCommandProjection]) -> Vec<Faul
         .collect()
 }
 
+/// A verified successful BODY command may emit a post-Command Down event.
+/// This is a typed candidate, not a committed fault edge or an Up recovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommittedBodyPointingLoss {
+    link_id: String,
+    at_ns: u64,
+}
+
+impl CommittedBodyPointingLoss {
+    fn transition(&self) -> PatExecutionTransition<'_> {
+        PatExecutionTransition::PointingObservation {
+            link_id: &self.link_id,
+            at_ns: self.at_ns,
+            action: LinkAction::Down,
+        }
+    }
+}
+
+/// Validate command provenance before exposing any post-command event to a
+/// future mixed SYS-02 timeline. Never turn a rejected command or a predicted
+/// Up into an observation. Duplicate observations are rejected deterministically.
+fn verified_body_pointing_losses(
+    scenario: &Scenario,
+    evidence: &[BodyCommandProjection],
+    predicted: &PredictedObservations,
+    runtime: &BodyHeadRuntime,
+) -> Result<Vec<CommittedBodyPointingLoss>, String> {
+    if evidence.len() != scenario.optical_body_following_samples.len() {
+        return Err("BODY command evidence count mismatch".into());
+    }
+    let configs: HashMap<_, _> = scenario
+        .optical_pat
+        .iter()
+        .map(|pat| (pat.link_id.as_str(), pat))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut losses = Vec::new();
+    for (sample, evidence) in scenario
+        .optical_body_following_samples
+        .iter()
+        .zip(evidence)
+    {
+        if evidence.link_id != sample.link_id || evidence.at_ns != sample.at_ns {
+            return Err("BODY command evidence lost its sample provenance".into());
+        }
+        let Some((link_id, at_ns)) = evidence.committed_loss_candidate() else {
+            continue;
+        };
+        if !seen.insert((link_id, at_ns)) {
+            return Err("duplicate committed BODY pointing observation".into());
+        }
+        let pat = configs
+            .get(link_id)
+            .ok_or("unknown committed BODY command link")?;
+        let observed = predicted
+            .get(&(sample.link_id.clone(), sample.at_ns))
+            .ok_or("missing committed BODY command evidence")?;
+        runtime.verify_sample_command(
+            &pat.from_head,
+            &pat.to_head,
+            at_ns,
+            sample.from_target_body,
+            sample.to_target_body,
+            observed,
+        )?;
+        losses.push(CommittedBodyPointingLoss {
+            link_id: link_id.to_owned(),
+            at_ns,
+        });
+    }
+    losses.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
+    Ok(losses)
+}
+
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
     let mut prepared = scenario.clone();
     if scenario.optical_pat.is_empty() {
@@ -1521,34 +1595,23 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             &predicted_observations,
             runtime,
         )?;
-        // Keep speculative Down edges distinct from commit-eligible
-        // observations. The SYS-02 command history, not the offline fault
-        // projection, must authorize any future post-Command loss.
-        for (sample, evidence) in scenario
-            .optical_body_following_samples
-            .iter()
-            .zip(&body_command_evidence)
-        {
-            let Some((link_id, at_ns)) = evidence.committed_loss_candidate() else {
-                continue;
+        // Preserve the validated post-command Down stream for the eventual
+        // mixed SYS-02 commit; do not feed it back into speculative planning.
+        let committed_losses = verified_body_pointing_losses(
+            scenario,
+            &body_command_evidence,
+            &predicted_observations,
+            runtime,
+        )?;
+        for loss in &committed_losses {
+            // Keep the typed SYS-02 event boundary checked even while the
+            // packet planner still consumes its separate provisional edges.
+            let PatExecutionTransition::PointingObservation {
+                action: LinkAction::Down,
+                ..
+            } = loss.transition() else {
+                return Err("invalid committed BODY pointing-loss event".into());
             };
-            if link_id != sample.link_id || at_ns != sample.at_ns {
-                return Err("BODY command evidence lost its sample provenance".into());
-            }
-            let pat = configs
-                .get(link_id)
-                .ok_or("unknown committed BODY command link")?;
-            let observed = predicted_observations
-                .get(&(sample.link_id.clone(), sample.at_ns))
-                .ok_or("missing committed BODY command evidence")?;
-            runtime.verify_sample_command(
-                &pat.from_head,
-                &pat.to_head,
-                at_ns,
-                sample.from_target_body,
-                sample.to_target_body,
-                observed,
-            )?;
         }
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
@@ -1792,6 +1855,27 @@ mod tests {
 
     fn basic() -> Scenario {
         Scenario::from_json(include_str!("../../../scenarios/minimal.json")).unwrap()
+    }
+
+    #[test]
+    fn committed_body_pointing_loss_events_are_down_only_and_ordered() {
+        let first = CommittedBodyPointingLoss {
+            link_id: "isl-a".into(),
+            at_ns: 12,
+        };
+        let second = CommittedBodyPointingLoss {
+            link_id: "isl-b".into(),
+            at_ns: 13,
+        };
+        for loss in [first, second] {
+            assert!(matches!(
+                loss.transition(),
+                PatExecutionTransition::PointingObservation {
+                    action: LinkAction::Down,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]
