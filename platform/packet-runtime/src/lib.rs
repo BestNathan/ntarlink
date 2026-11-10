@@ -1130,11 +1130,7 @@ fn verified_body_pointing_losses(
         .collect();
     let mut seen = HashSet::new();
     let mut losses = Vec::new();
-    for (sample, evidence) in scenario
-        .optical_body_following_samples
-        .iter()
-        .zip(evidence)
-    {
+    for (sample, evidence) in scenario.optical_body_following_samples.iter().zip(evidence) {
         if evidence.link_id != sample.link_id || evidence.at_ns != sample.at_ns {
             return Err("BODY command evidence lost its sample provenance".into());
         }
@@ -1609,7 +1605,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             let PatExecutionTransition::PointingObservation {
                 action: LinkAction::Down,
                 ..
-            } = loss.transition() else {
+            } = loss.transition()
+            else {
                 return Err("invalid committed BODY pointing-loss event".into());
             };
         }
