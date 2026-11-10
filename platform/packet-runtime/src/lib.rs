@@ -887,6 +887,10 @@ fn execute_pat_head_timeline_with_losses(
         // Canonicalize equal-time external fault inputs before committing
         // the mixed SYS-02 timeline. A caller's fault array order must not
         // select which independent fault domain is evaluated first.
+        let cause_rank = |cause: FaultCause| match cause {
+            FaultCause::Administrative => 0_u8,
+            FaultCause::SampledPointing => 1_u8,
+        };
         let action_rank = |action: &LinkAction| match action {
             LinkAction::Down => 0_u8,
             LinkAction::Up => 1_u8,
@@ -894,13 +898,13 @@ fn execute_pat_head_timeline_with_losses(
         (
             a.at_ns,
             &a.link_id,
-            a.cause,
+            cause_rank(a.cause),
             action_rank(&a.action),
         )
             .cmp(&(
                 b.at_ns,
                 &b.link_id,
-                b.cause,
+                cause_rank(b.cause),
                 action_rank(&b.action),
             ))
     });
