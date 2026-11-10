@@ -816,7 +816,14 @@ fn execute_pat_head_timeline_with_losses(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
-) -> Result<(BodyHeadRuntime, PredictedObservations, Vec<PatEffectivePacketEdge>), String> {
+) -> Result<
+    (
+        BodyHeadRuntime,
+        PredictedObservations,
+        Vec<PatEffectivePacketEdge>,
+    ),
+    String,
+> {
     execute_pat_head_timeline_impl(scenario, reservations, expected, losses, true)
 }
 
@@ -829,7 +836,14 @@ fn execute_pat_head_timeline_impl(
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
     include_external_faults: bool,
-) -> Result<(BodyHeadRuntime, PredictedObservations, Vec<PatEffectivePacketEdge>), String> {
+) -> Result<
+    (
+        BodyHeadRuntime,
+        PredictedObservations,
+        Vec<PatEffectivePacketEdge>,
+    ),
+    String,
+> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
     // Both provisional head execution and fault replay must share the exact
@@ -1014,9 +1028,7 @@ fn execute_pat_head_timeline_impl(
         }
         observations.insert((sample.link_id.clone(), sample.at_ns), observed);
     }
-    effective_edges.sort_by(|a, b| {
-        (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns))
-    });
+    effective_edges.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
     Ok((runtime.into_heads(), observations, effective_edges))
 }
 
@@ -1849,11 +1861,15 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .collect::<Vec<_>>();
         planned_edges.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
         if committed_edges != planned_edges {
-            return Err("committed PAT effective edges diverged from planned packet contacts".into());
+            return Err(
+                "committed PAT effective edges diverged from planned packet contacts".into(),
+            );
         }
-        prepared
-            .faults
-            .extend(committed_edges.into_iter().map(PatEffectivePacketEdge::packet_fault));
+        prepared.faults.extend(
+            committed_edges
+                .into_iter()
+                .map(PatEffectivePacketEdge::packet_fault),
+        );
     } else {
         prepared.faults.extend(effective_faults);
     }
