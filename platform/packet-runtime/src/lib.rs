@@ -868,19 +868,67 @@ fn execute_pat_head_timeline_with_losses(
         .collect::<Result<Vec<_>, String>>()?;
 
     let head_event_count = timeline.events.len();
-    events.extend(losses.iter().enumerate().map(|(index, loss)| {
-        (loss.transition(), head_event_count + index)
-    }));
+    // External administrative faults are independent of command-derived
+    // pointing observations. Commit both domains in the authoritative SYS-02
+    // transaction so fault ordering can affect command acceptance.
+    let mut external_faults: Vec<_> = scenario
+        .faults
+        .iter()
+        .filter(|fault| scenario.optical_pat.iter().any(|pat| pat.link_id == fault.link_id))
+        .collect();
+    external_faults.sort_by(|a, b| {
+        (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id))
+    });
+    let mut fault_batches: Vec<(u64, &str, Vec<(FaultCause, LinkAction)>)> = Vec::new();
+    for fault in external_faults {
+        if let Some((at_ns, link_id, edges)) = fault_batches.last_mut() {
+            if *at_ns == fault.at_ns && *link_id == fault.link_id {
+                edges.push((fault.cause, fault.action.clone()));
+                continue;
+            }
+        }
+        fault_batches.push((
+            fault.at_ns,
+            fault.link_id.as_str(),
+            vec![(fault.cause, fault.action.clone())],
+        ));
+    }
+    for (index, (at_ns, link_id, edges)) in fault_batches.iter().enumerate() {
+        events.push((
+            PatExecutionTransition::FaultBatch {
+                link_id,
+                at_ns: *at_ns,
+                edges,
+            },
+            head_event_count + index,
+        ));
+    }
+    let loss_offset = head_event_count + fault_batches.len();
+    events.extend(
+        losses
+            .iter()
+            .enumerate()
+            .map(|(index, loss)| (loss.transition(), loss_offset + index)),
+    );
 
     let mut observations = HashMap::new();
     for (event_index, outcome) in runtime.apply_timeline(events)? {
-        if event_index >= head_event_count {
-            let loss = &losses[event_index - head_event_count];
+        if event_index >= loss_offset {
+            let loss = &losses[event_index - loss_offset];
             let PatExecutionOutcome::Fault(edge) = outcome else {
                 return Err("pointing observation returned head outcome".into());
             };
             if edge.now_up || edge.down_cause != Some(FaultCause::SampledPointing) {
-                return Err(format!("committed pointing loss did not close link {}", loss.link_id));
+                return Err(format!(
+                    "committed pointing loss did not close link {}",
+                    loss.link_id
+                ));
+            }
+            continue;
+        }
+        if event_index >= head_event_count {
+            if !matches!(outcome, PatExecutionOutcome::Fault(_)) {
+                return Err("external fault returned head outcome".into());
             }
             continue;
         }
