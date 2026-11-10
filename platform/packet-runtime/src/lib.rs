@@ -804,7 +804,7 @@ fn execute_pat_head_timeline(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
-    execute_pat_head_timeline_impl(scenario, reservations, expected, &[], false)
+    execute_pat_head_timeline_impl(scenario, reservations, expected, &[], &[], false)
         .map(|(heads, observations, _)| (heads, observations))
 }
 
@@ -816,6 +816,7 @@ fn execute_pat_head_timeline_with_losses(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
+    sampled_faults: &[Fault],
 ) -> Result<
     (
         BodyHeadRuntime,
@@ -824,7 +825,7 @@ fn execute_pat_head_timeline_with_losses(
     ),
     String,
 > {
-    execute_pat_head_timeline_impl(scenario, reservations, expected, losses, true)
+    execute_pat_head_timeline_impl(scenario, reservations, expected, losses, sampled_faults, true)
 }
 
 /// The provisional pass intentionally excludes external link faults: it is a
@@ -835,6 +836,7 @@ fn execute_pat_head_timeline_impl(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
     losses: &[CommittedBodyPointingLoss],
+    sampled_faults: &[Fault],
     include_external_faults: bool,
 ) -> Result<
     (
@@ -911,6 +913,7 @@ fn execute_pat_head_timeline_impl(
     let mut external_faults: Vec<_> = scenario
         .faults
         .iter()
+        .chain(sampled_faults.iter())
         .filter(|fault| {
             include_external_faults
                 && scenario
@@ -1785,17 +1788,23 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
+                &[],
             )?;
             committed_packet_edges = Some(edges);
         }
     }
-    // Scenarios without sampled pointing or follower commands can commit the
-    // complete administrative fault/lease timeline directly. This is not a
-    // speculative prediction: SYS-02 owns both the link and actuator state,
-    // and the packet adapter verifies its effective edges before forwarding.
-    if follower_runtime.is_none() && steering_faults.is_empty() {
-        let (_, _, edges) =
-            execute_pat_head_timeline_with_losses(scenario, &plan.reservations, None, &[])?;
+    // Without BODY-following commands, sampled steering/geometry observations
+    // are independent inputs. Commit them together with administrative faults
+    // through SYS-02, rather than replaying a second packet fault reducer.
+    // BODY command-derived observations retain their separate causal gate.
+    if follower_runtime.is_none() {
+        let (_, _, edges) = execute_pat_head_timeline_with_losses(
+            scenario,
+            &plan.reservations,
+            None,
+            &[],
+            &steering_faults,
+        )?;
         committed_packet_edges = Some(edges);
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
