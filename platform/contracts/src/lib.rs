@@ -438,10 +438,16 @@ impl Scenario {
             if flow.id.trim().is_empty() || !flow_ids.insert(&flow.id) {
                 return Err(format!("empty or duplicate flow ID: {}", flow.id));
             }
-            if find_kind(&flow.source) != Some(&NodeKind::Terminal)
-                || find_kind(&flow.destination) != Some(&NodeKind::Internet)
-            {
-                return Err(format!("flow {} requires terminal to internet", flow.id));
+            let endpoints = (find_kind(&flow.source), find_kind(&flow.destination));
+            if !matches!(
+                endpoints,
+                (Some(NodeKind::Terminal), Some(NodeKind::Internet))
+                    | (Some(NodeKind::Satellite), Some(NodeKind::GroundStation))
+            ) {
+                return Err(format!(
+                    "flow {} requires terminal-to-internet or satellite-to-ground-station endpoints",
+                    flow.id
+                ));
             }
             if flow.packet_count == 0 || !(1..=65_535).contains(&flow.packet_size_bytes) {
                 return Err(format!("invalid packet size/count in flow {}", flow.id));
@@ -1980,5 +1986,14 @@ mod tests {
         let mut s = Scenario::from_json(&fixture()).unwrap();
         s.nodes[0].latitude_deg = Some(f64::NAN);
         assert!(s.validate().is_err());
+    }
+    #[test]
+    fn satellite_ground_station_packet_flows_preserve_endpoint_validation() {
+        let mut scenario = Scenario::from_json(&fixture()).unwrap();
+        scenario.flows[0].source = "sat-a".into();
+        scenario.flows[0].destination = "gw-a".into();
+        scenario.validate().unwrap();
+        scenario.flows[0].destination = "ue-a".into();
+        assert!(scenario.validate().is_err());
     }
 }

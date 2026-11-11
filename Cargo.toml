@@ -3,6 +3,7 @@ members = [
     "platform/contracts",
     "platform/simulation",
     "platform/packet-runtime",
+    "platform/compute-runtime",
     "systems/network-control",
     "systems/access/rust",
     "systems/space-network/rust",
