@@ -613,6 +613,56 @@ mod tests {
     }
 
     #[test]
+    fn feeder_fault_recovery_controls_both_compute_policy_artifact_paths() {
+        use ntarlink_contracts::{Fault, FaultCause, LinkAction};
+
+        let mut scenario = fixture();
+        scenario.network.faults = vec![
+            Fault {
+                at_ns: 0,
+                link_id: "feeder-b-gw".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 100_000_000,
+                link_id: "feeder-b-gw".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+
+        // No implicit retry: an artifact sent during the outage cannot be
+        // counted as delivered just because the feeder later recovers.
+        let outage = run_experiment(&scenario).unwrap();
+        assert_eq!(outage.ground_only.status, WorkloadStatus::TransferFailed);
+        assert_eq!(outage.onboard_first.status, WorkloadStatus::TransferFailed);
+        for policy in [&outage.ground_only, &outage.onboard_first] {
+            let transfer = policy.transfer.as_ref().unwrap();
+            assert_eq!(
+                transfer.injected_bytes,
+                transfer.delivered_bytes + transfer.dropped_bytes
+            );
+            assert!(transfer.dropped_bytes > 0);
+        }
+
+        // A later workload release uses the same committed recovery timeline,
+        // including route reconvergence, rather than bypassing packet routing.
+        scenario.workload.release_ns = 200_000_000;
+        let recovered = run_experiment(&scenario).unwrap();
+        for policy in [&recovered.ground_only, &recovered.onboard_first] {
+            assert_eq!(policy.status, WorkloadStatus::Completed);
+            let transfer = policy.transfer.as_ref().unwrap();
+            assert_eq!(transfer.delivered_bytes, transfer.injected_bytes);
+            assert_eq!(transfer.dropped_packets, 0);
+            assert!(transfer.last_arrival_ns.unwrap() > scenario.workload.release_ns);
+        }
+        let first = serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap();
+        let second = serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
     fn finite_memory_storage_and_power_reject_without_running_packets() {
         let mut scenario = fixture();
         scenario.orbital_node.memory_bytes = 1;
