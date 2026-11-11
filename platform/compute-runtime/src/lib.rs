@@ -689,7 +689,7 @@ mod tests {
 
         // The output path is checked independently after modeled execution.
         scenario.workload.release_ns = scenario.network.duration_ns - 2_010_000_000;
-        scenario.workload.cpu_service_units = 2_009_999;
+        scenario.workload.cpu_service_units = 2_009_999_999;
         scenario.workload.deadline_ns = scenario.network.duration_ns;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.onboard_first.status, WorkloadStatus::DeadlineMissed);
