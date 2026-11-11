@@ -252,7 +252,11 @@ impl ComputeExperiment {
     }
 }
 
-fn reserve(node: &ComputeNode, task: &ComputeWorkload, input_bytes: u64) -> Result<ResourceReservation, String> {
+fn reserve(
+    node: &ComputeNode,
+    task: &ComputeWorkload,
+    input_bytes: u64,
+) -> Result<ResourceReservation, String> {
     let peak_storage_bytes = input_bytes
         .checked_add(task.output_size_bytes)
         .ok_or("modeled storage size overflow")?;
@@ -272,8 +276,8 @@ fn reserve(node: &ComputeNode, task: &ComputeWorkload, input_bytes: u64) -> Resu
         .checked_mul(NS_PER_SECOND)
         .ok_or("modeled service time overflow")?;
     let duration = units_ns.div_ceil(u128::from(node.cpu_units_per_second));
-    let modeled_cpu_duration_ns = u64::try_from(duration)
-        .map_err(|_| "modeled service duration exceeds u64 nanoseconds")?;
+    let modeled_cpu_duration_ns =
+        u64::try_from(duration).map_err(|_| "modeled service duration exceeds u64 nanoseconds")?;
     Ok(ResourceReservation {
         node_id: node.id.clone(),
         cpu_service_units: task.cpu_service_units,
@@ -353,14 +357,22 @@ fn transfer(
             PacketStatus::Delivered => {
                 transfer.delivered_packets += 1;
                 transfer.delivered_bytes += size;
-                let at_ns = packet.completed_ns.ok_or("delivered packet has no completion time")?;
-                transfer.last_arrival_ns = Some(transfer.last_arrival_ns.map_or(at_ns, |last| last.max(at_ns)));
+                let at_ns = packet
+                    .completed_ns
+                    .ok_or("delivered packet has no completion time")?;
+                transfer.last_arrival_ns = Some(
+                    transfer
+                        .last_arrival_ns
+                        .map_or(at_ns, |last| last.max(at_ns)),
+                );
             }
             PacketStatus::Dropped => {
                 transfer.dropped_packets += 1;
                 transfer.dropped_bytes += size;
             }
-            PacketStatus::InFlight => return Err("in-flight packet escaped runtime accounting".into()),
+            PacketStatus::InFlight => {
+                return Err("in-flight packet escaped runtime accounting".into())
+            }
         }
     }
     if transfer.injected_packets as u64 != total
@@ -376,7 +388,11 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
     let task = &scenario.workload;
     let input = &scenario.input_artifact;
     let is_edge = policy == Placement::OnboardFirst;
-    let node = if is_edge { &scenario.orbital_node } else { &scenario.ground_node };
+    let node = if is_edge {
+        &scenario.orbital_node
+    } else {
+        &scenario.ground_node
+    };
     let mut outcome = PolicyOutcome::new(policy, &node.id);
     let reservation = match reserve(node, task, input.size_bytes) {
         Ok(reservation) => reservation,
@@ -403,15 +419,23 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         outcome.transfer = Some(transfer);
         outcome.packet_report = Some(packet_report);
         if !transferred {
-            outcome.fail(WorkloadStatus::TransferFailed, "raw input did not reach the ground compute node");
+            outcome.fail(
+                WorkloadStatus::TransferFailed,
+                "raw input did not reach the ground compute node",
+            );
             return Ok(outcome);
         }
         arrived.ok_or("complete input transfer without arrival timestamp")?
     };
     outcome.started_ns = Some(start_ns);
-    let completed_compute = start_ns.checked_add(cpu_duration).ok_or("modeled compute clock overflow")?;
+    let completed_compute = start_ns
+        .checked_add(cpu_duration)
+        .ok_or("modeled compute clock overflow")?;
     if completed_compute > task.deadline_ns || completed_compute >= scenario.network.duration_ns {
-        outcome.fail(WorkloadStatus::DeadlineMissed, "modeled compute misses task deadline or simulation horizon");
+        outcome.fail(
+            WorkloadStatus::DeadlineMissed,
+            "modeled compute misses task deadline or simulation horizon",
+        );
         return Ok(outcome);
     }
     outcome.compute_completed_ns = Some(completed_compute);
@@ -437,7 +461,10 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         outcome.transfer = Some(transfer);
         outcome.packet_report = Some(packet_report);
         if !transferred {
-            outcome.fail(WorkloadStatus::TransferFailed, "computed output did not reach ground station");
+            outcome.fail(
+                WorkloadStatus::TransferFailed,
+                "computed output did not reach ground station",
+            );
             return Ok(outcome);
         }
         arrived.ok_or("complete output transfer without arrival timestamp")?
@@ -445,7 +472,10 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         completed_compute
     };
     if completed_ns > task.deadline_ns {
-        outcome.fail(WorkloadStatus::DeadlineMissed, "delivered artifact missed workload deadline");
+        outcome.fail(
+            WorkloadStatus::DeadlineMissed,
+            "delivered artifact missed workload deadline",
+        );
     } else {
         outcome.status = WorkloadStatus::Completed;
         outcome.completed_ns = Some(completed_ns);
@@ -473,7 +503,8 @@ mod tests {
     use super::*;
 
     fn fixture() -> ComputeExperiment {
-        ComputeExperiment::from_json(include_str!("../../../scenarios/c0-orbital-edge.json")).unwrap()
+        ComputeExperiment::from_json(include_str!("../../../scenarios/c0-orbital-edge.json"))
+            .unwrap()
     }
 
     #[test]
@@ -481,7 +512,9 @@ mod tests {
         let report = run_experiment(&fixture()).unwrap();
         assert_eq!(report.ground_only.status, WorkloadStatus::Completed);
         assert_eq!(report.onboard_first.status, WorkloadStatus::Completed);
-        assert!(report.onboard_first.completed_ns.unwrap() < report.ground_only.completed_ns.unwrap());
+        assert!(
+            report.onboard_first.completed_ns.unwrap() < report.ground_only.completed_ns.unwrap()
+        );
         for (outcome, size) in [
             (&report.ground_only, report.input_bytes),
             (&report.onboard_first, report.output_bytes),
@@ -504,8 +537,24 @@ mod tests {
                 hops == ["isl-a-b", "feeder-b-gw"]
             }));
         }
-        assert_eq!(report.onboard_first.produced_artifact.as_ref().unwrap().site_id, "sat-a");
-        assert_eq!(report.ground_only.produced_artifact.as_ref().unwrap().site_id, "gw-a");
+        assert_eq!(
+            report
+                .onboard_first
+                .produced_artifact
+                .as_ref()
+                .unwrap()
+                .site_id,
+            "sat-a"
+        );
+        assert_eq!(
+            report
+                .ground_only
+                .produced_artifact
+                .as_ref()
+                .unwrap()
+                .site_id,
+            "gw-a"
+        );
     }
 
     #[test]
@@ -519,14 +568,23 @@ mod tests {
     #[test]
     fn downed_feeder_blocks_both_policies_without_teleporting_artifacts() {
         let mut scenario = fixture();
-        scenario.network.links.iter_mut().find(|link| link.id == "feeder-b-gw").unwrap().up = false;
+        scenario
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
         let report = run_experiment(&scenario).unwrap();
         for outcome in [&report.ground_only, &report.onboard_first] {
             assert_eq!(outcome.status, WorkloadStatus::TransferFailed);
             let transfer = outcome.transfer.as_ref().unwrap();
             assert!(transfer.dropped_bytes > 0);
             assert!(transfer.delivered_bytes < transfer.injected_bytes);
-            assert_eq!(transfer.injected_bytes, transfer.delivered_bytes + transfer.dropped_bytes);
+            assert_eq!(
+                transfer.injected_bytes,
+                transfer.delivered_bytes + transfer.dropped_bytes
+            );
         }
         assert!(report.ground_only.produced_artifact.is_none());
         assert!(report.onboard_first.produced_artifact.is_some());
@@ -538,29 +596,58 @@ mod tests {
         scenario.orbital_node.memory_bytes = 1;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.onboard_first.status, WorkloadStatus::Rejected);
-        assert_eq!(report.onboard_first.reason.as_deref(), Some("insufficient modeled memory"));
+        assert_eq!(
+            report.onboard_first.reason.as_deref(),
+            Some("insufficient modeled memory")
+        );
         assert!(report.onboard_first.packet_report.is_none());
         assert_eq!(report.ground_only.status, WorkloadStatus::Completed);
         scenario.orbital_node.memory_bytes = 1_000_000;
         scenario.orbital_node.storage_bytes = scenario.input_artifact.size_bytes;
-        assert_eq!(run_experiment(&scenario).unwrap().onboard_first.reason.as_deref(), Some("insufficient modeled storage"));
+        assert_eq!(
+            run_experiment(&scenario)
+                .unwrap()
+                .onboard_first
+                .reason
+                .as_deref(),
+            Some("insufficient modeled storage")
+        );
         scenario.orbital_node.storage_bytes = 1_000_000;
         scenario.orbital_node.power_budget_mw = 1;
-        assert_eq!(run_experiment(&scenario).unwrap().onboard_first.reason.as_deref(), Some("insufficient modeled power budget"));
+        assert_eq!(
+            run_experiment(&scenario)
+                .unwrap()
+                .onboard_first
+                .reason
+                .as_deref(),
+            Some("insufficient modeled power budget")
+        );
     }
 
     #[test]
     fn queue_overflow_is_reported_as_real_packet_loss() {
         let mut scenario = fixture();
-        scenario.network.links.iter_mut().find(|link| link.id == "feeder-b-gw").unwrap().queue_limit_bytes = 1;
+        scenario
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .queue_limit_bytes = 1;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.ground_only.status, WorkloadStatus::TransferFailed);
         assert_eq!(report.onboard_first.status, WorkloadStatus::TransferFailed);
         for outcome in [&report.ground_only, &report.onboard_first] {
             let trace = outcome.packet_report.as_ref().unwrap();
-            assert!(trace.packets.iter().any(|packet| packet.drop_reason.as_deref() == Some("queue_overflow")));
+            assert!(trace
+                .packets
+                .iter()
+                .any(|packet| packet.drop_reason.as_deref() == Some("queue_overflow")));
             let transfer = outcome.transfer.as_ref().unwrap();
-            assert_eq!(transfer.injected_bytes, transfer.delivered_bytes + transfer.dropped_bytes);
+            assert_eq!(
+                transfer.injected_bytes,
+                transfer.delivered_bytes + transfer.dropped_bytes
+            );
         }
     }
 
@@ -572,7 +659,10 @@ mod tests {
         assert_eq!(report.onboard_first.status, WorkloadStatus::DeadlineMissed);
         assert!(report.onboard_first.produced_artifact.is_none());
         scenario.orbital_node.site_id = "internet".into();
-        assert!(scenario.validate().unwrap_err().contains("network endpoints"));
+        assert!(scenario
+            .validate()
+            .unwrap_err()
+            .contains("network endpoints"));
         scenario.orbital_node.site_id = "sat-a".into();
         scenario.input_artifact.size_bytes = scenario.workload.output_size_bytes;
         assert!(scenario.validate().is_err());

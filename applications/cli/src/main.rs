@@ -6,7 +6,10 @@ use std::{env, fs, process};
 fn main() {
     let args: Vec<String> = env::args().collect();
     if !(args.len() == 3 || (args.len() == 4 && args[3] == "--json"))
-        || !matches!(args[1].as_str(), "validate" | "simulate" | "validate-compute" | "simulate-compute")
+        || !matches!(
+            args[1].as_str(),
+            "validate" | "simulate" | "validate-compute" | "simulate-compute"
+        )
     {
         eprintln!("usage: ntarlink-cli <validate|simulate|validate-compute|simulate-compute> <scenario.json> [--json]");
         process::exit(2);
@@ -15,7 +18,10 @@ fn main() {
     if matches!(args[1].as_str(), "validate-compute" | "simulate-compute") {
         let scenario = ComputeExperiment::from_json(&raw).unwrap_or_else(|e| fail(&e));
         if args[1] == "validate-compute" {
-            println!("validated modeled compute experiment {}", scenario.network.name);
+            println!(
+                "validated modeled compute experiment {}",
+                scenario.network.name
+            );
             return;
         }
         let report = run_experiment(&scenario).unwrap_or_else(|e| fail(&e));

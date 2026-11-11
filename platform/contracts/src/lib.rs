@@ -1987,4 +1987,14 @@ mod tests {
         s.nodes[0].latitude_deg = Some(f64::NAN);
         assert!(s.validate().is_err());
     }
+    #[test]
+    fn satellite_ground_station_packet_flows_preserve_endpoint_validation() {
+        let mut scenario = Scenario::from_json(&fixture()).unwrap();
+        scenario.flows[0].source = "sat-a".into();
+        scenario.flows[0].destination = "gw-a".into();
+        scenario.validate().unwrap();
+        scenario.flows[0].destination = "ue-a".into();
+        assert!(scenario.validate().is_err());
+    }
+
 }
