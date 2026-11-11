@@ -493,6 +493,10 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
     } else {
         completed_compute
     };
+    // Completion is an observed virtual-time fact even when the workload
+    // misses its deadline. Keep it for reproducible latency comparisons rather
+    // than erasing evidence of a fully delivered late artifact.
+    outcome.completed_ns = Some(completed_ns);
     if completed_ns > task.deadline_ns {
         outcome.fail(
             WorkloadStatus::DeadlineMissed,
@@ -500,7 +504,6 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         );
     } else {
         outcome.status = WorkloadStatus::Completed;
-        outcome.completed_ns = Some(completed_ns);
     }
     Ok(outcome)
 }
@@ -750,6 +753,36 @@ mod tests {
             Some("output injection exceeds simulation horizon")
         );
         assert!(report.onboard_first.produced_artifact.is_some());
+    }
+
+    #[test]
+    fn late_delivered_output_retains_completion_time_and_packet_evidence() {
+        let mut scenario = fixture();
+        // Leave enough time to execute and deliver the output, but set the
+        // deadline before its network arrival. The deadline is a task policy,
+        // not a reason to discard an observed packet completion timestamp.
+        scenario.workload.deadline_ns = 25_000_000;
+        let report = run_experiment(&scenario).unwrap();
+        let edge = &report.onboard_first;
+        assert_eq!(edge.status, WorkloadStatus::DeadlineMissed);
+        assert_eq!(
+            edge.reason.as_deref(),
+            Some("delivered artifact missed workload deadline")
+        );
+        let delivered_at = edge.completed_ns.expect("late arrival must be retained");
+        assert!(delivered_at > scenario.workload.deadline_ns);
+        assert_eq!(edge.compute_completed_ns, Some(20_000_000));
+        assert_eq!(
+            edge.transfer.as_ref().unwrap().last_arrival_ns,
+            Some(delivered_at)
+        );
+        assert_eq!(
+            edge.transfer.as_ref().unwrap().delivered_bytes,
+            scenario.workload.output_size_bytes
+        );
+        assert!(edge.packet_report.is_some());
+        let repeated = run_experiment(&scenario).unwrap();
+        assert_eq!(repeated.onboard_first.completed_ns, Some(delivered_at));
     }
 
     #[test]
