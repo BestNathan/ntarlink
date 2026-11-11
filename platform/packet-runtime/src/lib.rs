@@ -1522,7 +1522,24 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .push((scenario.faults.len() + index, fault));
     }
     for faults in faults_by_link.values_mut() {
-        faults.sort_by_key(|(index, fault)| (fault.at_ns, *index));
+        // Same-instant independent fault domains must not inherit the
+        // scenario's input order. The committed SYS-02 path uses this same
+        // canonical domain/action order for its external fault batches.
+        let cause_rank = |cause: FaultCause| match cause {
+            FaultCause::Administrative => 0_u8,
+            FaultCause::SampledPointing => 1_u8,
+        };
+        let action_rank = |action: &LinkAction| match action {
+            LinkAction::Down => 0_u8,
+            LinkAction::Up => 1_u8,
+        };
+        faults.sort_by_key(|(_, fault)| {
+            (
+                fault.at_ns,
+                cause_rank(fault.cause),
+                action_rank(&fault.action),
+            )
+        });
     }
 
     // Replay all optical fault edges through the same typed SYS-02 event owner
