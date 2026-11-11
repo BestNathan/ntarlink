@@ -2888,11 +2888,12 @@ mod tests {
             "../../../scenarios/optical-body-frame-target-following.json"
         ))
         .unwrap();
-        // A 40-70 ms outage occupies a gap between acquired leases.
-        // A BODY command during that outage would remain on the conservative path.
+        // Keep one successful BODY command before the 40-70 ms outage.
+        // Later changing targets would introduce independent pointing loss
+        // and are outside this recovered inter-lease fault case.
         scenario
             .optical_body_following_samples
-            .retain(|sample| sample.at_ns != 60_000_000);
+            .retain(|sample| sample.at_ns == 0);
         let first = run(&scenario).unwrap();
         assert_eq!(first.injected, first.delivered + first.dropped);
         let (prepared, _) = prepare_pat(&scenario).unwrap();
