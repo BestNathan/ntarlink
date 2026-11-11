@@ -662,8 +662,14 @@ mod tests {
         assert!(scenario
             .validate()
             .unwrap_err()
+            .contains("invalid modeled compute node"));
+        scenario.orbital_node.network_endpoint_id = "internet".into();
+        assert!(scenario
+            .validate()
+            .unwrap_err()
             .contains("network endpoints"));
         scenario.orbital_node.site_id = "sat-a".into();
+        scenario.orbital_node.network_endpoint_id = "sat-a".into();
         scenario.input_artifact.size_bytes = scenario.workload.output_size_bytes;
         assert!(scenario.validate().is_err());
     }
