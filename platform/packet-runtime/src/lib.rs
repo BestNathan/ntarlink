@@ -1793,16 +1793,29 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         // actuator commands without manufacturing any recovery observations.
         // Keep mixed external-fault and nonterminal loss cases provisional
         // until their command rejection/recovery timeline can be reconciled.
-        let fault_free_commands = committed_losses.is_empty()
-            && scenario.faults.is_empty()
-            && steering_faults.is_empty();
+        // Faults that start after the final head lease cannot reject any
+        // previously committed command. They can safely share the same
+        // authoritative timeline, including their packet-state transitions.
+        let last_lease_end = plan
+            .reservations
+            .iter()
+            .map(|reservation| reservation.end_ns)
+            .max()
+            .unwrap_or(0);
+        let faults_after_leases = scenario
+            .faults
+            .iter()
+            .chain(steering_faults.iter())
+            .filter(|fault| configs.contains_key(fault.link_id.as_str()))
+            .all(|fault| fault.at_ns >= last_lease_end);
+        let fault_free_commands = committed_losses.is_empty() && faults_after_leases;
         if terminal_losses || fault_free_commands {
             let (_, _, edges) = execute_pat_head_timeline_with_losses(
                 scenario,
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
-                &[],
+                &steering_faults,
             )?;
             committed_packet_edges = Some(edges);
         }
