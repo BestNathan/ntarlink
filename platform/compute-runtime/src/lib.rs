@@ -407,14 +407,18 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
     // This is a policy-level deadline failure, not an invalid experiment.
     let transfer_fits_horizon = |bytes: u64, at_ns: u64| -> bool {
         let packets = bytes.div_ceil(scenario.packet_payload_bytes);
-        at_ns.checked_add(packets.saturating_sub(1))
+        at_ns
+            .checked_add(packets.saturating_sub(1))
             .is_some_and(|last| last < scenario.network.duration_ns)
     };
     let start_ns = if is_edge {
         task.release_ns
     } else {
         if !transfer_fits_horizon(input.size_bytes, task.release_ns) {
-            outcome.fail(WorkloadStatus::DeadlineMissed, "raw input injection exceeds simulation horizon");
+            outcome.fail(
+                WorkloadStatus::DeadlineMissed,
+                "raw input injection exceeds simulation horizon",
+            );
             return Ok(outcome);
         }
         let (packet_report, transfer) = transfer(
@@ -460,7 +464,10 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
     });
     let completed_ns = if is_edge {
         if !transfer_fits_horizon(task.output_size_bytes, completed_compute) {
-            outcome.fail(WorkloadStatus::DeadlineMissed, "output injection exceeds simulation horizon");
+            outcome.fail(
+                WorkloadStatus::DeadlineMissed,
+                "output injection exceeds simulation horizon",
+            );
             return Ok(outcome);
         }
         let (packet_report, transfer) = transfer(
@@ -673,7 +680,10 @@ mod tests {
         scenario.workload.deadline_ns = scenario.network.duration_ns;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.ground_only.status, WorkloadStatus::DeadlineMissed);
-        assert_eq!(report.ground_only.reason.as_deref(), Some("raw input injection exceeds simulation horizon"));
+        assert_eq!(
+            report.ground_only.reason.as_deref(),
+            Some("raw input injection exceeds simulation horizon")
+        );
         assert!(report.ground_only.packet_report.is_none());
         assert_eq!(report.onboard_first.status, WorkloadStatus::DeadlineMissed);
 
@@ -683,7 +693,10 @@ mod tests {
         scenario.workload.deadline_ns = scenario.network.duration_ns;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.onboard_first.status, WorkloadStatus::DeadlineMissed);
-        assert_eq!(report.onboard_first.reason.as_deref(), Some("output injection exceeds simulation horizon"));
+        assert_eq!(
+            report.onboard_first.reason.as_deref(),
+            Some("output injection exceeds simulation horizon")
+        );
         assert!(report.onboard_first.produced_artifact.is_some());
     }
 
