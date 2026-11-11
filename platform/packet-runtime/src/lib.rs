@@ -1836,8 +1836,8 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     .is_some_and(|link| link.up);
                 effective_faults
                     .iter()
-                    .filter(|fault| fault.link_id == lease.link_id && fault.at_ns <= lease.start_ns)
-                    .last()
+                    .rev()
+                    .find(|fault| fault.link_id == lease.link_id && fault.at_ns <= lease.start_ns)
                     .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
             })
             && scenario
@@ -1851,10 +1851,10 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                         .is_some_and(|link| link.up);
                     effective_faults
                         .iter()
-                        .filter(|fault| {
+                        .rev()
+                        .find(|fault| {
                             fault.link_id == sample.link_id && fault.at_ns <= sample.at_ns
                         })
-                        .last()
                         .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
                 });
         let fault_free_commands = committed_losses.is_empty() && faults_outside_head_activity;
