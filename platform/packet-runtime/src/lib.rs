@@ -1821,7 +1821,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
-                &steering_faults,
+                if fault_free_commands {
+                    &steering_faults
+                } else {
+                    &[]
+                },
             )?;
             committed_packet_edges = Some(edges);
         }
