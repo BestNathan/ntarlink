@@ -1857,14 +1857,37 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                         })
                         .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
                 });
+        // A later BODY command may follow a committed pointing loss only when
+        // an independently sourced sampled-pointing Up restores that link
+        // strictly between the loss and the next command. A command's own
+        // predicted Up is never recovery evidence.
+        let externally_recovered_losses = !committed_losses.is_empty()
+            && committed_losses.iter().all(|loss| {
+                let next_command = scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .filter(|sample| sample.link_id == loss.link_id && sample.at_ns > loss.at_ns)
+                    .map(|sample| sample.at_ns)
+                    .min();
+                next_command.is_none_or(|next_at| {
+                    steering_faults.iter().any(|fault| {
+                        fault.link_id == loss.link_id
+                            && fault.cause == FaultCause::SampledPointing
+                            && matches!(fault.action, LinkAction::Up)
+                            && fault.at_ns > loss.at_ns
+                            && fault.at_ns < next_at
+                    })
+                })
+            });
         let fault_free_commands = committed_losses.is_empty() && faults_outside_head_activity;
-        if terminal_losses || fault_free_commands {
+        let recovered_commands = externally_recovered_losses && faults_outside_head_activity;
+        if terminal_losses || fault_free_commands || recovered_commands {
             let (_, _, edges) = execute_pat_head_timeline_with_losses(
                 scenario,
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
-                if fault_free_commands {
+                if fault_free_commands || recovered_commands {
                     &steering_faults
                 } else {
                     &[]
