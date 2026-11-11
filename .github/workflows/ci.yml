@@ -27,6 +27,24 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Verify C0 orbital compute uses actual packet paths and finite resource budgets
+        run: |
+          cargo run -p ntarlink-cli -- validate-compute scenarios/c0-orbital-edge.json
+          cargo run -p ntarlink-cli -- simulate-compute scenarios/c0-orbital-edge.json --json > /tmp/c0-report.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/c0-report.json"))
+          ground, edge = r["ground_only"], r["onboard_first"]
+          assert ground["status"] == edge["status"] == "completed"
+          assert edge["completed_ns"] < ground["completed_ns"]
+          for outcome, size in [(ground, r["input_bytes"]), (edge, r["output_bytes"])]:
+              transfer = outcome["transfer"]
+              assert (transfer["injected_bytes"], transfer["delivered_bytes"], transfer["dropped_bytes"]) == (size, size, 0)
+              packets = [p for p in outcome["packet_report"]["packets"] if p["flow_id"].startswith("__c0:")]
+              assert len(packets) == transfer["injected_packets"]
+              assert all([h["link_id"] for h in p["hops"]] == ["isl-a-b", "feeder-b-gw"] for p in packets)
+          print("C0 packet-attached comparison:", edge["completed_ns"], ground["completed_ns"])
+          PY
       - run: cargo run -p ntarlink-cli -- validate scenarios/minimal.json
       - run: cargo run -p ntarlink-cli -- simulate scenarios/minimal.json
       - run: cargo run -p ntarlink-cli -- simulate scenarios/isl-failure.json --json > /tmp/ntarlink-report.json

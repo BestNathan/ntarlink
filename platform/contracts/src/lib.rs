@@ -438,10 +438,16 @@ impl Scenario {
             if flow.id.trim().is_empty() || !flow_ids.insert(&flow.id) {
                 return Err(format!("empty or duplicate flow ID: {}", flow.id));
             }
-            if find_kind(&flow.source) != Some(&NodeKind::Terminal)
-                || find_kind(&flow.destination) != Some(&NodeKind::Internet)
-            {
-                return Err(format!("flow {} requires terminal to internet", flow.id));
+            let endpoints = (find_kind(&flow.source), find_kind(&flow.destination));
+            if !matches!(
+                endpoints,
+                (Some(NodeKind::Terminal), Some(NodeKind::Internet))
+                    | (Some(NodeKind::Satellite), Some(NodeKind::GroundStation))
+            ) {
+                return Err(format!(
+                    "flow {} requires terminal-to-internet or satellite-to-ground-station endpoints",
+                    flow.id
+                ));
             }
             if flow.packet_count == 0 || !(1..=65_535).contains(&flow.packet_size_bytes) {
                 return Err(format!("invalid packet size/count in flow {}", flow.id));
