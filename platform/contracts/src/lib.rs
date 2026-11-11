@@ -1996,5 +1996,4 @@ mod tests {
         scenario.flows[0].destination = "ue-a".into();
         assert!(scenario.validate().is_err());
     }
-
 }
