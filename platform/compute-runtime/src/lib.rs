@@ -688,8 +688,10 @@ mod tests {
         assert_eq!(report.onboard_first.status, WorkloadStatus::DeadlineMissed);
 
         // The output path is checked independently after modeled execution.
-        scenario.workload.release_ns = scenario.network.duration_ns - 2_010_000_000;
-        scenario.workload.cpu_service_units = 2_009_999_999;
+        // At 1,000,000 service units/s, 2,010,000 units take 2,010,000,000 ns.
+        // Finish one nanosecond before the horizon so only output injection fails.
+        scenario.workload.release_ns = scenario.network.duration_ns - 2_010_000_001;
+        scenario.workload.cpu_service_units = 2_010_000;
         scenario.workload.deadline_ns = scenario.network.duration_ns;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.onboard_first.status, WorkloadStatus::DeadlineMissed);
