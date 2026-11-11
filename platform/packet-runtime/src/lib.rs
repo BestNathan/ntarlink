@@ -2018,7 +2018,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             if !configs.contains_key(contact.link_id.as_str()) {
                 continue;
             }
-            let mut up = true;
+            let mut up = scenario
+                .links
+                .iter()
+                .find(|link| link.id == contact.link_id)
+                .ok_or_else(|| format!("committed PAT contact has unknown link {}", contact.link_id))?
+                .up;
             for edge in committed_edges
                 .iter()
                 .filter(|edge| edge.link_id == contact.link_id)
