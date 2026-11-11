@@ -1789,7 +1789,14 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     .iter()
                     .any(|sample| sample.link_id == loss.link_id && sample.at_ns > loss.at_ns)
             });
-        if terminal_losses {
+        // Fault-free BODY-following streams can commit the actual leased
+        // actuator commands without manufacturing any recovery observations.
+        // Keep mixed external-fault and nonterminal loss cases provisional
+        // until their command rejection/recovery timeline can be reconciled.
+        let fault_free_commands = committed_losses.is_empty()
+            && scenario.faults.is_empty()
+            && steering_faults.is_empty();
+        if terminal_losses || fault_free_commands {
             let (_, _, edges) = execute_pat_head_timeline_with_losses(
                 scenario,
                 &plan.reservations,
