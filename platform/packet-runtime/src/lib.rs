@@ -1399,7 +1399,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .map(|pat| (pat.link_id.as_str(), pat))
         .collect();
     let mut previous_body_sample = HashMap::new();
-    steering_faults.extend(scenario.optical_body_tracking_samples.iter().map(|sample| {
+    // Rate constraints depend on adjacent virtual-time observations, not JSON
+    // array order. Canonicalize per-link history before deriving fault edges.
+    let mut ordered_body_samples: Vec<_> = scenario.optical_body_tracking_samples.iter().collect();
+    ordered_body_samples.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+    steering_faults.extend(ordered_body_samples.into_iter().map(|sample| {
         let previous = previous_body_sample.insert(sample.link_id.as_str(), sample);
         let rate_allowed = previous.is_none_or(|earlier| {
             let pat = body_pat_links[sample.link_id.as_str()];
@@ -1457,7 +1461,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             Option<&ntarlink_contracts::OpticalGeometry>,
         ),
     > = HashMap::new();
-    steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
+    // Geometry velocity and acceleration use the preceding chronological
+    // observations of each link, regardless of input array permutation.
+    let mut ordered_geometry_samples: Vec<_> = scenario.optical_geometry_samples.iter().collect();
+    ordered_geometry_samples.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+    steering_faults.extend(ordered_geometry_samples.into_iter().map(|sample| {
         let previous = previous_geometry.get(sample.link_id.as_str()).copied();
         previous_geometry.insert(
             sample.link_id.as_str(),
