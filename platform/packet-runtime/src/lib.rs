@@ -1845,9 +1845,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .filter(|fault| configs.contains_key(fault.link_id.as_str()))
             .all(|fault| {
                 fault.at_ns >= last_lease_end
-                    || !scenario.optical_body_following_samples.iter().any(|sample| {
-                        sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
-                    })
+                    || !scenario
+                        .optical_body_following_samples
+                        .iter()
+                        .any(|sample| {
+                            sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
+                        })
             })
             && plan.reservations.iter().all(|lease| {
                 let initial_up = scenario
