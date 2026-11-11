@@ -1821,9 +1821,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                         lease.link_id == fault.link_id
                             && lease.start_ns <= fault.at_ns
                             && fault.at_ns < lease.end_ns
-                    }) && !scenario.optical_body_following_samples.iter().any(|sample| {
-                        sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
-                    }))
+                    }) && !scenario
+                        .optical_body_following_samples
+                        .iter()
+                        .any(|sample| {
+                            sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
+                        }))
             })
             && plan.reservations.iter().all(|lease| {
                 let initial_up = scenario
@@ -1833,26 +1836,27 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     .is_some_and(|link| link.up);
                 effective_faults
                     .iter()
-                    .filter(|fault| {
-                        fault.link_id == lease.link_id && fault.at_ns <= lease.start_ns
-                    })
+                    .filter(|fault| fault.link_id == lease.link_id && fault.at_ns <= lease.start_ns)
                     .last()
                     .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
             })
-            && scenario.optical_body_following_samples.iter().all(|sample| {
-                let initial_up = scenario
-                    .links
-                    .iter()
-                    .find(|link| link.id == sample.link_id)
-                    .is_some_and(|link| link.up);
-                effective_faults
-                    .iter()
-                    .filter(|fault| {
-                        fault.link_id == sample.link_id && fault.at_ns <= sample.at_ns
-                    })
-                    .last()
-                    .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
-            });
+            && scenario
+                .optical_body_following_samples
+                .iter()
+                .all(|sample| {
+                    let initial_up = scenario
+                        .links
+                        .iter()
+                        .find(|link| link.id == sample.link_id)
+                        .is_some_and(|link| link.up);
+                    effective_faults
+                        .iter()
+                        .filter(|fault| {
+                            fault.link_id == sample.link_id && fault.at_ns <= sample.at_ns
+                        })
+                        .last()
+                        .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
+                });
         let fault_free_commands = committed_losses.is_empty() && faults_outside_head_activity;
         if terminal_losses || fault_free_commands {
             let (_, _, edges) = execute_pat_head_timeline_with_losses(
