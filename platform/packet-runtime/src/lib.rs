@@ -1879,19 +1879,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     })
                 })
             });
+        // A terminal command-derived loss does not exempt independent
+        // sampled faults from the same authoritative commit. In particular,
+        // omitting their recovery/down edges would make packet availability
+        // disagree with the PAT plan. Reject unsafe lease overlap instead.
         let fault_free_commands = committed_losses.is_empty() && faults_outside_head_activity;
         let recovered_commands = externally_recovered_losses && faults_outside_head_activity;
-        if terminal_losses || fault_free_commands || recovered_commands {
+        if faults_outside_head_activity
+            && (terminal_losses || fault_free_commands || recovered_commands)
+        {
             let (_, _, edges) = execute_pat_head_timeline_with_losses(
                 scenario,
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
-                if fault_free_commands || recovered_commands {
-                    &steering_faults
-                } else {
-                    &[]
-                },
+                &steering_faults,
             )?;
             committed_packet_edges = Some(edges);
         }
