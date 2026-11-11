@@ -2879,6 +2879,32 @@ mod tests {
     }
 
     #[test]
+    fn recovered_interlease_faults_preserve_body_commands_and_packet_accounting() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        // A 40-70 ms outage occupies a gap between acquired leases.
+        // A BODY command during that outage would remain on the conservative path.
+        scenario
+            .optical_body_following_samples
+            .retain(|sample| sample.at_ns != 60_000_000);
+        let first = run(&scenario).unwrap();
+        assert_eq!(first.injected, first.delivered + first.dropped);
+        assert!(first.pat_events.iter().any(|event| {
+            event.at_ns == 40_000_000
+                && event.state == "lost"
+                && event.reason == Some("administrative_link_down")
+        }));
+        scenario.faults.reverse();
+        let second = run(&scenario).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+    }
+
+    #[test]
     fn pat_timeline_preflight_is_shared_by_executor_and_lease_audit() {
         let scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
