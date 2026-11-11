@@ -1800,6 +1800,12 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .reservations
             .iter()
             .map(|reservation| reservation.end_ns)
+            .chain(
+                scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .map(|sample| sample.at_ns.saturating_add(1)),
+            )
             .max()
             .unwrap_or(0);
         let faults_after_leases = scenario
