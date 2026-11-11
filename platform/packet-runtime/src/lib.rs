@@ -1833,25 +1833,21 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             )
             .max()
             .unwrap_or(0);
-        // An external outage may also be committed between leases, provided
-        // it has recovered before the next reservation or BODY command.
-        // Check the effective state (not individual fault actions), so an
-        // administrative Up cannot hide a concurrent sampled-pointing Down.
+        // A fault may occur during an active lease: a lease owns the heads,
+        // not continuous link availability. The authoritative SYS-02 batch
+        // checks command acceptance at its actual virtual timestamp. Reject
+        // coincident command/fault transitions here; later state checks also
+        // require effective recovery before every command and reservation.
+        // This admits temporary in-lease Down/Up outages without treating an
+        // administrative Up as recovery from an independent pointing fault.
         let faults_outside_head_activity = effective_faults
             .iter()
             .filter(|fault| configs.contains_key(fault.link_id.as_str()))
             .all(|fault| {
                 fault.at_ns >= last_lease_end
-                    || (!plan.reservations.iter().any(|lease| {
-                        lease.link_id == fault.link_id
-                            && lease.start_ns <= fault.at_ns
-                            && fault.at_ns < lease.end_ns
-                    }) && !scenario
-                        .optical_body_following_samples
-                        .iter()
-                        .any(|sample| {
-                            sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
-                        }))
+                    || !scenario.optical_body_following_samples.iter().any(|sample| {
+                        sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
+                    })
             })
             && plan.reservations.iter().all(|lease| {
                 let initial_up = scenario
