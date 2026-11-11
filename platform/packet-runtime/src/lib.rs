@@ -2895,15 +2895,16 @@ mod tests {
             .retain(|sample| sample.at_ns != 60_000_000);
         let first = run(&scenario).unwrap();
         assert_eq!(first.injected, first.delivered + first.dropped);
-        assert!(first.control_events.iter().any(|event| {
-            event.at_ns == 40_000_000
-                && event.link_id.as_deref() == Some("isl-a-b")
-                && event.kind == "link_down"
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        assert!(prepared.faults.iter().any(|fault| {
+            fault.at_ns == 40_000_000
+                && fault.link_id == "isl-a-b"
+                && matches!(fault.action, LinkAction::Down)
         }));
-        assert!(first.control_events.iter().any(|event| {
-            event.at_ns == 70_000_000
-                && event.link_id.as_deref() == Some("isl-a-b")
-                && event.kind == "link_up"
+        assert!(prepared.faults.iter().any(|fault| {
+            fault.at_ns == 70_000_000
+                && fault.link_id == "isl-a-b"
+                && matches!(fault.action, LinkAction::Up)
         }));
         scenario.faults.reverse();
         let second = run(&scenario).unwrap();
