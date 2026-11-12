@@ -2899,6 +2899,11 @@ mod tests {
         scenario
             .optical_body_following_samples
             .retain(|sample| sample.at_ns <= 30_000_000);
+        // Remove the later optical contact, which would require another
+        // independent BODY command at its start in the scenario-v1 contract.
+        scenario
+            .contacts
+            .retain(|contact| contact.link_id != "isl-a-b" || contact.start_ns == 0);
         scenario.faults.clear();
 
         let (provisional, observations) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
