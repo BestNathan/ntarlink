@@ -583,9 +583,18 @@ mod tests {
         let report = run_experiment(&scenario).unwrap();
         let ground = &report.ground_only;
         assert_eq!(ground.status, WorkloadStatus::DeadlineMissed);
-        assert_eq!(ground.reason.as_deref(), Some("raw input arrived after workload deadline"));
-        assert!(ground.transfer.as_ref().unwrap().last_arrival_ns.unwrap() > scenario.workload.deadline_ns);
-        assert_eq!(ground.transfer.as_ref().unwrap().delivered_bytes, scenario.input_artifact.size_bytes);
+        assert_eq!(
+            ground.reason.as_deref(),
+            Some("raw input arrived after workload deadline")
+        );
+        assert!(
+            ground.transfer.as_ref().unwrap().last_arrival_ns.unwrap()
+                > scenario.workload.deadline_ns
+        );
+        assert_eq!(
+            ground.transfer.as_ref().unwrap().delivered_bytes,
+            scenario.input_artifact.size_bytes
+        );
         assert!(ground.packet_report.is_some());
         assert!(ground.started_ns.is_none());
         assert!(ground.resource_reservation.is_some());
