@@ -49,7 +49,10 @@ pub struct Ledger {
 
 impl Ledger {
     pub fn new(capacities: BTreeMap<String, Capacity>) -> Self {
-        Self { capacities, admitted: Vec::new() }
+        Self {
+            capacities,
+            admitted: Vec::new(),
+        }
     }
 
     pub fn admitted(&self) -> &[Request] {
@@ -57,9 +60,7 @@ impl Ledger {
     }
 
     pub fn admit(&mut self, request: Request) -> Admission {
-        let decision = if request.task_id.is_empty()
-            || request.start_ns >= request.end_ns
-        {
+        let decision = if request.task_id.is_empty() || request.start_ns >= request.end_ns {
             Decision::RejectedInvalidInterval
         } else if !self.capacities.contains_key(&request.node_id) {
             Decision::RejectedUnknownNode
@@ -71,7 +72,11 @@ impl Ledger {
         } else {
             Decision::RejectedCapacity
         };
-        Admission { task_id: request.task_id, node_id: request.node_id, decision }
+        Admission {
+            task_id: request.task_id,
+            node_id: request.node_id,
+            decision,
+        }
     }
 
     fn fits(&self, request: &Request) -> bool {
@@ -89,21 +94,26 @@ impl Ledger {
         }
         boundaries.sort_unstable();
         boundaries.dedup();
-        boundaries.into_iter().filter(|&t| t < request.end_ns).all(|t| {
-            let mut memory = u128::from(request.memory_bytes);
-            let mut storage = u128::from(request.storage_bytes);
-            let mut power = u128::from(request.power_mw);
-            for r in self.admitted.iter().filter(|r| {
-                r.node_id == request.node_id && r.start_ns <= t && t < r.end_ns
-            }) {
-                memory += u128::from(r.memory_bytes);
-                storage += u128::from(r.storage_bytes);
-                power += u128::from(r.power_mw);
-            }
-            memory <= u128::from(capacity.memory_bytes)
-                && storage <= u128::from(capacity.storage_bytes)
-                && power <= u128::from(capacity.power_mw)
-        })
+        boundaries
+            .into_iter()
+            .filter(|&t| t < request.end_ns)
+            .all(|t| {
+                let mut memory = u128::from(request.memory_bytes);
+                let mut storage = u128::from(request.storage_bytes);
+                let mut power = u128::from(request.power_mw);
+                for r in self
+                    .admitted
+                    .iter()
+                    .filter(|r| r.node_id == request.node_id && r.start_ns <= t && t < r.end_ns)
+                {
+                    memory += u128::from(r.memory_bytes);
+                    storage += u128::from(r.storage_bytes);
+                    power += u128::from(r.power_mw);
+                }
+                memory <= u128::from(capacity.memory_bytes)
+                    && storage <= u128::from(capacity.storage_bytes)
+                    && power <= u128::from(capacity.power_mw)
+            })
     }
 }
 
@@ -114,8 +124,7 @@ pub fn admit_deterministic(
     mut requests: Vec<Request>,
 ) -> (Vec<Admission>, Vec<Request>) {
     requests.sort_by(|a, b| {
-        (a.start_ns, &a.task_id, &a.node_id)
-            .cmp(&(b.start_ns, &b.task_id, &b.node_id))
+        (a.start_ns, &a.task_id, &a.node_id).cmp(&(b.start_ns, &b.task_id, &b.node_id))
     });
     let mut ledger = Ledger::new(capacities);
     let decisions = requests.into_iter().map(|r| ledger.admit(r)).collect();
@@ -128,14 +137,33 @@ mod tests {
 
     fn capacities() -> BTreeMap<String, Capacity> {
         BTreeMap::from([
-            ("sat-a".into(), Capacity { memory_bytes: 10, storage_bytes: 10, power_mw: 10 }),
-            ("sat-b".into(), Capacity { memory_bytes: 10, storage_bytes: 10, power_mw: 10 }),
+            (
+                "sat-a".into(),
+                Capacity {
+                    memory_bytes: 10,
+                    storage_bytes: 10,
+                    power_mw: 10,
+                },
+            ),
+            (
+                "sat-b".into(),
+                Capacity {
+                    memory_bytes: 10,
+                    storage_bytes: 10,
+                    power_mw: 10,
+                },
+            ),
         ])
     }
     fn req(id: &str, node: &str, start: u64, end: u64, usage: u64) -> Request {
         Request {
-            task_id: id.into(), node_id: node.into(), start_ns: start,
-            end_ns: end, memory_bytes: usage, storage_bytes: usage, power_mw: usage,
+            task_id: id.into(),
+            node_id: node.into(),
+            start_ns: start,
+            end_ns: end,
+            memory_bytes: usage,
+            storage_bytes: usage,
+            power_mw: usage,
         }
     }
 
@@ -149,47 +177,95 @@ mod tests {
         let (first, admitted) = admit_deterministic(capacities(), requests.clone());
         let (second, _) = admit_deterministic(capacities(), requests.into_iter().rev().collect());
         assert_eq!(first, second);
-        assert_eq!(first.iter().map(|a| &a.decision).collect::<Vec<_>>(),
-            vec![&Decision::Admitted, &Decision::RejectedCapacity, &Decision::Admitted]);
+        assert_eq!(
+            first.iter().map(|a| &a.decision).collect::<Vec<_>>(),
+            vec![
+                &Decision::Admitted,
+                &Decision::RejectedCapacity,
+                &Decision::Admitted
+            ]
+        );
         assert_eq!(admitted.len(), 2);
     }
 
     #[test]
     fn half_open_intervals_release_capacity_at_exact_end() {
         let mut ledger = Ledger::new(capacities());
-        assert_eq!(ledger.admit(req("a", "sat-a", 0, 10, 10)).decision, Decision::Admitted);
-        assert_eq!(ledger.admit(req("b", "sat-a", 10, 20, 10)).decision, Decision::Admitted);
-        assert_eq!(ledger.admit(req("c", "sat-a", 9, 11, 1)).decision, Decision::RejectedCapacity);
+        assert_eq!(
+            ledger.admit(req("a", "sat-a", 0, 10, 10)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("b", "sat-a", 10, 20, 10)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("c", "sat-a", 9, 11, 1)).decision,
+            Decision::RejectedCapacity
+        );
         assert_eq!(ledger.admitted().len(), 2);
     }
 
     #[test]
     fn overlapping_nonuniform_usage_checks_every_boundary() {
         let mut ledger = Ledger::new(capacities());
-        assert_eq!(ledger.admit(req("a", "sat-a", 0, 5, 6)).decision, Decision::Admitted);
-        assert_eq!(ledger.admit(req("b", "sat-a", 5, 10, 6)).decision, Decision::Admitted);
-        assert_eq!(ledger.admit(req("c", "sat-a", 2, 8, 5)).decision, Decision::RejectedCapacity);
-        assert_eq!(ledger.admit(req("d", "sat-a", 2, 8, 4)).decision, Decision::Admitted);
+        assert_eq!(
+            ledger.admit(req("a", "sat-a", 0, 5, 6)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("b", "sat-a", 5, 10, 6)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("c", "sat-a", 2, 8, 5)).decision,
+            Decision::RejectedCapacity
+        );
+        assert_eq!(
+            ledger.admit(req("d", "sat-a", 2, 8, 4)).decision,
+            Decision::Admitted
+        );
     }
 
     #[test]
     fn invalid_and_duplicate_requests_do_not_mutate_ledger() {
         let mut ledger = Ledger::new(capacities());
-        assert_eq!(ledger.admit(req("a", "sat-a", 0, 10, 1)).decision, Decision::Admitted);
-        assert_eq!(ledger.admit(req("a", "sat-b", 10, 20, 1)).decision, Decision::RejectedDuplicateTask);
-        assert_eq!(ledger.admit(req("b", "sat-a", 10, 10, 1)).decision, Decision::RejectedInvalidInterval);
-        assert_eq!(ledger.admit(req("c", "missing", 10, 20, 1)).decision, Decision::RejectedUnknownNode);
+        assert_eq!(
+            ledger.admit(req("a", "sat-a", 0, 10, 1)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("a", "sat-b", 10, 20, 1)).decision,
+            Decision::RejectedDuplicateTask
+        );
+        assert_eq!(
+            ledger.admit(req("b", "sat-a", 10, 10, 1)).decision,
+            Decision::RejectedInvalidInterval
+        );
+        assert_eq!(
+            ledger.admit(req("c", "missing", 10, 20, 1)).decision,
+            Decision::RejectedUnknownNode
+        );
         assert_eq!(ledger.admitted().len(), 1);
     }
 
     #[test]
     fn large_resource_values_cannot_overflow_admission() {
-        let mut ledger = Ledger::new(BTreeMap::from([
-            ("sat".into(), Capacity {
-                memory_bytes: u64::MAX, storage_bytes: u64::MAX, power_mw: u64::MAX
-            })
-        ]));
-        assert_eq!(ledger.admit(req("a", "sat", 0, 10, u64::MAX)).decision, Decision::Admitted);
-        assert_eq!(ledger.admit(req("b", "sat", 0, 10, 1)).decision, Decision::RejectedCapacity);
+        let mut ledger = Ledger::new(BTreeMap::from([(
+            "sat".into(),
+            Capacity {
+                memory_bytes: u64::MAX,
+                storage_bytes: u64::MAX,
+                power_mw: u64::MAX,
+            },
+        )]));
+        assert_eq!(
+            ledger.admit(req("a", "sat", 0, 10, u64::MAX)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("b", "sat", 0, 10, 1)).decision,
+            Decision::RejectedCapacity
+        );
     }
 }
