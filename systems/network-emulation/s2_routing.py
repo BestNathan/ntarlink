@@ -254,7 +254,7 @@ def parse_continuous_ping(output: str) -> dict:
     replies = []
     missed = []
     for line in output.splitlines():
-        match = re.search(r"^\\[(\\d+(?:\\.\\d+)?)\\].*icmp_seq=(\\d+)", line)
+        match = re.search(r"^\[(\d+(?:\.\d+)?)\].*icmp_seq=(\d+)", line)
         if not match:
             continue
         timestamp_ns = int(Decimal(match.group(1)) * 1_000_000_000)
