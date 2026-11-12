@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "name": "s2-linux-ip-test-path",
+  "duration_ns": 350000000,
+  "control_delay_ns": 20000000,
+  "nodes": [
+    {"id": "ue-a", "kind": "terminal"},
+    {"id": "sat-a", "kind": "satellite"},
+    {"id": "sat-b", "kind": "satellite"},
+    {"id": "gw-a", "kind": "ground_station"}
+  ],
+  "links": [
+    {"id": "user-uplink", "from": "ue-a", "to": "sat-a", "kind": "user_rf", "capacity_bps": 10000000, "propagation_delay_ns": 1000000, "queue_limit_bytes": 16000},
+    {"id": "space-isl", "from": "sat-a", "to": "sat-b", "kind": "optical_isl", "capacity_bps": 10000000, "propagation_delay_ns": 1500000, "queue_limit_bytes": 16000},
+    {"id": "feeder-downlink", "from": "sat-b", "to": "gw-a", "kind": "feeder", "capacity_bps": 10000000, "propagation_delay_ns": 1000000, "queue_limit_bytes": 16000}
+  ],
+  "flows": [
+    {"id": "s2-probe", "source": "ue-a", "destination": "gw-a", "packet_size_bytes": 1000, "packet_count": 5, "start_ns": 0, "interval_ns": 20000000}
+  ],
+  "faults": [
+    {"at_ns": 100000000, "link_id": "space-isl", "action": "down"},
+    {"at_ns": 220000000, "link_id": "space-isl", "action": "up"}
+  ]
+}
