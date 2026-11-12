@@ -1854,28 +1854,29 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .iter()
             .chain(independently_sourced_faults.iter())
             .any(|fault| {
-                scenario.optical_body_following_samples.iter().any(|sample| {
-                    fault.link_id == sample.link_id && fault.at_ns == sample.at_ns
-                })
+                scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .any(|sample| fault.link_id == sample.link_id && fault.at_ns == sample.at_ns)
             });
         let faults_outside_head_activity = !independent_fault_at_command
             && effective_faults
-            .iter()
-            .filter(|fault| {
-                configs.contains_key(fault.link_id.as_str())
-                    && !committed_losses.iter().any(|loss| {
-                        loss.link_id == fault.link_id && loss.at_ns == fault.at_ns
-                    })
-            })
-            .all(|fault| {
-                fault.at_ns >= last_lease_end
-                    || !scenario
-                        .optical_body_following_samples
-                        .iter()
-                        .any(|sample| {
-                            sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
-                        })
-            })
+                .iter()
+                .filter(|fault| {
+                    configs.contains_key(fault.link_id.as_str())
+                        && !committed_losses
+                            .iter()
+                            .any(|loss| loss.link_id == fault.link_id && loss.at_ns == fault.at_ns)
+                })
+                .all(|fault| {
+                    fault.at_ns >= last_lease_end
+                        || !scenario
+                            .optical_body_following_samples
+                            .iter()
+                            .any(|sample| {
+                                sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
+                            })
+                })
             && plan.reservations.iter().all(|lease| {
                 let initial_up = scenario
                     .links
@@ -1900,9 +1901,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     effective_faults
                         .iter()
                         .rev()
-                        .find(|fault| {
-                            fault.link_id == sample.link_id && fault.at_ns < sample.at_ns
-                        })
+                        .find(|fault| fault.link_id == sample.link_id && fault.at_ns < sample.at_ns)
                         .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
                 });
         // A later BODY command may follow a committed pointing loss only when
@@ -2902,20 +2901,13 @@ mod tests {
             .retain(|sample| sample.at_ns <= 30_000_000);
         scenario.faults.clear();
 
-        let (provisional, observations) =
-            execute_pat_head_timeline(&scenario, &[], None).unwrap();
-        let evidence = project_body_command_evidence(
-            &scenario.optical_body_following_samples,
-            &observations,
-        )
-        .unwrap();
-        let losses = verified_body_pointing_losses(
-            &scenario,
-            &evidence,
-            &observations,
-            &provisional,
-        )
-        .unwrap();
+        let (provisional, observations) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let evidence =
+            project_body_command_evidence(&scenario.optical_body_following_samples, &observations)
+                .unwrap();
+        let losses =
+            verified_body_pointing_losses(&scenario, &evidence, &observations, &provisional)
+                .unwrap();
         assert_eq!(losses.len(), 1);
         assert_eq!(losses[0].at_ns, 30_000_000);
         let (_, _, edges) = execute_pat_head_timeline_with_losses(
