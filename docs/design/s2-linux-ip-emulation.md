@@ -35,3 +35,34 @@ Acceptance: the initial ping succeeds, down-fault ping fails, recovery ping succ
 5. The P2 acceptance must eventually compare real PCAP/delay/throughput to independently measured time and resources, record skew and routing changes, and include failures/retries.
 
 **CI:** the dedicated S2 workflow tests default dry-run without privilege and runs a privileged Linux netns/ping/iperf3/tcpdump smoke experiment. The S1 Rust CI remains the deterministic packet authority.
+
+
+## Centralized backup-ISL routing experiment
+
+A second opt-in command uses the same namespace/qdisc primitives, but exports
+the **whole bounded directed scenario graph** instead of a single path. It
+selects a stable lexical shortest path, keeps a backup ISL physically present,
+and after a link failure recomputes the route using only active links. The
+controller then updates actual Linux /32 IP routes in the affected namespaces,
+measures kernel route-configuration wall time and probes real IP connectivity.
+Recovery of the original ISL switches traffic back to the shorter primary path.
+
+    python3 systems/network-emulation/s2_routing.py scenarios/s2-route-failover.json --source ue-a --target internet
+    sudo python3 systems/network-emulation/s2_routing.py scenarios/s2-route-failover.json --source ue-a --target internet --tag r2 --apply --time-scale 20 --iperf --pcap /tmp/s2-routing.pcap --output /tmp/s2-routing-report.json
+
+The committed backup-path fixture represents terminal → satellite A → satellite
+B → gateway → PoP → internet, with a secondary satellite A → satellite C →
+satellite B path. The fixture supplies ISL Down and Up. The acceptance checks
+that *live Linux* ping succeeds before the fault, over the secondary path, and
+after returning to the direct path; it requires route snapshots, controller
+apply timing, iperf3 and a nonempty PCAP, and zero leftover namespaces.
+
+**Critical fidelity distinction:** this is a centralized, deterministic
+IP route-programming baseline, *not* FRRouting/BGP/OSPF, a measured routing
+protocol convergence result, an S1 route replay or a distributed path optimizer.
+The controller's measured route-apply duration and post-update ping do not
+include protocol discovery, neighbor state sync, or route advertisement.
+Failure during programming may temporarily disrupt packets; future tests must
+measure that blackout independently. FRR (or a chosen comparable protocol
+stack), measured convergence under recurring flaps, capacity contention and
+a production worker/image contract remain in Issue #4.
