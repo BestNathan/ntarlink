@@ -6,6 +6,7 @@ it does not impersonate FRRouting, a distributed protocol, or the S1 scheduler.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -256,7 +257,7 @@ def parse_continuous_ping(output: str) -> dict:
         match = re.search(r"^\\[(\\d+(?:\\.\\d+)?)\\].*icmp_seq=(\\d+)", line)
         if not match:
             continue
-        timestamp_ns = int(float(match.group(1)) * 1_000_000_000)
+        timestamp_ns = int(Decimal(match.group(1)) * 1_000_000_000)
         seq = int(match.group(2))
         if "bytes from" in line:
             replies.append((seq, timestamp_ns))
