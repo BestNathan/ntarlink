@@ -1431,6 +1431,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     let mut follower_runtime = None;
     let mut predicted_observations = HashMap::new();
     let mut body_command_evidence = Vec::new();
+    let mut predicted_body_faults = Vec::new();
     if !scenario.optical_body_following_samples.is_empty() {
         let (runtime, observations) = execute_pat_head_timeline(scenario, &[], None)?;
         follower_runtime = Some(runtime);
@@ -1439,7 +1440,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             &scenario.optical_body_following_samples,
             &predicted_observations,
         )?;
-        steering_faults.extend(project_body_following_faults(&body_command_evidence));
+        predicted_body_faults = project_body_following_faults(&body_command_evidence);
     }
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
@@ -1510,6 +1511,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             cause: FaultCause::SampledPointing,
         }
     }));
+
+    // Predicted BODY command edges are speculative planning inputs, not
+    // independent sensor/fault evidence in the committed SYS-02 timeline.
+    let independently_sourced_faults = steering_faults.clone();
+    steering_faults.extend(predicted_body_faults);
 
     // Administrative and sampled-pointing faults are independent state domains.
     // Fold all edges at the same timestamp before evaluating effective availability:
@@ -1840,18 +1846,37 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         // require effective recovery before every command and reservation.
         // This admits temporary in-lease Down/Up outages without treating an
         // administrative Up as recovery from an independent pointing fault.
-        let faults_outside_head_activity = effective_faults
+        // External faults execute before same-time head Commands. A projected
+        // command-derived loss executes *after* its own Command instead, so
+        // it must not invalidate that same Command during preflight.
+        let independent_fault_at_command = scenario
+            .faults
             .iter()
-            .filter(|fault| configs.contains_key(fault.link_id.as_str()))
-            .all(|fault| {
-                fault.at_ns >= last_lease_end
-                    || !scenario
-                        .optical_body_following_samples
-                        .iter()
-                        .any(|sample| {
-                            sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
-                        })
-            })
+            .chain(independently_sourced_faults.iter())
+            .any(|fault| {
+                scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .any(|sample| fault.link_id == sample.link_id && fault.at_ns == sample.at_ns)
+            });
+        let faults_outside_head_activity = !independent_fault_at_command
+            && effective_faults
+                .iter()
+                .filter(|fault| {
+                    configs.contains_key(fault.link_id.as_str())
+                        && !committed_losses
+                            .iter()
+                            .any(|loss| loss.link_id == fault.link_id && loss.at_ns == fault.at_ns)
+                })
+                .all(|fault| {
+                    fault.at_ns >= last_lease_end
+                        || !scenario
+                            .optical_body_following_samples
+                            .iter()
+                            .any(|sample| {
+                                sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
+                            })
+                })
             && plan.reservations.iter().all(|lease| {
                 let initial_up = scenario
                     .links
@@ -1876,9 +1901,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     effective_faults
                         .iter()
                         .rev()
-                        .find(|fault| {
-                            fault.link_id == sample.link_id && fault.at_ns <= sample.at_ns
-                        })
+                        .find(|fault| fault.link_id == sample.link_id && fault.at_ns < sample.at_ns)
                         .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
                 });
         // A later BODY command may follow a committed pointing loss only when
@@ -1894,7 +1917,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                     .map(|sample| sample.at_ns)
                     .min();
                 next_command.is_none_or(|next_at| {
-                    steering_faults.iter().any(|fault| {
+                    independently_sourced_faults.iter().any(|fault| {
                         fault.link_id == loss.link_id
                             && fault.cause == FaultCause::SampledPointing
                             && matches!(fault.action, LinkAction::Up)
@@ -1917,7 +1940,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
                 &plan.reservations,
                 Some(&predicted_observations),
                 &committed_losses,
-                &steering_faults,
+                &independently_sourced_faults,
             )?;
             committed_packet_edges = Some(edges);
         }
@@ -2861,6 +2884,64 @@ mod tests {
         assert_eq!(
             prepare_pat(&unknown).unwrap_err(),
             "unknown predicted PAT link"
+        );
+    }
+
+    #[test]
+    fn terminal_body_loss_commits_after_its_command_without_duplicate_prefault() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        // A successful sampled BODY command at 30 ms observes a pointing loss.
+        // It must not be inserted as a pre-command fault in the same SYS-02
+        // transaction. No later command or independent recovery is present.
+        scenario
+            .optical_body_following_samples
+            .retain(|sample| sample.at_ns <= 30_000_000);
+        // Remove the later optical contact, which would require another
+        // independent BODY command at its start in the scenario-v1 contract.
+        scenario
+            .contacts
+            .retain(|contact| contact.link_id != "isl-a-b" || contact.start_ns == 0);
+        scenario
+            .optical_pat_slew_targets
+            .retain(|target| target.at_ns == 0);
+        scenario.faults.clear();
+
+        let (provisional, observations) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let evidence =
+            project_body_command_evidence(&scenario.optical_body_following_samples, &observations)
+                .unwrap();
+        let losses =
+            verified_body_pointing_losses(&scenario, &evidence, &observations, &provisional)
+                .unwrap();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].at_ns, 30_000_000);
+        let (_, _, edges) = execute_pat_head_timeline_with_losses(
+            &scenario,
+            &[],
+            Some(&observations),
+            &losses,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].at_ns, 30_000_000);
+        assert!(!edges[0].now_up);
+        assert_eq!(edges[0].down_cause, Some(FaultCause::SampledPointing));
+
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        assert!(prepared.faults.iter().any(|fault| {
+            fault.link_id == "isl-a-b"
+                && fault.at_ns == 30_000_000
+                && matches!(fault.action, LinkAction::Down)
+        }));
+        let first = run(&scenario).unwrap();
+        assert_eq!(first.injected, first.delivered + first.dropped);
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
         );
     }
 
