@@ -150,6 +150,21 @@ class LinuxRouteGraph(LinuxPath):
         self.disabled: set[str] = set()
         self.active_path: list[str] = []
 
+    def start_capture(self, pcap: Path) -> None:
+        if not shutil.which("tcpdump"):
+            raise PlanError("--pcap requires tcpdump")
+        # Graph links are ID-sorted, not necessarily source-attached.
+        # Capture on the active path's source egress, not links[0].
+        edge = next(link for link in self.plan["links"] if link["id"] == self.active_path[0])
+        self.capture = subprocess.Popen([
+            "ip", "netns", "exec", edge["left_ns"], "tcpdump",
+            "-n", "-U", "-i", edge["left_if"], "-w", str(pcap), "ip",
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        time.sleep(0.2)
+        if self.capture.poll() is not None:
+            _, err = self.capture.communicate()
+            raise RuntimeError("S2 graph capture failed: " + err[-500:])
+
     def setup(self) -> None:
         if sys.platform != "linux" or os.geteuid() != 0:
             raise PlanError("Linux root/CAP_NET_ADMIN is required for --apply")
