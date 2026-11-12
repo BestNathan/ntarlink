@@ -25,11 +25,11 @@ class S2RouteTests(unittest.TestCase):
 
     def test_continuous_probe_detects_missing_replies_and_bounds_gap(self):
         output = (
-            "[1000.000000] 64 bytes from 10.248.7.2: icmp_seq=1 ttl=64 time=1 ms\\n"
-            "[1000.200000] 64 bytes from 10.248.7.2: icmp_seq=2 ttl=64 time=1 ms\\n"
-            "[1000.400000] no answer yet for icmp_seq=3\\n"
-            "[1000.600000] no answer yet for icmp_seq=4\\n"
-            "[1000.800000] 64 bytes from 10.248.7.2: icmp_seq=5 ttl=64 time=1 ms\\n"
+            "[1000.000000] 64 bytes from 10.248.7.2: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.200000] 64 bytes from 10.248.7.2: icmp_seq=2 ttl=64 time=1 ms\n"
+            "[1000.400000] no answer yet for icmp_seq=3\n"
+            "[1000.600000] no answer yet for icmp_seq=4\n"
+            "[1000.800000] 64 bytes from 10.248.7.2: icmp_seq=5 ttl=64 time=1 ms\n"
         )
         result = parse_continuous_ping(output)
         self.assertEqual(result["received_reply_count"], 3)
