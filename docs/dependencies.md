@@ -72,3 +72,64 @@
 - [CesiumJS Apache-2.0](https://cesium.com/platform/cesiumjs/).
 
 External citations/links document initial research; **pinning an exact version is a future engineering task**. Do not infer production Starlink compliance from any selected dependency.
+
+
+## 5. C2 adapter selection and evidence gate (2026-11-12)
+
+This is the **decision record** for research issue #5, not a mandate to integrate
+every simulator. Source repositories and observed maintenance/license metadata
+were checked on 2026-11-12. An upstream repository's latest moving branch is
+not a pinned dependency. Exact release, per-file license and transitive notices
+remain mandatory **when** a deferred component is selected for adoption.
+
+| Candidate | Decision | Reason and operational boundary |
+| --- | --- | --- |
+| Linux netns/veth/tc through iproute2 | **Selected: isolated S2 C2 POC** | Real Linux IP forwarding, kernel namespace isolation and impairment control. Separate wall-clock worker; never replace the deterministic S1 event engine |
+| iputils-ping, iperf3, tcpdump | **Selected: S2 test tools only** | Real RTT, throughput and PCAP evidence; host processes, no binary vendoring or in-process linking |
+| FRRouting | **Deferred until C2 routing step** | [FRRouting/frr](https://github.com/FRRouting/frr) was active on 2026-11-12; protocol routing/convergence is useful but daemon privileges and mixed per-file GPL notices need a pinned release, review and alternate-path experiment first |
+| OpenSAND | **Deferred protocol comparison** | DVB emulation is not the baseline broadband PHY; separate GPL/LGPL, Linux runtime and benchmark would be required |
+| ns-3 and SNS3 | **Deferred independent packet-reference comparison** | [SNS3](https://github.com/sns3/sns3-satellite) was active in October 2026 and declares GPL-3.0. Its ns-3 ownership and simulation clock must not silently merge with S1 |
+| OAI RAN and Open5GS | **Deferred separate NR-NTN profile** | [Open5GS](https://github.com/open5gs/open5gs) was active in November 2026 and declares AGPL-3.0. OAI uses CSSL terms; neither is a prerequisite for the IP gateway reference path |
+| GNU Radio | **Deferred isolated SDR/HIL laboratory** | [GNU Radio](https://github.com/gnuradio/gnuradio) is maintained and GPL-3.0, but IQ/SDR and radio compliance are outside the first S2 network result |
+| Orekit | **Deferred higher-fidelity orbit adapter** | JVM, time/frame and accuracy comparison with already integrated Skyfield/SGP4 must justify this additional engine |
+| CesiumJS | **Deferred optional live evidence display** | [CesiumJS](https://github.com/CesiumGS/cesium) declares Apache-2.0 and is active, but neither map imagery nor a 3D UI is needed to prove Linux IP forwarding; the current Pages demo is synthetic |
+| StarryNet and OpenSN | **Reference-only** | [StarryNet](https://github.com/SpaceNetLab/StarryNet) declares MIT and remains available; adoption would introduce a second emulation orchestration layer. OpenSN requires license/version audit **if promoted**, not integration for its own sake |
+| Python SGP4 and Skyfield | **Already integrated under SYS-01** | Exact versions pinned in the orbital package and covered by existing Python/scientific reference tests; no new decision required |
+
+### Executable acceptance and reproducibility
+
+- The minimal selected C2 stack has real GitHub-hosted evidence from
+  [S2 Linux workflow](https://github.com/BestNathan/ntarlink/actions/runs/43152811922)
+  on the reviewed PR #153 code: live 4-namespace/3-link forwarding,
+  outage and recovery, nonzero iperf3 received bytes, nonempty real PCAP,
+  successful cleanup, and Python dry-run safety tests. The companion CI
+  checks Rust, Python, TypeScript and docs independently.
+- The input is the versioned [S2 golden scenario](../scenarios/s2-linux-ip-path.json).
+  The worker emits its SHA-256, selected routes, timestamps, applied impairment,
+  ping/iperf observations, kernel snapshot, and cleanup results. The
+  measurement is **S2 wall-clock** and is not an S1 virtual-time packet trace.
+- Tested hosted OS: Ubuntu 24.04. The successful host reported Linux kernel
+  7.0.0-1017-azure, iproute2 command version 6.1.0 and iperf3 3.16. The
+  [host dependency evidence script](../scripts/record_s2_host_deps.py) now
+  fails closed if those reviewed command versions drift, records **exact**
+  installed Debian package revisions and SHA-256 of each installed package's
+  copyright notice, and uploads this manifest alongside ping/PCAP evidence.
+- External tools are executed from distro packages, not linked, vendored or
+  distributed by ntarlink. GitHub license summary may be NOASSERTION even for
+  maintained projects (notably FRR, iperf3 and tcpdump); review the recorded
+  **installed** copyright/notice texts and any combined-work/distribution
+  obligations before packaging a worker image. An upstream GPL/AGPL license
+  cannot be treated as permissive because it runs in another process.
+- Ubuntu runner tags and apt indexes are **not content-addressed immutable
+  images**. The command-version gate and complete per-run manifest make the
+  prototype inspectable and fail closed on drift, but do not provide fully
+  hermetic replay. A digest-pinned worker image, audited package lock and
+  host-kernel compatibility matrix are required before production deployment.
+- Any **newly selected** component, notably FRRouting, must first acquire an
+  exact version/commit, copyright/transitive audit, reproducible external
+  golden scenario, environment manifest, fault tests, performance baseline
+  and explicit clock/authority contract. This research decision closes the
+  dependency *selection* question; the engineering acceptance lives in #4.
+
+Do not claim an external dependency is integrated merely because it appears
+in this register. No proprietary Starlink air-interface compatibility is implied.
