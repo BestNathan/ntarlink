@@ -287,6 +287,11 @@ def parse_continuous_ping(output: str) -> dict:
     }
 
 
+def remaining_probe_window_ns(origin_ns: int, duration_ns: int, scale: float, now_ns: int) -> int:
+    """Keep the live probe running until the full scaled scenario horizon."""
+    return max(0, origin_ns + int(duration_ns * scale) - now_ns)
+
+
 def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -> dict:
     if not 1.0 <= scale <= 100.0 or plan["duration_ns"] * scale / 1e9 > 120:
         raise PlanError("invalid time-scale or excessive wall duration")
@@ -333,6 +338,16 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
                 "post_route_ping_success": ping["success"],
                 "post_route_rtt_ms": ping["rtt_ms"],
             })
+        # A final recovery event can occur near the end of the fault list.
+        # Without this hold, SIGINT truncates the probe before any recovered
+        # replies can be sampled. The horizon is wall-clock, not S1 time.
+        remaining_ns = remaining_probe_window_ns(
+            origin, plan["duration_ns"], scale, time.monotonic_ns()
+        )
+        if remaining_ns:
+            time.sleep(remaining_ns / 1e9)
+        report["probe_window_wall_ns"] = time.monotonic_ns() - origin
+        report["expected_probe_window_wall_ns"] = int(plan["duration_ns"] * scale)
         report["final_kernel_state"] = worker.snapshot()
     finally:
         if continuous_ping is not None:

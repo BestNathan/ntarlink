@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
-from s2_routing import PlanError, build_graph, find_path, parse_continuous_ping  # noqa: E402
+from s2_routing import PlanError, build_graph, find_path, parse_continuous_ping, remaining_probe_window_ns  # noqa: E402
 
 FIXTURE = ROOT / "scenarios" / "s2-route-failover.json"
 
@@ -37,6 +37,21 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(result["reply_gaps"][0]["missing_sequence_count"], 2)
         self.assertEqual(result["largest_observed_reply_gap_wall_ns"], 600_000_000)
         self.assertIsNone(parse_continuous_ping("no replies")["largest_observed_reply_gap_wall_ns"])
+
+    def test_continuous_probe_waits_for_full_scaled_horizon(self):
+        origin = 1_000_000_000
+        duration = 400_000_000
+        scale = 20.0
+        self.assertEqual(
+            remaining_probe_window_ns(origin, duration, scale, origin + 4_400_000_000),
+            3_600_000_000,
+        )
+        # A slow controller cannot cause negative sleeps or rewind the clock.
+        self.assertEqual(
+            remaining_probe_window_ns(origin, duration, scale, origin + 9_000_000_000),
+            0,
+        )
+        self.assertEqual(remaining_probe_window_ns(origin, duration, 1.0, origin), duration)
 
     def test_initial_backup_and_recovery_topology(self):
         plan = self.plan()
