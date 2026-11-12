@@ -442,6 +442,15 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         }
         arrived.ok_or("complete input transfer without arrival timestamp")?
     };
+    // A ground task cannot begin after its input arrives past the deadline.
+    // Preserve packet evidence but do not admit impossible post-deadline work.
+    if start_ns > task.deadline_ns {
+        outcome.fail(
+            WorkloadStatus::DeadlineMissed,
+            "raw input arrived after workload deadline",
+        );
+        return Ok(outcome);
+    }
     outcome.started_ns = Some(start_ns);
     let Some(completed_compute) = start_ns.checked_add(cpu_duration) else {
         // An otherwise valid modeled workload may exceed the representable
@@ -565,6 +574,36 @@ mod tests {
         let first = serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap();
         let second = serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn ground_input_arriving_after_deadline_never_starts_compute() {
+        let mut scenario = fixture();
+        scenario.workload.deadline_ns = scenario.workload.release_ns + 1;
+        let report = run_experiment(&scenario).unwrap();
+        let ground = &report.ground_only;
+        assert_eq!(ground.status, WorkloadStatus::DeadlineMissed);
+        assert_eq!(
+            ground.reason.as_deref(),
+            Some("raw input arrived after workload deadline")
+        );
+        assert!(
+            ground.transfer.as_ref().unwrap().last_arrival_ns.unwrap()
+                > scenario.workload.deadline_ns
+        );
+        assert_eq!(
+            ground.transfer.as_ref().unwrap().delivered_bytes,
+            scenario.input_artifact.size_bytes
+        );
+        assert!(ground.packet_report.is_some());
+        assert!(ground.started_ns.is_none());
+        assert!(ground.resource_reservation.is_some());
+        assert!(ground.compute_completed_ns.is_none());
+        assert!(ground.produced_artifact.is_none());
+        assert_eq!(
+            serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap(),
+            serde_json::to_vec(&report).unwrap()
+        );
     }
 
     #[test]
