@@ -6,12 +6,14 @@ it does not impersonate FRRouting, a distributed protocol, or the S1 scheduler.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import re
+import signal
 import shutil
 import subprocess
 import sys
@@ -247,6 +249,38 @@ class LinuxRouteGraph(LinuxPath):
         return route
 
 
+def parse_continuous_ping(output: str) -> dict:
+    """Summarize observed kernel ping replies without claiming exact outage onset."""
+    replies = []
+    missed = []
+    for line in output.splitlines():
+        match = re.search(r"^\[(\d+(?:\.\d+)?)\].*icmp_seq=(\d+)", line)
+        if not match:
+            continue
+        timestamp_ns = int(Decimal(match.group(1)) * 1_000_000_000)
+        seq = int(match.group(2))
+        if "bytes from" in line:
+            replies.append((seq, timestamp_ns))
+        elif "no answer yet" in line:
+            missed.append(seq)
+    gaps = [
+        {"before_seq": previous[0], "after_seq": current[0],
+         "elapsed_wall_ns": current[1] - previous[1],
+         "missing_sequence_count": max(0, current[0] - previous[0] - 1)}
+        for previous, current in zip(replies, replies[1:])
+        if current[0] > previous[0] + 1
+    ]
+    return {
+        "received_reply_count": len(replies),
+        "observed_missing_sequences": sorted(set(missed)),
+        "reply_gaps": gaps,
+        "largest_observed_reply_gap_wall_ns": max(
+            (gap["elapsed_wall_ns"] for gap in gaps), default=None
+        ),
+        "interpretation": "sampled wall-clock reply gap, not exact outage or protocol convergence",
+    }
+
+
 def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -> dict:
     if not 1.0 <= scale <= 100.0 or plan["duration_ns"] * scale / 1e9 > 120:
         raise PlanError("invalid time-scale or excessive wall duration")
@@ -257,6 +291,7 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
         "kernel": platform.release(), "scale": scale,
         "events": [], "probes": [],
     }
+    continuous_ping = None
     try:
         worker.setup()
         report["initial_path"] = worker.active_path
@@ -267,6 +302,15 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
         report["probes"].append(worker.ping("initial"))
         if iperf:
             report["iperf_initial"] = worker.iperf()
+        # A real, sustained host-clock probe spans the entire fault/recovery
+        # sequence. The post-route probes alone cannot reveal lost traffic.
+        source_ns = next(node["namespace"] for node in plan["nodes"]
+                         if node["id"] == plan["source"])
+        continuous_ping = subprocess.Popen(
+            ["ip", "netns", "exec", source_ns, "ping", "-n", "-D", "-O",
+             "-i", "0.2", plan["target_ip"]],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
         origin = time.monotonic_ns()
         for event in plan["faults"]:
             target_offset = int(event["at_ns"] * scale)
@@ -285,6 +329,19 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
             })
         report["final_kernel_state"] = worker.snapshot()
     finally:
+        if continuous_ping is not None:
+            if continuous_ping.poll() is None:
+                continuous_ping.send_signal(signal.SIGINT)
+            try:
+                stdout, stderr = continuous_ping.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                continuous_ping.kill()
+                stdout, stderr = continuous_ping.communicate()
+                report["continuous_ping_warning"] = "probe required forced termination"
+            report["continuous_ping"] = parse_continuous_ping(stdout)
+            report["continuous_ping"]["stderr_tail"] = stderr[-300:]
+        else:
+            report["continuous_ping_warning"] = "probe did not start"
         report["cleanup_errors"] = worker.close()
         report["operation_count"] = len(worker.commands)
         report["operations"] = worker.commands

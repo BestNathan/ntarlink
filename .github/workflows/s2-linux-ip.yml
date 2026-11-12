@@ -97,6 +97,7 @@ jobs:
           assert all(p['success'] for p in report['probes']), report['probes']
           assert report['iperf_initial']['received_bytes'] > 0, report['iperf_initial']
           assert Path('/tmp/ntarlink-s2-routing.pcap').stat().st_size > 24
+          assert report['continuous_ping']['received_reply_count'] > 0, report['continuous_ping']
           assert not report['cleanup_errors'], report['cleanup_errors']
           print('S2 live route recovery:', [e['selected_path'] for e in events])
           print('S2 controller apply wall ns:', [e['controller_apply_elapsed_ns'] for e in events])

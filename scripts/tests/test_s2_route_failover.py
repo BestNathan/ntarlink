@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
-from s2_routing import PlanError, build_graph, find_path  # noqa: E402
+from s2_routing import PlanError, build_graph, find_path, parse_continuous_ping  # noqa: E402
 
 FIXTURE = ROOT / "scenarios" / "s2-route-failover.json"
 
@@ -22,6 +22,21 @@ class S2RouteTests(unittest.TestCase):
             json.dumps(obj if obj is not None else self.raw).encode(),
             "ue-a", "internet", "r2",
         )
+
+    def test_continuous_probe_detects_missing_replies_and_bounds_gap(self):
+        output = (
+            "[1000.000000] 64 bytes from 10.248.7.2: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.200000] 64 bytes from 10.248.7.2: icmp_seq=2 ttl=64 time=1 ms\n"
+            "[1000.400000] no answer yet for icmp_seq=3\n"
+            "[1000.600000] no answer yet for icmp_seq=4\n"
+            "[1000.800000] 64 bytes from 10.248.7.2: icmp_seq=5 ttl=64 time=1 ms\n"
+        )
+        result = parse_continuous_ping(output)
+        self.assertEqual(result["received_reply_count"], 3)
+        self.assertEqual(result["observed_missing_sequences"], [3, 4])
+        self.assertEqual(result["reply_gaps"][0]["missing_sequence_count"], 2)
+        self.assertEqual(result["largest_observed_reply_gap_wall_ns"], 600_000_000)
+        self.assertIsNone(parse_continuous_ping("no replies")["largest_observed_reply_gap_wall_ns"])
 
     def test_initial_backup_and_recovery_topology(self):
         plan = self.plan()
