@@ -6,6 +6,8 @@ on:
       - '.github/workflows/s2-linux-ip.yml'
       - 'systems/network-emulation/**'
       - 'scripts/tests/test_s2_worker.py'
+      - 'scripts/tests/test_s2_route_failover.py'
+      - 'scenarios/s2-route-failover.json'
       - 'scenarios/s2-linux-ip-path.json'
       - 'docs/design/s2-linux-ip-emulation.md'
       - 'scripts/record_s2_host_deps.py'
@@ -16,6 +18,8 @@ on:
       - '.github/workflows/s2-linux-ip.yml'
       - 'systems/network-emulation/**'
       - 'scripts/tests/test_s2_worker.py'
+      - 'scripts/tests/test_s2_route_failover.py'
+      - 'scenarios/s2-route-failover.json'
       - 'scenarios/s2-linux-ip-path.json'
       - 'docs/design/s2-linux-ip-emulation.md'
       - 'scripts/record_s2_host_deps.py'
@@ -33,6 +37,8 @@ jobs:
       - name: Validate S1-to-S2 export and dry-run without privileges
         run: |
           python -m unittest discover -s scripts/tests -p test_s2_worker.py -v
+          python -m unittest discover -s scripts/tests -p test_s2_route_failover.py -v
+          python systems/network-emulation/s2_routing.py scenarios/s2-route-failover.json --source ue-a --target internet --output /tmp/s2-routing-plan.json
           python systems/network-emulation/s2_worker.py scenarios/s2-linux-ip-path.json --source ue-a --target gw-a --output /tmp/s2-plan.json
           python - <<'PY'
           import json
@@ -74,6 +80,28 @@ jobs:
           print('S2 scheduler lateness (ns):', [e['scheduler_lateness_ns'] for e in report['events']])
           PY
           ! sudo ip netns list | grep -E '^nts2n[0-9]+($| )'
+      - name: Verify real IP backup-ISL path switching in Linux
+        run: |
+          sudo python systems/network-emulation/s2_routing.py scenarios/s2-route-failover.json --source ue-a --target internet --tag r2 --apply --time-scale 20 --iperf --pcap /tmp/ntarlink-s2-routing.pcap --output /tmp/s2-routing-report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.load(open('/tmp/s2-routing-report.json'))['report']
+          events = report['events']
+          assert len(events) == 2, events
+          assert 'isl-a-b' in report['initial_path'], report['initial_path']
+          assert 'isl-a-b' not in events[0]['selected_path'], events[0]
+          assert 'isl-a-c' in events[0]['selected_path'], events[0]
+          assert 'isl-c-b' in events[0]['selected_path'], events[0]
+          assert 'isl-a-b' in events[1]['selected_path'], events[1]
+          assert all(p['success'] for p in report['probes']), report['probes']
+          assert report['iperf_initial']['received_bytes'] > 0, report['iperf_initial']
+          assert Path('/tmp/ntarlink-s2-routing.pcap').stat().st_size > 24
+          assert not report['cleanup_errors'], report['cleanup_errors']
+          print('S2 live route recovery:', [e['selected_path'] for e in events])
+          print('S2 controller apply wall ns:', [e['controller_apply_elapsed_ns'] for e in events])
+          PY
+          ! sudo ip netns list | grep -E '^ntr2n[0-9]+($| )'
       - name: Save measured S2 evidence (no synthetic labels)
         if: always()
         uses: actions/upload-artifact@v4
@@ -81,6 +109,9 @@ jobs:
           name: s2-linux-ip-evidence
           path: |
             /tmp/s2-plan.json
+            /tmp/s2-routing-plan.json
+            /tmp/s2-routing-report.json
+            /tmp/ntarlink-s2-routing.pcap
             /tmp/s2-host-deps.json
             /tmp/s2-report.json
             /tmp/ntarlink-s2.pcap
