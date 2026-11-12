@@ -2904,6 +2904,9 @@ mod tests {
         scenario
             .contacts
             .retain(|contact| contact.link_id != "isl-a-b" || contact.start_ns == 0);
+        scenario
+            .optical_pat_slew_targets
+            .retain(|target| target.at_ns == 0);
         scenario.faults.clear();
 
         let (provisional, observations) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
