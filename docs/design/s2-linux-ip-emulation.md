@@ -66,3 +66,7 @@ Failure during programming may temporarily disrupt packets; future tests must
 measure that blackout independently. FRR (or a chosen comparable protocol
 stack), measured convergence under recurring flaps, capacity contention and
 a production worker/image contract remain in Issue #4.
+
+## Sustained real-IP failover sampling
+
+The route-controller experiment now starts a Linux `ping -D -O -i 0.2` process in the source namespace before fault replay and stops it after the final kernel snapshot. The measured report contains received replies, missing ICMP sequences and gaps between successful replies in host wall-clock nanoseconds. These are sampled observations, **not** exact blackout start/end times or distributed routing convergence. Host scheduling, ICMP sampling, subprocess startup and kernel timestamp precision limit inference. The existing controller-apply durations remain separately labeled. The GitHub-hosted S2 acceptance requires at least one sustained reply; outage gaps are recorded rather than artificially required because short faults can fall between probes.
