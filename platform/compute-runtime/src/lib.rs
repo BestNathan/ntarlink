@@ -443,9 +443,15 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         arrived.ok_or("complete input transfer without arrival timestamp")?
     };
     outcome.started_ns = Some(start_ns);
-    let completed_compute = start_ns
-        .checked_add(cpu_duration)
-        .ok_or("modeled compute clock overflow")?;
+    let Some(completed_compute) = start_ns.checked_add(cpu_duration) else {
+        // An otherwise valid modeled workload may exceed the representable
+        // virtual-time range. Fail this policy, not the entire comparison.
+        outcome.fail(
+            WorkloadStatus::DeadlineMissed,
+            "modeled compute finish exceeds virtual-time range",
+        );
+        return Ok(outcome);
+    };
     // Preserve the modeled execution finish even if it falls beyond the task
     // deadline or the simulation horizon; no output artifact is produced then.
     outcome.compute_completed_ns = Some(completed_compute);
@@ -532,6 +538,33 @@ mod tests {
     fn fixture() -> ComputeExperiment {
         ComputeExperiment::from_json(include_str!("../../../scenarios/c0-orbital-edge.json"))
             .unwrap()
+    }
+
+    #[test]
+    fn compute_clock_overflow_is_a_policy_deadline_failure_not_an_experiment_error() {
+        let mut scenario = fixture();
+        // The service duration itself fits u64, but adding a positive
+        // release/arrival timestamp cannot fit the virtual-time clock.
+        scenario.workload.cpu_service_units = u64::MAX;
+        scenario.orbital_node.cpu_units_per_second = 1_000_000_000;
+        scenario.ground_node.cpu_units_per_second = 1_000_000_000;
+        scenario.workload.release_ns = 1;
+        let report = run_experiment(&scenario).unwrap();
+        for outcome in [&report.ground_only, &report.onboard_first] {
+            assert_eq!(outcome.status, WorkloadStatus::DeadlineMissed);
+            assert_eq!(
+                outcome.reason.as_deref(),
+                Some("modeled compute finish exceeds virtual-time range")
+            );
+            assert!(outcome.started_ns.is_some());
+            assert!(outcome.compute_completed_ns.is_none());
+            assert!(outcome.produced_artifact.is_none());
+        }
+        assert!(report.ground_only.packet_report.is_some());
+        assert!(report.onboard_first.packet_report.is_none());
+        let first = serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap();
+        let second = serde_json::to_vec(&run_experiment(&scenario).unwrap()).unwrap();
+        assert_eq!(first, second);
     }
 
     #[test]
