@@ -60,7 +60,7 @@ class S2RouteTests(unittest.TestCase):
 
     def test_safety_budget_and_bad_topology_rejected(self):
         altered = copy.deepcopy(self.raw)
-        altered["links"].append(copy.deepcopy(altered["links"][0]))
+        altered["links"].extend([copy.deepcopy(altered["links"][0]) for _ in range(2)])
         with self.assertRaisesRegex(PlanError, "graph exceeds"):
             self.plan(altered)
         altered = copy.deepcopy(self.raw)
