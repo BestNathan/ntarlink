@@ -446,6 +446,9 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
     let completed_compute = start_ns
         .checked_add(cpu_duration)
         .ok_or("modeled compute clock overflow")?;
+    // Preserve the modeled execution finish even if it falls beyond the task
+    // deadline or the simulation horizon; no output artifact is produced then.
+    outcome.compute_completed_ns = Some(completed_compute);
     if completed_compute > task.deadline_ns || completed_compute >= scenario.network.duration_ns {
         outcome.fail(
             WorkloadStatus::DeadlineMissed,
@@ -453,7 +456,6 @@ fn run_policy(scenario: &ComputeExperiment, policy: Placement) -> Result<PolicyO
         );
         return Ok(outcome);
     }
-    outcome.compute_completed_ns = Some(completed_compute);
     let output_id = format!("{}:output", task.id);
     outcome.produced_artifact = Some(ProducedArtifact {
         id: output_id.clone(),
@@ -783,6 +785,25 @@ mod tests {
         assert!(edge.packet_report.is_some());
         let repeated = run_experiment(&scenario).unwrap();
         assert_eq!(repeated.onboard_first.completed_ns, Some(delivered_at));
+    }
+
+    #[test]
+    fn modeled_compute_deadline_miss_retains_execution_finish_without_artifact() {
+        let mut scenario = fixture();
+        scenario.workload.deadline_ns = 1_000_000;
+        let first = run_experiment(&scenario).unwrap();
+        let edge = &first.onboard_first;
+        assert_eq!(edge.status, WorkloadStatus::DeadlineMissed);
+        assert_eq!(edge.started_ns, Some(scenario.workload.release_ns));
+        let reservation = edge.resource_reservation.as_ref().unwrap();
+        let finished = scenario.workload.release_ns + reservation.modeled_cpu_duration_ns;
+        assert_eq!(edge.compute_completed_ns, Some(finished));
+        assert!(finished > scenario.workload.deadline_ns);
+        assert!(edge.produced_artifact.is_none());
+        assert!(edge.transfer.is_none());
+        assert!(edge.packet_report.is_none());
+        let repeated = run_experiment(&scenario).unwrap();
+        assert_eq!(repeated.onboard_first.compute_completed_ns, Some(finished));
     }
 
     #[test]
