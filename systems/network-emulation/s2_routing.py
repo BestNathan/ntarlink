@@ -134,10 +134,16 @@ def build_graph(raw: bytes, source: str, target: str, tag: str) -> dict:
     # S2 v1 binds each endpoint to a stable interface. The initial source and
     # sink link must stay part of every failover path, otherwise addresses can
     # change and measurement semantics require a future multi-homed contract.
+    # Validate the entire fault history, not each Down event in isolation:
+    # simultaneous or successive failures can select a different endpoint
+    # attachment even when every individual failure is safe.
+    disabled: set[str] = set()
     for event in event_rows:
-        if event["action"] != "down":
-            continue
-        candidate = find_path(plan, {event["link_id"]})
+        if event["action"] == "down":
+            disabled.add(event["link_id"])
+        else:
+            disabled.discard(event["link_id"])
+        candidate = find_path(plan, disabled)
         if candidate and (
             candidate[0]["id"] != initial[0]["id"]
             or candidate[-1]["id"] != initial[-1]["id"]
