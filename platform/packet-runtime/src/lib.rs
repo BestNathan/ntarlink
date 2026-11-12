@@ -24,6 +24,8 @@ const MAX_PROCESSED_EVENTS: u64 = 5_000_000;
 
 type PredictedPair = ([f64; 3], [f64; 3]);
 type PredictedObservations = HashMap<(String, u64), Result<PredictedPair, String>>;
+// External fault events grouped by virtual timestamp and registered optical link.
+type PatFaultBatch<'a> = (u64, &'a str, Vec<(FaultCause, LinkAction)>);
 
 /// Piecewise-linear delay at the completion of packet serialization.
 /// Integer arithmetic and nearest-nanosecond rounding preserve reproducibility.
@@ -679,6 +681,7 @@ impl<'a> Runtime<'a> {
 /// packet engine's metadata-free effective link state. The packet scenario
 /// cannot carry SampledPointing faults after optical_pat is stripped, so the
 /// original down cause is retained separately for PAT trace attribution.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PatEffectivePacketEdge {
     link_id: String,
     at_ns: u64,
@@ -766,6 +769,26 @@ impl<'a> ValidatedPatHeadTimeline<'a> {
     }
 }
 
+/// Construct the common SYS-02 registry for both PAT planning passes.
+/// Registering an optical link with its actual initial state is required even
+/// when a pass only consumes head or fault events. This is the same inventory
+/// a future committed mixed timeline must use.
+fn new_pat_execution_runtime(scenario: &Scenario) -> Result<PatExecutionRuntime, String> {
+    let initial_links = scenario
+        .optical_pat
+        .iter()
+        .map(|config| {
+            let link = scenario
+                .links
+                .iter()
+                .find(|link| link.id == config.link_id)
+                .ok_or("PAT execution references unknown optical link")?;
+            Ok((config.link_id.as_str(), link.up))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &initial_links)
+}
+
 /// Apply deterministic PAT acquisition before the packet event engine runs.
 /// Only opted-in optical links are gated; other contacts are unchanged.
 /// Administrative down/up transitions interrupt tracking, release optical
@@ -781,16 +804,74 @@ fn execute_pat_head_timeline(
     reservations: &[PatReservation],
     expected: Option<&PredictedObservations>,
 ) -> Result<(BodyHeadRuntime, PredictedObservations), String> {
+    execute_pat_head_timeline_impl(scenario, reservations, expected, &[], &[], false)
+        .map(|(heads, observations, _)| (heads, observations))
+}
+
+/// Commit validated command-derived pointing loss in the same SYS-02 batch
+/// as the commands that authorize it. This is a head/observation slice; the
+/// external fault stream is not yet part of this transaction.
+fn execute_pat_head_timeline_with_losses(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: Option<&PredictedObservations>,
+    losses: &[CommittedBodyPointingLoss],
+    sampled_faults: &[Fault],
+) -> Result<
+    (
+        BodyHeadRuntime,
+        PredictedObservations,
+        Vec<PatEffectivePacketEdge>,
+    ),
+    String,
+> {
+    execute_pat_head_timeline_impl(
+        scenario,
+        reservations,
+        expected,
+        losses,
+        sampled_faults,
+        true,
+    )
+}
+
+/// The provisional pass intentionally excludes external link faults: it is a
+/// speculative head-motion forecast, not an authoritative fault replay.
+/// Committed mixed execution explicitly enables pre-command fault batches.
+fn execute_pat_head_timeline_impl(
+    scenario: &Scenario,
+    reservations: &[PatReservation],
+    expected: Option<&PredictedObservations>,
+    losses: &[CommittedBodyPointingLoss],
+    sampled_faults: &[Fault],
+    include_external_faults: bool,
+) -> Result<
+    (
+        BodyHeadRuntime,
+        PredictedObservations,
+        Vec<PatEffectivePacketEdge>,
+    ),
+    String,
+> {
     let timeline = ValidatedPatHeadTimeline::new(scenario, reservations)?;
 
-    let mut runtime = PatExecutionRuntime::new(&scenario.optical_head_slew_actuators, &[])?;
+    // Both provisional head execution and fault replay must share the exact
+    // same registered link/actuator inventory before a mixed transaction can
+    // replace their separate planning passes.
+    let mut runtime = new_pat_execution_runtime(scenario)?;
     // Build the complete canonical head timeline before touching actuator state.
     // SYS-02 now validates and commits this batch transactionally rather than
     // allowing a late invalid lease edge to leave earlier head motion behind.
-    let events = timeline
+    // A legacy PAT scenario without configured actuators has no registered
+    // SYS-02 heads to reserve. Its geometric PAT planner already owns head
+    // contention; commit only registered link faults in this case instead of
+    // inventing actuator ownership that does not exist in the scenario.
+    let has_registered_heads = !scenario.optical_head_slew_actuators.is_empty();
+    let mut events = timeline
         .events
         .iter()
         .enumerate()
+        .filter(|_| has_registered_heads || !scenario.optical_body_following_samples.is_empty())
         .map(|(event_index, event)| {
             let transition = match event.kind {
                 PatRuntimeTransitionKind::Release(index) => {
@@ -832,8 +913,118 @@ fn execute_pat_head_timeline(
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    let head_event_count = events.len();
+    // External administrative faults are independent of command-derived
+    // pointing observations. Commit both domains in the authoritative SYS-02
+    // transaction so fault ordering can affect command acceptance.
+    let mut external_faults: Vec<_> = scenario
+        .faults
+        .iter()
+        .chain(sampled_faults.iter())
+        .filter(|fault| {
+            include_external_faults
+                && scenario
+                    .optical_pat
+                    .iter()
+                    .any(|pat| pat.link_id == fault.link_id)
+        })
+        .collect();
+    external_faults.sort_by(|a, b| {
+        // Canonicalize equal-time external fault inputs before committing
+        // the mixed SYS-02 timeline. A caller's fault array order must not
+        // select which independent fault domain is evaluated first.
+        let cause_rank = |cause: FaultCause| match cause {
+            FaultCause::Administrative => 0_u8,
+            FaultCause::SampledPointing => 1_u8,
+        };
+        let action_rank = |action: &LinkAction| match action {
+            LinkAction::Down => 0_u8,
+            LinkAction::Up => 1_u8,
+        };
+        (
+            a.at_ns,
+            &a.link_id,
+            cause_rank(a.cause),
+            action_rank(&a.action),
+        )
+            .cmp(&(
+                b.at_ns,
+                &b.link_id,
+                cause_rank(b.cause),
+                action_rank(&b.action),
+            ))
+    });
+    let mut fault_batches: Vec<PatFaultBatch<'_>> = Vec::new();
+    for fault in external_faults {
+        if let Some((at_ns, link_id, edges)) = fault_batches.last_mut() {
+            if *at_ns == fault.at_ns && *link_id == fault.link_id {
+                edges.push((fault.cause, fault.action.clone()));
+                continue;
+            }
+        }
+        fault_batches.push((
+            fault.at_ns,
+            fault.link_id.as_str(),
+            vec![(fault.cause, fault.action.clone())],
+        ));
+    }
+    for (index, (at_ns, link_id, edges)) in fault_batches.iter().enumerate() {
+        events.push((
+            PatExecutionTransition::FaultBatch {
+                link_id,
+                at_ns: *at_ns,
+                edges,
+            },
+            head_event_count + index,
+        ));
+    }
+    let loss_offset = head_event_count + fault_batches.len();
+    events.extend(
+        losses
+            .iter()
+            .enumerate()
+            .map(|(index, loss)| (loss.transition(), loss_offset + index)),
+    );
+
     let mut observations = HashMap::new();
+    let mut effective_edges = Vec::new();
     for (event_index, outcome) in runtime.apply_timeline(events)? {
+        if event_index >= loss_offset {
+            let loss = &losses[event_index - loss_offset];
+            let PatExecutionOutcome::Fault(edge) = outcome else {
+                return Err("pointing observation returned head outcome".into());
+            };
+            if edge.now_up || edge.down_cause != Some(FaultCause::SampledPointing) {
+                return Err(format!(
+                    "committed pointing loss did not close link {}",
+                    loss.link_id
+                ));
+            }
+            if edge.was_up != edge.now_up {
+                effective_edges.push(PatEffectivePacketEdge {
+                    link_id: loss.link_id.clone(),
+                    at_ns: loss.at_ns,
+                    now_up: edge.now_up,
+                    down_cause: edge.down_cause,
+                });
+            }
+            continue;
+        }
+        if event_index >= head_event_count {
+            let PatExecutionOutcome::Fault(edge) = outcome else {
+                return Err("external fault returned head outcome".into());
+            };
+            if edge.was_up != edge.now_up {
+                let (at_ns, link_id, _) = &fault_batches[event_index - head_event_count];
+                effective_edges.push(PatEffectivePacketEdge {
+                    link_id: (*link_id).to_owned(),
+                    at_ns: *at_ns,
+                    now_up: edge.now_up,
+                    down_cause: edge.down_cause,
+                });
+            }
+            continue;
+        }
         let PatRuntimeTransitionKind::Sample { index, .. } = timeline.events[event_index].kind
         else {
             continue;
@@ -853,7 +1044,8 @@ fn execute_pat_head_timeline(
         }
         observations.insert((sample.link_id.clone(), sample.at_ns), observed);
     }
-    Ok((runtime.into_heads(), observations))
+    effective_edges.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+    Ok((runtime.into_heads(), observations, effective_edges))
 }
 
 /// Audit PAT command ownership using the already-computed provisional results.
@@ -967,48 +1159,184 @@ fn replay_pat_head_leases(
     execute_pat_head_timeline(scenario, reservations, Some(expected)).map(|(runtime, _)| runtime)
 }
 
-/// Preserve command identity while projecting provisional BODY-frame results
-/// into the sampled-pointing fault domain used by offline contact planning.
-/// A successful command may still observe a down link; a rejected command
-/// never provides evidence that the link has recovered.
-fn project_body_following_faults(
+/// Preserve command outcome provenance independently from the speculative
+/// fault edge. Only successful commands can authorize a later SYS-02
+/// PointingObservation; rejected commands remain planning-only loss evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BodyCommandEvidence {
+    SuccessfulObservation { allowed: bool },
+    RejectedCommand { reason: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BodyCommandProjection {
+    link_id: String,
+    at_ns: u64,
+    evidence: BodyCommandEvidence,
+}
+
+impl BodyCommandProjection {
+    fn planning_fault(&self) -> Fault {
+        let allowed = !self.command_derived_loss()
+            && matches!(
+                self.evidence,
+                BodyCommandEvidence::SuccessfulObservation { allowed: true }
+            );
+        Fault {
+            at_ns: self.at_ns,
+            link_id: self.link_id.clone(),
+            action: if allowed {
+                LinkAction::Up
+            } else {
+                LinkAction::Down
+            },
+            cause: FaultCause::SampledPointing,
+        }
+    }
+
+    /// A successful command can provide a post-command pointing-loss
+    /// observation. Neither rejected commands nor predicted Up edges are
+    /// proof of an independently sourced recovery.
+    fn command_derived_loss(&self) -> bool {
+        matches!(
+            self.evidence,
+            BodyCommandEvidence::SuccessfulObservation { allowed: false }
+        )
+    }
+
+    /// A planning Down is not a committed sensor event. Only a successful
+    /// command with measured pointing loss may become a post-command
+    /// observation, after SYS-02 has verified its command history.
+    fn committed_loss_candidate(&self) -> Option<(&str, u64)> {
+        self.command_derived_loss()
+            .then_some((self.link_id.as_str(), self.at_ns))
+    }
+}
+
+fn project_body_command_evidence(
     samples: &[OpticalBodyFollowingSample],
     predicted: &PredictedObservations,
-) -> Result<Vec<Fault>, String> {
+) -> Result<Vec<BodyCommandProjection>, String> {
     samples
         .iter()
         .map(|command| {
             let observed = predicted
                 .get(&(command.link_id.clone(), command.at_ns))
                 .ok_or("missing provisional BODY-frame observation")?;
-            let allowed = match observed {
+            let evidence = match observed {
                 Ok((from_boresight_body, to_boresight_body)) => {
-                    body_tracking_error_allowed(&OpticalBodyTrackingSample {
-                        link_id: command.link_id.clone(),
-                        at_ns: command.at_ns,
-                        frame: command.frame.clone(),
-                        from_target_body: command.from_target_body,
-                        to_target_body: command.to_target_body,
-                        from_boresight_body: *from_boresight_body,
-                        to_boresight_body: *to_boresight_body,
-                        from_max_error_deg: command.from_max_error_deg,
-                        to_max_error_deg: command.to_max_error_deg,
-                    })
+                    BodyCommandEvidence::SuccessfulObservation {
+                        allowed: body_tracking_error_allowed(&OpticalBodyTrackingSample {
+                            link_id: command.link_id.clone(),
+                            at_ns: command.at_ns,
+                            frame: command.frame.clone(),
+                            from_target_body: command.from_target_body,
+                            to_target_body: command.to_target_body,
+                            from_boresight_body: *from_boresight_body,
+                            to_boresight_body: *to_boresight_body,
+                            from_max_error_deg: command.from_max_error_deg,
+                            to_max_error_deg: command.to_max_error_deg,
+                        }),
+                    }
                 }
-                Err(_) => false,
-            };
-            Ok(Fault {
-                at_ns: command.at_ns,
-                link_id: command.link_id.clone(),
-                action: if allowed {
-                    LinkAction::Up
-                } else {
-                    LinkAction::Down
+                Err(reason) => BodyCommandEvidence::RejectedCommand {
+                    reason: reason.clone(),
                 },
-                cause: FaultCause::SampledPointing,
+            };
+            Ok(BodyCommandProjection {
+                link_id: command.link_id.clone(),
+                at_ns: command.at_ns,
+                evidence,
             })
         })
         .collect()
+}
+
+/// Compatibility projection for the offline PAT planner. This is not a
+/// committed SYS-02 observation stream: rejected commands produce predicted
+/// Down faults but cannot authorize a post-command loss or recovery.
+fn project_body_following_faults(evidence: &[BodyCommandProjection]) -> Vec<Fault> {
+    evidence
+        .iter()
+        .map(BodyCommandProjection::planning_fault)
+        .collect()
+}
+
+/// A verified successful BODY command may emit a post-Command Down event.
+/// This is a typed candidate, not a committed fault edge or an Up recovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommittedBodyPointingLoss {
+    link_id: String,
+    at_ns: u64,
+}
+
+impl CommittedBodyPointingLoss {
+    fn transition(&self) -> PatExecutionTransition<'_> {
+        PatExecutionTransition::PointingObservation {
+            link_id: &self.link_id,
+            at_ns: self.at_ns,
+            action: LinkAction::Down,
+        }
+    }
+}
+
+/// Validate command provenance before exposing any post-command event to a
+/// future mixed SYS-02 timeline. Never turn a rejected command or a predicted
+/// Up into an observation. Duplicate observations are rejected deterministically.
+fn verified_body_pointing_losses(
+    scenario: &Scenario,
+    evidence: &[BodyCommandProjection],
+    predicted: &PredictedObservations,
+    runtime: &BodyHeadRuntime,
+) -> Result<Vec<CommittedBodyPointingLoss>, String> {
+    if evidence.len() != scenario.optical_body_following_samples.len() {
+        return Err("BODY command evidence count mismatch".into());
+    }
+    let configs: HashMap<_, _> = scenario
+        .optical_pat
+        .iter()
+        .map(|pat| (pat.link_id.as_str(), pat))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut losses = Vec::new();
+    for (sample, evidence) in scenario.optical_body_following_samples.iter().zip(evidence) {
+        if evidence.link_id != sample.link_id || evidence.at_ns != sample.at_ns {
+            return Err("BODY command evidence lost its sample provenance".into());
+        }
+        // Validate every command outcome, including successful commands that
+        // did not produce a loss. A fabricated success or altered rejection
+        // must never pass through this provenance boundary unnoticed.
+        let observed = predicted
+            .get(&(sample.link_id.clone(), sample.at_ns))
+            .ok_or("missing committed BODY command evidence")?;
+        let expected = project_body_command_evidence(std::slice::from_ref(sample), predicted)?;
+        if evidence.evidence != expected[0].evidence {
+            return Err("BODY command evidence diverged from provisional outcome".into());
+        }
+        let Some((link_id, at_ns)) = evidence.committed_loss_candidate() else {
+            continue;
+        };
+        if !seen.insert((link_id, at_ns)) {
+            return Err("duplicate committed BODY pointing observation".into());
+        }
+        let pat = configs
+            .get(link_id)
+            .ok_or("unknown committed BODY command link")?;
+        runtime.verify_sample_command(
+            &pat.from_head,
+            &pat.to_head,
+            at_ns,
+            sample.from_target_body,
+            sample.to_target_body,
+            observed,
+        )?;
+        losses.push(CommittedBodyPointingLoss {
+            link_id: link_id.to_owned(),
+            at_ns,
+        });
+    }
+    losses.sort_by(|a, b| (a.at_ns, &a.link_id).cmp(&(b.at_ns, &b.link_id)));
+    Ok(losses)
 }
 
 fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), String> {
@@ -1071,7 +1399,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
         .map(|pat| (pat.link_id.as_str(), pat))
         .collect();
     let mut previous_body_sample = HashMap::new();
-    steering_faults.extend(scenario.optical_body_tracking_samples.iter().map(|sample| {
+    // Rate constraints depend on adjacent virtual-time observations, not JSON
+    // array order. Canonicalize per-link history before deriving fault edges.
+    let mut ordered_body_samples: Vec<_> = scenario.optical_body_tracking_samples.iter().collect();
+    ordered_body_samples.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+    steering_faults.extend(ordered_body_samples.into_iter().map(|sample| {
         let previous = previous_body_sample.insert(sample.link_id.as_str(), sample);
         let rate_allowed = previous.is_none_or(|earlier| {
             let pat = body_pat_links[sample.link_id.as_str()];
@@ -1098,14 +1430,16 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // projections; lease replay verifies it after reservations are planned.
     let mut follower_runtime = None;
     let mut predicted_observations = HashMap::new();
+    let mut body_command_evidence = Vec::new();
     if !scenario.optical_body_following_samples.is_empty() {
         let (runtime, observations) = execute_pat_head_timeline(scenario, &[], None)?;
         follower_runtime = Some(runtime);
         predicted_observations = observations;
-        steering_faults.extend(project_body_following_faults(
+        body_command_evidence = project_body_command_evidence(
             &scenario.optical_body_following_samples,
             &predicted_observations,
-        )?);
+        )?;
+        steering_faults.extend(project_body_following_faults(&body_command_evidence));
     }
     // Compute reciprocal ITRS line-of-sight geometry in Rust at each observation.
     // These supplied frame-tagged vectors are held between samples; no live
@@ -1127,7 +1461,11 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             Option<&ntarlink_contracts::OpticalGeometry>,
         ),
     > = HashMap::new();
-    steering_faults.extend(scenario.optical_geometry_samples.iter().map(|sample| {
+    // Geometry velocity and acceleration use the preceding chronological
+    // observations of each link, regardless of input array permutation.
+    let mut ordered_geometry_samples: Vec<_> = scenario.optical_geometry_samples.iter().collect();
+    ordered_geometry_samples.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+    steering_faults.extend(ordered_geometry_samples.into_iter().map(|sample| {
         let previous = previous_geometry.get(sample.link_id.as_str()).copied();
         previous_geometry.insert(
             sample.link_id.as_str(),
@@ -1192,7 +1530,24 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             .push((scenario.faults.len() + index, fault));
     }
     for faults in faults_by_link.values_mut() {
-        faults.sort_by_key(|(index, fault)| (fault.at_ns, *index));
+        // Same-instant independent fault domains must not inherit the
+        // scenario's input order. The committed SYS-02 path uses this same
+        // canonical domain/action order for its external fault batches.
+        let cause_rank = |cause: FaultCause| match cause {
+            FaultCause::Administrative => 0_u8,
+            FaultCause::SampledPointing => 1_u8,
+        };
+        let action_rank = |action: &LinkAction| match action {
+            LinkAction::Down => 0_u8,
+            LinkAction::Up => 1_u8,
+        };
+        faults.sort_by_key(|(_, fault)| {
+            (
+                fault.at_ns,
+                cause_rank(fault.cause),
+                action_rank(&fault.action),
+            )
+        });
     }
 
     // Replay all optical fault edges through the same typed SYS-02 event owner
@@ -1200,19 +1555,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     // windows offline, but no longer owns a separate per-link fault reducer.
     // The SYS-02 timeline executor sorts across links before replay, so
     // link-major input order cannot violate the global virtual-time clock.
-    let initial_links: Vec<_> = scenario
-        .optical_pat
-        .iter()
-        .map(|config| {
-            let link = scenario
-                .links
-                .iter()
-                .find(|link| link.id == config.link_id)
-                .expect("validated optical PAT link");
-            (config.link_id.as_str(), link.up)
-        })
-        .collect();
-    let mut fault_runtime = PatExecutionRuntime::new(&[], &initial_links)?;
+    let mut fault_runtime = new_pat_execution_runtime(scenario)?;
     let mut batches = Vec::new();
     for (&link_id, faults) in &faults_by_link {
         let mut index = 0;
@@ -1440,6 +1783,7 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             )?
         }
     };
+    let mut committed_packet_edges = None;
     if let Some(runtime) = follower_runtime.as_ref() {
         // SYS-02 owns the lease audit state as well as the single provisional
         // actuator history; the audit never re-integrates follower motion.
@@ -1449,6 +1793,148 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
             &predicted_observations,
             runtime,
         )?;
+        // Preserve the validated post-command Down stream for the eventual
+        // mixed SYS-02 commit; do not feed it back into speculative planning.
+        let committed_losses = verified_body_pointing_losses(
+            scenario,
+            &body_command_evidence,
+            &predicted_observations,
+            runtime,
+        )?;
+        // A terminal pointing loss can be committed without inventing a
+        // recovery. A later BODY command requires an independently sourced Up
+        // observation before the committed runtime may execute it. Existing
+        // scenario-v1 samples provide only command-derived predictions, so
+        // keep that legacy case speculative until an external recovery input
+        // is available; never silently turn a rejected command into Up.
+        let terminal_losses = !committed_losses.is_empty()
+            && committed_losses.iter().all(|loss| {
+                !scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .any(|sample| sample.link_id == loss.link_id && sample.at_ns > loss.at_ns)
+            });
+        // Fault-free BODY-following streams can commit the actual leased
+        // actuator commands without manufacturing any recovery observations.
+        // Keep mixed external-fault and nonterminal loss cases provisional
+        // until their command rejection/recovery timeline can be reconciled.
+        // Faults that start after the final head lease cannot reject any
+        // previously committed command. They can safely share the same
+        // authoritative timeline, including their packet-state transitions.
+        let last_lease_end = plan
+            .reservations
+            .iter()
+            .map(|reservation| reservation.end_ns)
+            .chain(
+                scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .map(|sample| sample.at_ns.saturating_add(1)),
+            )
+            .max()
+            .unwrap_or(0);
+        // A fault may occur during an active lease: a lease owns the heads,
+        // not continuous link availability. The authoritative SYS-02 batch
+        // checks command acceptance at its actual virtual timestamp. Reject
+        // coincident command/fault transitions here; later state checks also
+        // require effective recovery before every command and reservation.
+        // This admits temporary in-lease Down/Up outages without treating an
+        // administrative Up as recovery from an independent pointing fault.
+        let faults_outside_head_activity = effective_faults
+            .iter()
+            .filter(|fault| configs.contains_key(fault.link_id.as_str()))
+            .all(|fault| {
+                fault.at_ns >= last_lease_end
+                    || !scenario
+                        .optical_body_following_samples
+                        .iter()
+                        .any(|sample| {
+                            sample.link_id == fault.link_id && sample.at_ns == fault.at_ns
+                        })
+            })
+            && plan.reservations.iter().all(|lease| {
+                let initial_up = scenario
+                    .links
+                    .iter()
+                    .find(|link| link.id == lease.link_id)
+                    .is_some_and(|link| link.up);
+                effective_faults
+                    .iter()
+                    .rev()
+                    .find(|fault| fault.link_id == lease.link_id && fault.at_ns <= lease.start_ns)
+                    .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
+            })
+            && scenario
+                .optical_body_following_samples
+                .iter()
+                .all(|sample| {
+                    let initial_up = scenario
+                        .links
+                        .iter()
+                        .find(|link| link.id == sample.link_id)
+                        .is_some_and(|link| link.up);
+                    effective_faults
+                        .iter()
+                        .rev()
+                        .find(|fault| {
+                            fault.link_id == sample.link_id && fault.at_ns <= sample.at_ns
+                        })
+                        .map_or(initial_up, |fault| matches!(fault.action, LinkAction::Up))
+                });
+        // A later BODY command may follow a committed pointing loss only when
+        // an independently sourced sampled-pointing Up restores that link
+        // strictly between the loss and the next command. A command's own
+        // predicted Up is never recovery evidence.
+        let externally_recovered_losses = !committed_losses.is_empty()
+            && committed_losses.iter().all(|loss| {
+                let next_command = scenario
+                    .optical_body_following_samples
+                    .iter()
+                    .filter(|sample| sample.link_id == loss.link_id && sample.at_ns > loss.at_ns)
+                    .map(|sample| sample.at_ns)
+                    .min();
+                next_command.is_none_or(|next_at| {
+                    steering_faults.iter().any(|fault| {
+                        fault.link_id == loss.link_id
+                            && fault.cause == FaultCause::SampledPointing
+                            && matches!(fault.action, LinkAction::Up)
+                            && fault.at_ns > loss.at_ns
+                            && fault.at_ns < next_at
+                    })
+                })
+            });
+        // A terminal command-derived loss does not exempt independent
+        // sampled faults from the same authoritative commit. In particular,
+        // omitting their recovery/down edges would make packet availability
+        // disagree with the PAT plan. Reject unsafe lease overlap instead.
+        let fault_free_commands = committed_losses.is_empty() && faults_outside_head_activity;
+        let recovered_commands = externally_recovered_losses && faults_outside_head_activity;
+        if faults_outside_head_activity
+            && (terminal_losses || fault_free_commands || recovered_commands)
+        {
+            let (_, _, edges) = execute_pat_head_timeline_with_losses(
+                scenario,
+                &plan.reservations,
+                Some(&predicted_observations),
+                &committed_losses,
+                &steering_faults,
+            )?;
+            committed_packet_edges = Some(edges);
+        }
+    }
+    // Without BODY-following commands, sampled steering/geometry observations
+    // are independent inputs. Commit them together with administrative faults
+    // through SYS-02, rather than replaying a second packet fault reducer.
+    // BODY command-derived observations retain their separate causal gate.
+    if follower_runtime.is_none() {
+        let (_, _, edges) = execute_pat_head_timeline_with_losses(
+            scenario,
+            &plan.reservations,
+            None,
+            &[],
+            &steering_faults,
+        )?;
+        committed_packet_edges = Some(edges);
     }
     let mut windows_by_source: HashMap<usize, Vec<_>> = HashMap::new();
     for window in &plan.windows {
@@ -1511,7 +1997,72 @@ fn prepare_pat(scenario: &Scenario) -> Result<(Scenario, Vec<PatEventTrace>), St
     prepared
         .faults
         .retain(|fault| !configs.contains_key(fault.link_id.as_str()));
-    prepared.faults.extend(effective_faults);
+    if let Some(committed_edges) = committed_packet_edges {
+        // Reject inconsistent planner and authoritative SYS-02 link histories.
+        // Packet forwarding consumes the committed timeline only after the
+        // complete edge sequence (including causes) has been reconciled.
+        let mut planned_edges = effective_faults
+            .iter()
+            .map(|fault| PatEffectivePacketEdge {
+                link_id: fault.link_id.clone(),
+                at_ns: fault.at_ns,
+                now_up: matches!(fault.action, LinkAction::Up),
+                down_cause: down_faults
+                    .get(&(fault.link_id.as_str(), fault.at_ns))
+                    .copied(),
+            })
+            .collect::<Vec<_>>();
+        planned_edges.sort_by(|a, b| (&a.link_id, a.at_ns).cmp(&(&b.link_id, b.at_ns)));
+        if committed_edges != planned_edges {
+            return Err(
+                "committed PAT effective edges diverged from planned packet contacts".into(),
+            );
+        }
+        // Edge equality alone cannot prove that a packet contact is usable:
+        // every acquired interval must lie wholly inside the committed up
+        // state. Check both its beginning and every subsequent Down edge.
+        for contact in &prepared.contacts {
+            if !configs.contains_key(contact.link_id.as_str()) {
+                continue;
+            }
+            let mut up = scenario
+                .links
+                .iter()
+                .find(|link| link.id == contact.link_id)
+                .ok_or_else(|| {
+                    format!("committed PAT contact has unknown link {}", contact.link_id)
+                })?
+                .up;
+            for edge in committed_edges
+                .iter()
+                .filter(|edge| edge.link_id == contact.link_id)
+            {
+                if edge.at_ns <= contact.start_ns {
+                    up = edge.now_up;
+                } else if edge.at_ns < contact.end_ns && !edge.now_up {
+                    return Err(format!(
+                        "committed PAT contact crosses a down edge on {}",
+                        contact.link_id
+                    ));
+                } else if edge.at_ns >= contact.end_ns {
+                    break;
+                }
+            }
+            if !up {
+                return Err(format!(
+                    "committed PAT contact starts while link {} is down",
+                    contact.link_id
+                ));
+            }
+        }
+        prepared.faults.extend(
+            committed_edges
+                .into_iter()
+                .map(PatEffectivePacketEdge::packet_fault),
+        );
+    } else {
+        prepared.faults.extend(effective_faults);
+    }
     prepared.optical_head_slew_actuators.clear();
     prepared.optical_pat_slew_targets.clear();
     prepared.optical_body_tracking_samples.clear();
@@ -1694,6 +2245,54 @@ mod tests {
     }
 
     #[test]
+    fn committed_body_pointing_loss_events_are_down_only_and_ordered() {
+        let first = CommittedBodyPointingLoss {
+            link_id: "isl-a".into(),
+            at_ns: 12,
+        };
+        let second = CommittedBodyPointingLoss {
+            link_id: "isl-b".into(),
+            at_ns: 13,
+        };
+        for loss in [first, second] {
+            assert!(matches!(
+                loss.transition(),
+                PatExecutionTransition::PointingObservation {
+                    action: LinkAction::Down,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn committed_body_loss_rejects_forged_command_provenance() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let (runtime, predicted) = execute_pat_head_timeline(&scenario, &[], None).unwrap();
+        let mut evidence =
+            project_body_command_evidence(&scenario.optical_body_following_samples, &predicted)
+                .unwrap();
+        assert!(!evidence.is_empty());
+        evidence[0].evidence = match &evidence[0].evidence {
+            BodyCommandEvidence::RejectedCommand { .. } => {
+                BodyCommandEvidence::SuccessfulObservation { allowed: false }
+            }
+            BodyCommandEvidence::SuccessfulObservation { .. } => {
+                BodyCommandEvidence::RejectedCommand {
+                    reason: "forged rejection".into(),
+                }
+            }
+        };
+        assert_eq!(
+            verified_body_pointing_losses(&scenario, &evidence, &predicted, &runtime).unwrap_err(),
+            "BODY command evidence diverged from provisional outcome"
+        );
+    }
+
+    #[test]
     fn body_command_projection_preserves_failed_and_successful_observation_provenance() {
         let scenario = Scenario::from_json(include_str!(
             "../../../scenarios/optical-body-frame-target-following.json"
@@ -1705,7 +2304,9 @@ mod tests {
 
         // A rejected command is evidence of loss, never external recovery.
         let rejected = HashMap::from([(key.clone(), Err("head command rejected".into()))]);
-        let faults = project_body_following_faults(&samples, &rejected).unwrap();
+        let faults = project_body_following_faults(
+            &project_body_command_evidence(&samples, &rejected).unwrap(),
+        );
         assert_eq!(faults.len(), 1);
         assert_eq!(faults[0].link_id, sample.link_id);
         assert_eq!(faults[0].at_ns, sample.at_ns);
@@ -1714,14 +2315,84 @@ mod tests {
 
         // A successful command can still measure a pointing failure.
         let misaligned = HashMap::from([(key.clone(), Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])))]);
-        let faults = project_body_following_faults(&samples, &misaligned).unwrap();
+        let faults = project_body_following_faults(
+            &project_body_command_evidence(&samples, &misaligned).unwrap(),
+        );
         assert!(matches!(faults[0].action, LinkAction::Down));
 
         // Missing command provenance must not be silently interpreted as Up.
         assert_eq!(
-            project_body_following_faults(&samples, &HashMap::new()).unwrap_err(),
+            project_body_command_evidence(&samples, &HashMap::new()).unwrap_err(),
             "missing provisional BODY-frame observation"
         );
+    }
+
+    #[test]
+    fn body_command_evidence_separates_rejected_commands_from_causal_observations() {
+        let scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let base = scenario.optical_body_following_samples[0].clone();
+        let mut loss = base.clone();
+        loss.at_ns += 1;
+        let mut rejection = base.clone();
+        rejection.at_ns += 2;
+        let predicted = HashMap::from([
+            (
+                (base.link_id.clone(), base.at_ns),
+                Ok((base.from_target_body, base.to_target_body)),
+            ),
+            (
+                (loss.link_id.clone(), loss.at_ns),
+                Ok(([1.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
+            ),
+            (
+                (rejection.link_id.clone(), rejection.at_ns),
+                Err("head command rejected".to_owned()),
+            ),
+        ]);
+        for samples in [
+            vec![base.clone(), loss.clone(), rejection.clone()],
+            vec![rejection.clone(), base.clone(), loss.clone()],
+        ] {
+            let evidence = project_body_command_evidence(&samples, &predicted).unwrap();
+            assert_eq!(evidence.len(), samples.len());
+            for (sample, projected) in samples.iter().zip(evidence.iter()) {
+                assert_eq!(projected.link_id, sample.link_id);
+                assert_eq!(projected.at_ns, sample.at_ns);
+                if sample.at_ns == base.at_ns {
+                    assert_eq!(
+                        projected.evidence,
+                        BodyCommandEvidence::SuccessfulObservation { allowed: true }
+                    );
+                    assert!(!projected.command_derived_loss());
+                    assert!(matches!(projected.planning_fault().action, LinkAction::Up));
+                } else if sample.at_ns == loss.at_ns {
+                    assert_eq!(
+                        projected.evidence,
+                        BodyCommandEvidence::SuccessfulObservation { allowed: false }
+                    );
+                    assert!(projected.command_derived_loss());
+                    assert!(matches!(
+                        projected.planning_fault().action,
+                        LinkAction::Down
+                    ));
+                } else {
+                    assert_eq!(
+                        projected.evidence,
+                        BodyCommandEvidence::RejectedCommand {
+                            reason: "head command rejected".to_owned()
+                        }
+                    );
+                    assert!(!projected.command_derived_loss());
+                    assert!(matches!(
+                        projected.planning_fault().action,
+                        LinkAction::Down
+                    ));
+                }
+            }
+        }
     }
 
     #[test]
@@ -1748,7 +2419,9 @@ mod tests {
             vec![recovered.clone(), lost.clone()],
             vec![lost.clone(), recovered.clone()],
         ] {
-            let projected = project_body_following_faults(&samples, &predicted).unwrap();
+            let projected = project_body_following_faults(
+                &project_body_command_evidence(&samples, &predicted).unwrap(),
+            );
             assert_eq!(projected.len(), samples.len());
             for (sample, fault) in samples.iter().zip(projected.iter()) {
                 assert_eq!(fault.link_id, sample.link_id);
@@ -2188,6 +2861,98 @@ mod tests {
         assert_eq!(
             prepare_pat(&unknown).unwrap_err(),
             "unknown predicted PAT link"
+        );
+    }
+
+    #[test]
+    fn packet_adapter_commits_administrative_pat_recovery_end_to_end() {
+        let mut scenario = pat_fixture();
+        scenario.optical_steering_samples.clear();
+        scenario.optical_body_tracking_samples.clear();
+        scenario.optical_geometry_samples.clear();
+        scenario.optical_body_following_samples.clear();
+        let link_id = scenario.optical_pat[0].link_id.clone();
+        scenario.faults = vec![
+            Fault {
+                at_ns: 30_000_000,
+                link_id: link_id.clone(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 90_000_000,
+                link_id,
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+        let (prepared, _) = prepare_pat(&scenario).unwrap();
+        assert!(prepared.optical_pat.is_empty());
+        assert!(prepared.faults.iter().any(|fault| {
+            fault.at_ns == 30_000_000 && matches!(fault.action, LinkAction::Down)
+        }));
+        assert!(prepared
+            .faults
+            .iter()
+            .any(|fault| { fault.at_ns == 90_000_000 && matches!(fault.action, LinkAction::Up) }));
+        let report = run(&scenario).unwrap();
+        assert_eq!(report.injected, 7);
+        assert_eq!(report.injected, report.delivered + report.dropped);
+        scenario.faults.reverse();
+        let reordered = run(&scenario).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&reordered).unwrap()
+        );
+    }
+
+    #[test]
+    fn committed_pat_timeline_accepts_independent_external_fault_recovery() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        let link_id = scenario.optical_pat[0].link_id.clone();
+        scenario.optical_body_following_samples.clear();
+        scenario.faults.extend([
+            Fault {
+                at_ns: 10,
+                link_id: link_id.clone(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 20,
+                link_id,
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ]);
+        let (_, observations, edges) =
+            execute_pat_head_timeline_with_losses(&scenario, &[], None, &[], &[]).unwrap();
+        assert!(observations.is_empty());
+        // The fixture also has its own later administrative faults.
+        // Verify the injected outage/recovery without dropping those edges.
+        assert!(edges.len() >= 2);
+        assert!(edges.iter().any(|edge| edge.at_ns == 10 && !edge.now_up));
+        assert!(edges.iter().any(|edge| edge.at_ns == 20 && edge.now_up));
+    }
+
+    #[test]
+    fn interlease_faults_keep_packet_accounting_deterministic() {
+        let mut scenario = Scenario::from_json(include_str!(
+            "../../../scenarios/optical-body-frame-target-following.json"
+        ))
+        .unwrap();
+        // The 40-70 ms administrative outage is interleaved with BODY
+        // commands. Reordering its input edges must not affect packet results.
+        let first = run(&scenario).unwrap();
+        assert_eq!(first.injected, first.delivered + first.dropped);
+        scenario.faults.reverse();
+        let second = run(&scenario).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
         );
     }
 
