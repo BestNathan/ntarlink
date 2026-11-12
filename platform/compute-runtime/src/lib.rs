@@ -1,6 +1,8 @@
 //! Opt-in S1 modeled orbital workload and artifact transport, using the real packet engine.
 //! CPU service units and power budgets are scenario assumptions, not hardware measurements.
 
+pub mod admission;
+
 use ntarlink_contracts::{Flow, NodeKind, Scenario};
 use ntarlink_packet_runtime::{run, PacketStatus, SimulationReport};
 use serde::{Deserialize, Serialize};
