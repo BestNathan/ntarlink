@@ -53,6 +53,46 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(failed[-1], initial[-1])
         self.assertEqual([x["id"] for x in find_path(plan, set())], initial)
 
+    def test_cumulative_failures_cannot_switch_source_attachment(self):
+        # The primary and same-attachment backup both disappear only after
+        # two faults. Each Down in isolation preserves the original source
+        # interface, but the cumulative fallback would change its IP address.
+        nodes = ["src", "a", "b", "c", "d", "dst"]
+        edges = [
+            ("aa", "src", "a"), ("ab", "a", "b"),
+            ("ac", "a", "c"), ("cb", "c", "b"),
+            ("bt", "b", "dst"), ("zd", "src", "d"),
+            ("dc", "d", "c"),
+        ]
+        graph = {
+            "schema_version": 1, "duration_ns": 1000,
+            "nodes": [{"id": node} for node in nodes],
+            "links": [
+                {"id": lid, "from": left, "to": right,
+                 "capacity_bps": 100000, "propagation_delay_ns": 1000}
+                for lid, left, right in edges
+            ],
+            "faults": [
+                {"at_ns": 100, "link_id": "ab", "action": "down"},
+                {"at_ns": 200, "link_id": "ac", "action": "down"},
+            ],
+        }
+        def make_plan(value):
+            return build_graph(json.dumps(value).encode(), "src", "dst", "r2")
+
+        for event in graph["faults"]:
+            single = copy.deepcopy(graph)
+            single["faults"] = [event]
+            self.assertEqual(make_plan(single)["initial_path"][0], "aa")
+        with self.assertRaisesRegex(PlanError, "preserve source and sink attachment"):
+            make_plan(graph)
+
+        # Recovery before the second failure makes the sequence safe again.
+        graph["faults"].insert(
+            1, {"at_ns": 150, "link_id": "ab", "action": "up"}
+        )
+        self.assertEqual(make_plan(graph)["initial_path"][0], "aa")
+
     def test_link_and_node_reordering_preserves_route_and_fault_order(self):
         scrambled = copy.deepcopy(self.raw)
         scrambled["nodes"].reverse()
