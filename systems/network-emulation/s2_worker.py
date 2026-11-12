@@ -241,10 +241,30 @@ class LinuxPath:
                     ])
 
     def set_fault(self, event: dict) -> None:
-        link = next(link for link in self.plan["links"] if link["id"] == event["link_id"])
+        index = next(
+            i for i, link in enumerate(self.plan["links"])
+            if link["id"] == event["link_id"]
+        )
+        link = self.plan["links"][index]
         state = "down" if event["action"] == "down" else "up"
         for ns, interface in ((link["left_ns"], link["left_if"]), (link["right_ns"], link["right_if"])):
             self.run(["ip", "-n", ns, "link", "set", interface, state])
+        if state == "up":
+            # Linux removes routes whose output interface goes down. Restoring
+            # static routes here is an explicit fixed-path baseline, not a
+            # claim about FRRouting convergence or network controller delay.
+            if index < len(self.plan["links"]) - 1:
+                self.run([
+                    "ip", "-n", link["left_ns"], "route", "replace",
+                    self.plan["target_ip"] + "/32", "via", link["right_ip"],
+                    "dev", link["left_if"],
+                ])
+            if index > 0:
+                self.run([
+                    "ip", "-n", link["right_ns"], "route", "replace",
+                    self.plan["source_ip"] + "/32", "via", link["left_ip"],
+                    "dev", link["right_if"],
+                ])
 
     def ping(self, label: str) -> dict:
         started = time.monotonic_ns()
