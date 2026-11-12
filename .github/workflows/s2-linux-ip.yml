@@ -8,6 +8,8 @@ on:
       - 'scripts/tests/test_s2_worker.py'
       - 'scenarios/s2-linux-ip-path.json'
       - 'docs/design/s2-linux-ip-emulation.md'
+      - 'scripts/record_s2_host_deps.py'
+      - 'docs/dependencies.md'
   push:
     branches: [main]
     paths:
@@ -16,6 +18,8 @@ on:
       - 'scripts/tests/test_s2_worker.py'
       - 'scenarios/s2-linux-ip-path.json'
       - 'docs/design/s2-linux-ip-emulation.md'
+      - 'scripts/record_s2_host_deps.py'
+      - 'docs/dependencies.md'
 
 jobs:
   linux-ip:
@@ -47,6 +51,8 @@ jobs:
           ip -Version
           tc -Version
           iperf3 --version
+      - name: Pin reviewed S2 binary compatibility and record package license provenance
+        run: python scripts/record_s2_host_deps.py --check --output /tmp/s2-host-deps.json
       - name: Validate live multihop path, outage and recovery
         run: |
           sudo python systems/network-emulation/s2_worker.py scenarios/s2-linux-ip-path.json --source ue-a --target gw-a --tag s2 --apply --time-scale 20 --iperf --pcap /tmp/ntarlink-s2.pcap --output /tmp/s2-report.json
@@ -75,6 +81,7 @@ jobs:
           name: s2-linux-ip-evidence
           path: |
             /tmp/s2-plan.json
+            /tmp/s2-host-deps.json
             /tmp/s2-report.json
             /tmp/ntarlink-s2.pcap
           if-no-files-found: ignore
