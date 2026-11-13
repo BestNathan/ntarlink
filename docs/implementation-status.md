@@ -1915,3 +1915,37 @@ python -m unittest discover -s systems/orbital/python/tests
 python -m ntarlink_orbital.contacts scenarios/orbital-pass.json scenarios/orbit-sources.sample.json --out /tmp/orbital-run.json
 cargo run -p ntarlink-cli -- simulate /tmp/orbital-run.json --json > /tmp/orbital-report.json
 ```
+
+
+## C1 packet-observed inter-satellite input artifact staging (bounded S1)
+
+The opt-in C1 batch runtime accepts modeled input artifacts on a different
+**satellite** from the selected compute node. The network contract now permits
+satellite-to-satellite flows with distinct source/destination endpoints. Input
+bytes are split into exact-size L1 packet flows at workload release and sent
+through the existing routed ISL, finite queues, scheduled faults and contact
+state. No content bytes are copied: artifact identities/digests remain external
+scenario claims; this is byte-count/packet-level modeling.
+
+The compute runtime first observes all incoming packets and background traffic
+in L1. An incomplete/dropped input never reserves shared compute resources or
+starts modeled CPU. A fully delivered input supplies its *last observed packet
+arrival* to the C1 admission ledger, which starts execution no earlier than
+that arrival and applies the existing deadline/output-horizon limits.
+
+To preserve a **single final shared L1 queue/route timeline**, all ingress and
+generated output flows are then replayed together. Before claiming any
+execution, the runtime checks the complete ingress packet traces for equality
+with the observation pass. Any replay divergence aborts explicitly rather
+than treating an optimistic preliminary arrival as committed packet truth.
+Local inputs preserve the original single-run path. Regression tests cover
+cross-satellite arrival-gated execution, ISL outage with no CPU/output,
+deadline rejection, exact packet accounting and job-order-invariant replay.
+
+**Limits:** this is not an online coupled packet/compute discrete-event
+scheduler. An observational replay may reject cases where output traffic
+changes earlier input observations; such scenarios require a unified
+packet-time callback/event owner. Input sourcing is satellite-to-satellite
+only, and the task still uses a fixed selected node, modeled service rate
+and no real CPU/GPU execution, retry or hardware power measurement. The
+16-entry synthetic Pages console remains unchanged.

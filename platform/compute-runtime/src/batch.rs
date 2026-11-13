@@ -3,7 +3,8 @@
 //! CPU service and power are synthetic S1 assumptions, never hardware measurements.
 
 use crate::admission::Decision;
-use crate::planning::{plan_shared, Candidate};
+use crate::ingress::{append_input_flows, assert_replayed_input, observe_input, InputReceipt};
+use crate::planning::{plan_shared_with_arrivals, Candidate};
 use crate::{ComputeNode, ComputeWorkload, DataArtifact, ResourceReservation};
 use ntarlink_contracts::{Flow, NodeKind, Scenario};
 use ntarlink_packet_runtime::{run, PacketStatus, SimulationReport};
@@ -32,6 +33,7 @@ pub struct BatchExperiment {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BatchStatus {
+    InputTransferFailed,
     Rejected,
     Completed,
     TransferFailed,
@@ -44,7 +46,11 @@ pub struct BatchTaskResult {
     pub node_id: String,
     pub status: BatchStatus,
     pub reason: Option<String>,
+    pub compute_started_ns: Option<u64>,
     pub compute_completed_ns: Option<u64>,
+    /// Local input is already present (None); remote input uses L1 evidence.
+    pub input_transfer: Option<InputReceipt>,
+    pub input_ready_ns: Option<u64>,
     pub artifact_bytes: u64,
     pub injected_packets: usize,
     pub delivered_packets: usize,
@@ -132,19 +138,34 @@ impl BatchExperiment {
                 || task.output_size_bytes == 0
                 || task.release_ns >= task.deadline_ns
                 || task.deadline_ns > self.network.duration_ns
-                || node.is_none_or(|n| n.site_id != input.origin_site_id)
+                || node.is_none()
+                || !self.network.nodes.iter().any(|n| {
+                    n.id == input.origin_site_id && n.kind == NodeKind::Satellite
+                })
             {
-                return Err("invalid batch workload or nonlocal input artifact".into());
+                return Err("invalid batch workload or input artifact origin".into());
             }
-            for suffix in ["full", "tail"] {
-                let id = format!("__c1:{}:{suffix}", task.id);
-                if self.network.flows.iter().any(|f| f.id == id) {
-                    return Err("batch flow ID collides with existing traffic".into());
+            for prefix in ["__c1", "__c1_input"] {
+                for suffix in ["full", "tail"] {
+                    let id = format!("{prefix}:{}:{suffix}", task.id);
+                    if self.network.flows.iter().any(|f| f.id == id) {
+                        return Err("batch flow ID collides with existing traffic".into());
+                    }
                 }
             }
-            let packets = task.output_size_bytes.div_ceil(self.packet_payload_bytes);
-            flow_budget = flow_budget.saturating_add(packets);
-            if flow_budget > 1_000_000 || packets > u64::from(u32::MAX) {
+            let output_packets = task.output_size_bytes.div_ceil(self.packet_payload_bytes);
+            flow_budget = flow_budget.saturating_add(output_packets);
+            if node.is_some_and(|n| n.site_id != input.origin_site_id) {
+                let input_packets = input.size_bytes.div_ceil(self.packet_payload_bytes);
+                let latest_injection = task
+                    .release_ns
+                    .checked_add(input_packets.saturating_sub(1));
+                if latest_injection.is_none_or(|at| at >= self.network.duration_ns) {
+                    return Err("remote input packet injection exceeds simulation horizon".into());
+                }
+                flow_budget = flow_budget.saturating_add(input_packets);
+            }
+            if flow_budget > 1_000_000 {
                 return Err("batch packet event budget exceeded".into());
             }
         }
@@ -154,13 +175,38 @@ impl BatchExperiment {
 
 pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
     experiment.validate()?;
+    // Observe actual network ingress before scheduling CPU. The eventual
+    // mixed packet run must reproduce every ingress packet exactly.
+    let mut network = experiment.network.clone();
+    let input_flows = append_input_flows(experiment, &mut network)?;
+    let observed = if input_flows.is_empty() {
+        None
+    } else {
+        Some(run(&network)?)
+    };
+    let receipts = match &observed {
+        Some(report) => observe_input(experiment, report, &input_flows)?,
+        None => BTreeMap::new(),
+    };
+    let mut arrivals = BTreeMap::new();
     let candidates = experiment
         .jobs
         .iter()
+        .filter(|job| {
+            match receipts.get(&job.workload.id) {
+                Some(receipt) => {
+                    if let Some(at) = receipt.ready_at_ns {
+                        arrivals.insert(job.workload.id.clone(), at);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => true,
+            }
+        })
         .map(|job| {
-            // A task that cannot inject every output packet before the horizon
-            // must not reserve shared compute resources and block feasible jobs.
-            // This is only an injection bound; delivery still belongs to L1.
+            // An infeasible output cannot reserve capacity while awaiting ingress.
             let mut workload = job.workload.clone();
             let packets = workload
                 .output_size_bytes
@@ -175,9 +221,10 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             }
         })
         .collect();
-    let planned = plan_shared(
+    let planned = plan_shared_with_arrivals(
         &experiment.compute_nodes,
         candidates,
+        &arrivals,
         experiment.network.duration_ns,
     )?;
     let jobs: BTreeMap<_, _> = experiment
@@ -185,7 +232,6 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         .iter()
         .map(|job| (job.workload.id.as_str(), job))
         .collect();
-    let mut network = experiment.network.clone();
     let mut tasks = Vec::with_capacity(planned.len());
     let mut transfer_flows = BTreeMap::new();
     for plan in planned {
@@ -195,7 +241,16 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             node_id: job.node_id.clone(),
             status: BatchStatus::Rejected,
             reason: plan.reason,
+            compute_started_ns: if plan.admission.decision == Decision::Admitted {
+                Some(plan.start_ns)
+            } else {
+                None
+            },
             compute_completed_ns: plan.end_ns,
+            input_transfer: receipts.get(&job.workload.id).cloned(),
+            input_ready_ns: receipts
+                .get(&job.workload.id)
+                .map_or(Some(job.workload.release_ns), |r| r.ready_at_ns),
             artifact_bytes: job.workload.output_size_bytes,
             injected_packets: 0,
             delivered_packets: 0,
@@ -249,8 +304,38 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         }
         tasks.push(task);
     }
-    // Crucial: one packet runtime and one set of queues/routes/faults for the whole batch.
+    // No incomplete remote input is allowed to reserve or execute CPU.
+    for job in &experiment.jobs {
+        let Some(receipt) = receipts.get(&job.workload.id) else {
+            continue;
+        };
+        if receipt.ready_at_ns.is_some() {
+            continue;
+        }
+        tasks.push(BatchTaskResult {
+            task_id: job.workload.id.clone(),
+            node_id: job.node_id.clone(),
+            status: BatchStatus::InputTransferFailed,
+            reason: Some("remote input artifact was not fully delivered by L1".into()),
+            compute_started_ns: None,
+            compute_completed_ns: None,
+            input_transfer: Some(receipt.clone()),
+            input_ready_ns: None,
+            artifact_bytes: job.workload.output_size_bytes,
+            injected_packets: 0,
+            delivered_packets: 0,
+            dropped_packets: 0,
+            delivered_bytes: 0,
+            dropped_bytes: 0,
+            ground_arrival_ns: None,
+            reservation: None,
+        });
+    }
+    // All ingress and output flows compete in one final authoritative L1 run.
     let packet_report = run(&network)?;
+    if let Some(observed) = &observed {
+        assert_replayed_input(observed, &packet_report, &input_flows)?;
+    }
     for packet in &packet_report.packets {
         let Some(&(index, bytes)) = transfer_flows.get(&packet.flow_id) else {
             continue;
@@ -293,9 +378,21 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             task.reason = Some("network artifact arrived after deadline".into());
         }
     }
+    tasks.sort_by(|a, b| {
+        (
+            jobs[a.task_id.as_str()].workload.release_ns,
+            &a.task_id,
+            &a.node_id,
+        )
+            .cmp(&(
+                jobs[b.task_id.as_str()].workload.release_ns,
+                &b.task_id,
+                &b.node_id,
+            ))
+    });
     Ok(BatchReport {
         scenario: network.name.clone(),
-        fidelity: "s1_modeled_local_compute_shared_l1_packet_runtime",
+        fidelity: "s1_modeled_compute_packet_observed_ingress_shared_l1_replay",
         tasks,
         network: packet_report,
     })
@@ -425,12 +522,88 @@ mod tests {
     }
 
     #[test]
-    fn workload_validation_rejects_nonlocal_inputs_and_duplicate_task_ids() {
+    fn workload_validation_rejects_invalid_inputs_and_duplicate_task_ids() {
         let mut experiment = fixture();
-        experiment.jobs[0].input_artifact.origin_site_id = "sat-b".into();
+        experiment.jobs[0].input_artifact.origin_site_id = "gw-a".into();
         assert!(experiment.validate().is_err());
         experiment.jobs[0].input_artifact.origin_site_id = "sat-a".into();
         experiment.jobs[1].workload.id = experiment.jobs[0].workload.id.clone();
         assert!(experiment.validate().is_err());
+    }
+
+    #[test]
+    fn inter_satellite_input_arrival_gates_cpu_and_shares_final_isl_trace() {
+        let mut experiment = fixture();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        let report = run_batch(&experiment).unwrap();
+        let task = &report.tasks[2];
+        assert_eq!(task.status, BatchStatus::Completed);
+        let receipt = task.input_transfer.as_ref().unwrap();
+        assert_eq!(receipt.delivered_bytes, experiment.jobs[2].input_artifact.size_bytes);
+        assert_eq!(receipt.dropped_bytes, 0);
+        assert!(receipt.injected_packets > 100);
+        let ready = task.input_ready_ns.unwrap();
+        assert!(ready > experiment.jobs[2].workload.release_ns);
+        assert_eq!(task.compute_started_ns, Some(ready));
+        assert_eq!(task.compute_completed_ns, Some(ready + 20_000_000));
+        assert!(report.network.packets.iter().any(|p| {
+            p.flow_id.starts_with("__c1_input:c:")
+                && p.hops.iter().any(|hop| hop.link_id == "isl-a-b")
+        }));
+        let mut reversed = experiment.clone();
+        reversed.jobs.reverse();
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run_batch(&reversed).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn isl_input_outage_blocks_remote_cpu_and_output_not_prepaid_by_resources() {
+        let mut experiment = fixture();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        experiment.network.links.iter_mut().find(|l| l.id == "isl-a-b").unwrap().up = false;
+        let report = run_batch(&experiment).unwrap();
+        let task = &report.tasks[2];
+        assert_eq!(task.status, BatchStatus::InputTransferFailed);
+        assert!(task.reservation.is_none());
+        assert!(task.compute_started_ns.is_none());
+        assert!(task.compute_completed_ns.is_none());
+        assert!(task.input_ready_ns.is_none());
+        assert_eq!(
+            task.input_transfer.as_ref().unwrap().dropped_bytes,
+            experiment.jobs[2].input_artifact.size_bytes
+        );
+        assert_eq!(task.injected_packets, 0);
+        assert!(!report.network.packets.iter().any(|p| p.flow_id.starts_with("__c1:c:")));
+    }
+
+    #[test]
+    fn remote_input_late_arrival_rejects_cpu_without_output_packets() {
+        let mut experiment = fixture();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        experiment.jobs[2].workload.deadline_ns = 10_000_000;
+        let report = run_batch(&experiment).unwrap();
+        let task = &report.tasks[2];
+        assert_eq!(task.status, BatchStatus::Rejected);
+        assert!(task.input_ready_ns.is_some());
+        assert!(task.reservation.is_none());
+        assert!(task.compute_started_ns.is_none());
+        assert_eq!(
+            task.input_transfer.as_ref().unwrap().delivered_bytes,
+            experiment.jobs[2].input_artifact.size_bytes
+        );
+        assert!(!report.network.packets.iter().any(|p| p.flow_id.starts_with("__c1:c:")));
+    }
+
+    #[test]
+    fn remote_input_cannot_reference_a_non_satellite_or_overrun_horizon() {
+        let mut experiment = fixture();
+        experiment.jobs[2].input_artifact.origin_site_id = "gw-a".into();
+        assert!(experiment.validate().is_err());
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        experiment.jobs[2].workload.release_ns = experiment.network.duration_ns - 1;
+        experiment.jobs[2].workload.deadline_ns = experiment.network.duration_ns;
+        assert!(experiment.validate().unwrap_err().contains("remote input packet injection"));
     }
 }
