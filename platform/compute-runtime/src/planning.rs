@@ -243,7 +243,7 @@ mod tests {
             ("ready".to_owned(), 5_000_000),
         ]);
         let results = plan_shared_with_arrivals(
-            &[scenario.orbital_node.clone()],
+            std::slice::from_ref(&scenario.orbital_node),
             vec![make("ready"), make("late")],
             &arrivals,
             scenario.network.duration_ns,
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(late.admission.decision, Decision::RejectedInvalidInterval);
         assert!(late.reservation.is_none());
         let reversed = plan_shared_with_arrivals(
-            &[scenario.orbital_node.clone()],
+            std::slice::from_ref(&scenario.orbital_node),
             vec![make("late"), make("ready")],
             &arrivals,
             scenario.network.duration_ns,
@@ -284,7 +284,7 @@ mod tests {
             input_bytes: scenario.input_artifact.size_bytes,
         };
         let plan = plan_shared(
-            &[scenario.orbital_node.clone()],
+            std::slice::from_ref(&scenario.orbital_node),
             vec![job],
             scenario.network.duration_ns,
         )
