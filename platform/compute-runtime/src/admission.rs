@@ -247,10 +247,7 @@ mod tests {
             req("other", "sat-a", 1, 9, 6),
         ];
         let first = admit_deterministic(capacities(), requests.clone());
-        let reversed = admit_deterministic(
-            capacities(),
-            requests.into_iter().rev().collect(),
-        );
+        let reversed = admit_deterministic(capacities(), requests.into_iter().rev().collect());
         assert_eq!(first, reversed);
         assert_eq!(
             first.0.iter().map(|a| &a.decision).collect::<Vec<_>>(),
