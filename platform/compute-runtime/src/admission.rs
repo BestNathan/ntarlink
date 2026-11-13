@@ -2,7 +2,7 @@
 //! This is an S1 planning primitive, not a hardware scheduler or network authority.
 
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capacity {
@@ -45,6 +45,7 @@ pub struct Admission {
 pub struct Ledger {
     capacities: BTreeMap<String, Capacity>,
     admitted: Vec<Request>,
+    retired_tasks: BTreeSet<String>,
 }
 
 impl Ledger {
@@ -52,6 +53,7 @@ impl Ledger {
         Self {
             capacities,
             admitted: Vec::new(),
+            retired_tasks: BTreeSet::new(),
         }
     }
 
@@ -64,7 +66,9 @@ impl Ledger {
             Decision::RejectedInvalidInterval
         } else if !self.capacities.contains_key(&request.node_id) {
             Decision::RejectedUnknownNode
-        } else if self.admitted.iter().any(|r| r.task_id == request.task_id) {
+        } else if self.retired_tasks.contains(&request.task_id)
+            || self.admitted.iter().any(|r| r.task_id == request.task_id)
+        {
             Decision::RejectedDuplicateTask
         } else if self.fits(&request) {
             self.admitted.push(request.clone());
@@ -77,6 +81,30 @@ impl Ledger {
             node_id: request.node_id,
             decision,
         }
+    }
+
+    /// Truncate a modeled reservation at a failure/cancellation timestamp.
+    /// The caller supplies virtual time; this ledger does not advance the clock.
+    /// Historical occupancy before `at_ns` remains committed. A task identity
+    /// cannot be reused after cancellation; a retry must use a new attempt ID.
+    /// Unknown, already-ended and repeated cancellations do not mutate state.
+    pub fn terminate_at(&mut self, task_id: &str, at_ns: u64) -> bool {
+        if self.retired_tasks.contains(task_id) {
+            return false;
+        }
+        let Some(index) = self.admitted.iter().position(|r| r.task_id == task_id) else {
+            return false;
+        };
+        if at_ns >= self.admitted[index].end_ns {
+            return false;
+        }
+        if at_ns <= self.admitted[index].start_ns {
+            self.admitted.remove(index);
+        } else {
+            self.admitted[index].end_ns = at_ns;
+        }
+        self.retired_tasks.insert(task_id.to_owned());
+        true
     }
 
     fn fits(&self, request: &Request) -> bool {
@@ -247,6 +275,52 @@ mod tests {
             Decision::RejectedUnknownNode
         );
         assert_eq!(ledger.admitted().len(), 1);
+    }
+
+    #[test]
+    fn failure_truncates_future_capacity_but_preserves_past_occupancy() {
+        let mut ledger = Ledger::new(capacities());
+        assert_eq!(
+            ledger.admit(req("task-1", "sat-a", 0, 100, 10)).decision,
+            Decision::Admitted
+        );
+        assert!(ledger.terminate_at("task-1", 40));
+        assert_eq!(ledger.admitted()[0].end_ns, 40);
+        assert_eq!(
+            ledger.admit(req("past", "sat-a", 20, 30, 1)).decision,
+            Decision::RejectedCapacity
+        );
+        assert_eq!(
+            ledger.admit(req("retry-2", "sat-a", 40, 100, 10)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("task-1", "sat-b", 40, 100, 1)).decision,
+            Decision::RejectedDuplicateTask
+        );
+        assert!(!ledger.terminate_at("task-1", 50));
+        assert!(!ledger.terminate_at("missing", 50));
+    }
+
+    #[test]
+    fn prestart_cancellation_releases_all_capacity_without_reusing_identity() {
+        let mut ledger = Ledger::new(capacities());
+        assert_eq!(
+            ledger.admit(req("queued", "sat-a", 50, 100, 10)).decision,
+            Decision::Admitted
+        );
+        assert!(ledger.terminate_at("queued", 10));
+        assert!(ledger.admitted().is_empty());
+        assert_eq!(
+            ledger.admit(req("replacement", "sat-a", 50, 100, 10)).decision,
+            Decision::Admitted
+        );
+        assert_eq!(
+            ledger.admit(req("queued", "sat-b", 50, 100, 1)).decision,
+            Decision::RejectedDuplicateTask
+        );
+        assert!(!ledger.terminate_at("replacement", 100));
+        assert_eq!(ledger.admitted()[0].end_ns, 100);
     }
 
     #[test]
