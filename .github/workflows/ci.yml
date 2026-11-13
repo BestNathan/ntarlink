@@ -27,6 +27,25 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Verify C1 satellite ingress causality and packet output transfer
+        run: |
+          cargo run -p ntarlink-cli -- simulate-batch scenarios/c1-remote-ingress.json --json > /tmp/c1-remote-report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("/tmp/c1-remote-report.json"))
+          task = next(t for t in report["tasks"] if t["task_id"] == "c")
+          receipt = task["input_transfer"]
+          assert task["status"] == "completed"
+          assert receipt["delivered_bytes"] == 120001
+          assert receipt["dropped_bytes"] == 0
+          assert task["compute_started_ns"] == task["input_ready_ns"]
+          assert task["compute_started_ns"] > 0
+          ingress = [p for p in report["network"]["packets"] if p["flow_id"].startswith("__c1_input:c:")]
+          assert ingress and all(p["status"] == "delivered" for p in ingress)
+          assert any(h["link_id"] == "isl-a-b" for p in ingress for h in p["hops"])
+          assert task["delivered_bytes"] == task["artifact_bytes"]
+          print("C1 packet-authoritative ingress observed, compute admitted and output delivered")
+          PY
       - name: Verify C1 shared packet network and deterministic competing tasks
         run: |
           cargo run -p ntarlink-cli -- validate-batch scenarios/c1-shared-network.json

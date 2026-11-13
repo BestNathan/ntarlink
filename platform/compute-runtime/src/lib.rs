@@ -3,6 +3,7 @@
 
 pub mod admission;
 pub mod batch;
+mod ingress;
 pub mod planning;
 
 use ntarlink_contracts::{Flow, NodeKind, Scenario};

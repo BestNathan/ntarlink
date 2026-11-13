@@ -443,9 +443,11 @@ impl Scenario {
                 endpoints,
                 (Some(NodeKind::Terminal), Some(NodeKind::Internet))
                     | (Some(NodeKind::Satellite), Some(NodeKind::GroundStation))
-            ) {
+                    | (Some(NodeKind::Satellite), Some(NodeKind::Satellite))
+            ) || flow.source == flow.destination
+            {
                 return Err(format!(
-                    "flow {} requires terminal-to-internet or satellite-to-ground-station endpoints",
+                    "flow {} requires distinct terminal-to-internet, satellite-to-ground-station or satellite-to-satellite endpoints",
                     flow.id
                 ));
             }
@@ -1993,6 +1995,18 @@ mod tests {
         scenario.flows[0].source = "sat-a".into();
         scenario.flows[0].destination = "gw-a".into();
         scenario.validate().unwrap();
+        scenario.flows[0].destination = "ue-a".into();
+        assert!(scenario.validate().is_err());
+    }
+
+    #[test]
+    fn satellite_to_satellite_packet_flow_is_supported_but_not_local_or_rf_mixed() {
+        let mut scenario = Scenario::from_json(&fixture()).unwrap();
+        scenario.flows[0].source = "sat-a".into();
+        scenario.flows[0].destination = "sat-b".into();
+        scenario.validate().unwrap();
+        scenario.flows[0].destination = "sat-a".into();
+        assert!(scenario.validate().is_err());
         scenario.flows[0].destination = "ue-a".into();
         assert!(scenario.validate().is_err());
     }
