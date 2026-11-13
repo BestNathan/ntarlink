@@ -70,7 +70,7 @@ pub(crate) fn observe_input(
     flows: &BTreeMap<String, (String, u64)>,
 ) -> Result<BTreeMap<String, InputReceipt>, String> {
     let mut receipts = BTreeMap::new();
-    for (_, (task_id, _)) in flows {
+    for (task_id, _) in flows.values() {
         receipts
             .entry(task_id.clone())
             .or_insert_with(InputReceipt::default);
