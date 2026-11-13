@@ -259,6 +259,7 @@ def parse_continuous_ping(output: str) -> dict:
     """Summarize observed kernel ping replies without claiming exact outage onset."""
     replies = []
     missed = []
+    unanswered_samples = []
     for line in output.splitlines():
         match = re.search(r"^\[(\d+(?:\.\d+)?)\].*icmp_seq=(\d+)", line)
         if not match:
@@ -269,6 +270,7 @@ def parse_continuous_ping(output: str) -> dict:
             replies.append((seq, timestamp_ns))
         elif "no answer yet" in line:
             missed.append(seq)
+            unanswered_samples.append({"seq": seq, "wall_utc_ns": timestamp_ns})
     gaps = [
         {"before_seq": previous[0], "after_seq": current[0],
          "elapsed_wall_ns": current[1] - previous[1],
@@ -279,12 +281,101 @@ def parse_continuous_ping(output: str) -> dict:
     return {
         "received_reply_count": len(replies),
         "observed_missing_sequences": sorted(set(missed)),
+        "reply_samples": [
+            {"seq": seq, "wall_utc_ns": stamp} for seq, stamp in replies
+        ],
+        "unanswered_samples": unanswered_samples,
         "reply_gaps": gaps,
         "largest_observed_reply_gap_wall_ns": max(
             (gap["elapsed_wall_ns"] for gap in gaps), default=None
         ),
         "interpretation": "sampled wall-clock reply gap, not exact outage or protocol convergence",
     }
+
+
+def correlate_route_transition_observations(events: list[dict], ping: dict) -> list[dict]:
+    """Join actual S2 route changes with UTC-tagged ICMP observations.
+
+    iputils ping -D uses CLOCK_REALTIME/Unix UTC; controller timestamps use
+    time.time_ns() from the same host, never S1 virtual time. ICMP sampling
+    brackets *observed* disruption but cannot establish exact blackout onset
+    or dynamic-routing protocol convergence.
+    """
+    replies = sorted(ping["reply_samples"], key=lambda item: item["wall_utc_ns"])
+    unanswered = sorted(ping["unanswered_samples"], key=lambda item: item["wall_utc_ns"])
+    observations = []
+    for index, event in enumerate(events):
+        start = event["fault_start_wall_utc_ns"]
+        applied = event["route_applied_wall_utc_ns"]
+        next_start = (
+            events[index + 1]["fault_start_wall_utc_ns"]
+            if index + 1 < len(events) else None
+        )
+        if applied < start:
+            raise RuntimeError("host wall clock moved backwards during route update")
+        if next_start is not None and next_start <= start:
+            raise RuntimeError("fault wall-clock timestamps are not increasing")
+        in_window = lambda t: start <= t and (next_start is None or t < next_start)
+        missing = [sample for sample in unanswered if in_window(sample["wall_utc_ns"])]
+        after_apply = next(
+            (sample for sample in replies
+             if sample["wall_utc_ns"] >= applied and
+             (next_start is None or sample["wall_utc_ns"] < next_start)),
+            None,
+        )
+        first_missing = missing[0] if missing else None
+        before_missing = (
+            next(
+                (sample for sample in reversed(replies)
+                 if sample["wall_utc_ns"] < first_missing["wall_utc_ns"]),
+                None,
+            )
+            if first_missing else None
+        )
+        after_missing = (
+            next(
+                (sample for sample in replies
+                 if sample["wall_utc_ns"] > first_missing["wall_utc_ns"]
+                 and (next_start is None or sample["wall_utc_ns"] < next_start)),
+                None,
+            )
+            if first_missing else None
+        )
+        if first_missing and after_missing:
+            assessment = "sampled_unanswered_then_replied"
+        elif first_missing:
+            assessment = "sampled_unanswered_without_recovery_in_window"
+        elif after_apply:
+            assessment = "no_unanswered_observed_at_probe_cadence"
+        else:
+            assessment = "insufficient_probe_evidence"
+        observations.append({
+            "link_id": event["link_id"],
+            "action": event["action"],
+            "clock": "S2_host_UTC_wall_clock_not_S1_virtual_time",
+            "fault_start_wall_utc_ns": start,
+            "route_applied_wall_utc_ns": applied,
+            "next_fault_start_wall_utc_ns": next_start,
+            "observed_unanswered_at_probe_interval": len(missing),
+            "first_unanswered_wall_utc_ns": (
+                first_missing["wall_utc_ns"] if first_missing else None
+            ),
+            "first_reply_after_apply_wall_utc_ns": (
+                after_apply["wall_utc_ns"] if after_apply else None
+            ),
+            "first_reply_after_apply_elapsed_wall_ns": (
+                after_apply["wall_utc_ns"] - applied if after_apply else None
+            ),
+            "first_reply_after_unanswered_wall_utc_ns": (
+                after_missing["wall_utc_ns"] if after_missing else None
+            ),
+            "sampled_reply_gap_bracketing_loss_wall_ns": (
+                after_missing["wall_utc_ns"] - before_missing["wall_utc_ns"]
+                if after_missing and before_missing else None
+            ),
+            "assessment": assessment,
+        })
+    return observations
 
 
 def remaining_probe_window_ns(origin_ns: int, duration_ns: int, scale: float, now_ns: int) -> int:
@@ -322,19 +413,36 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
              "-i", "0.2", plan["target_ip"]],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        origin_wall_utc_before_ns = time.time_ns()
         origin = time.monotonic_ns()
+        origin_wall_utc_after_ns = time.time_ns()
+        report["probe_clock"] = {
+            "source": "S2_host_monotonic_schedule_and_host_UTC_ping_D",
+            "origin_monotonic_ns": origin,
+            "origin_wall_utc_ns": origin_wall_utc_before_ns,
+            "origin_clock_pair_uncertainty_ns": (
+                origin_wall_utc_after_ns - origin_wall_utc_before_ns
+            ),
+            "warning": "host UTC can be adjusted; do not equate ping timestamps with S1 virtual time",
+        }
         for event in plan["faults"]:
             target_offset = int(event["at_ns"] * scale)
             wait_s = (origin + target_offset - time.monotonic_ns()) / 1e9
             if wait_s > 0:
                 time.sleep(wait_s)
             at = time.monotonic_ns()
+            fault_start_wall_utc_ns = time.time_ns()
             result = worker.fault_and_reconfigure(event)
+            route_applied_wall_utc_ns = time.time_ns()
+            controller_total_elapsed_monotonic_ns = time.monotonic_ns() - at
             ping = worker.ping(f'{event["link_id"]}:{event["action"]}:rerouted')
             report["probes"].append(ping)
             report["events"].append({
                 **event, **result, "applied_wall_offset_ns": time.monotonic_ns() - origin,
                 "scheduler_lateness_ns": max(0, at - origin - target_offset),
+                "fault_start_wall_utc_ns": fault_start_wall_utc_ns,
+                "route_applied_wall_utc_ns": route_applied_wall_utc_ns,
+                "controller_total_elapsed_monotonic_ns": controller_total_elapsed_monotonic_ns,
                 "post_route_ping_success": ping["success"],
                 "post_route_rtt_ms": ping["rtt_ms"],
             })
@@ -361,6 +469,11 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
                 report["continuous_ping_warning"] = "probe required forced termination"
             report["continuous_ping"] = parse_continuous_ping(stdout)
             report["continuous_ping"]["stderr_tail"] = stderr[-300:]
+            report["route_transition_observations"] = (
+                correlate_route_transition_observations(
+                    report["events"], report["continuous_ping"]
+                )
+            )
         else:
             report["continuous_ping_warning"] = "probe did not start"
         report["cleanup_errors"] = worker.close()
