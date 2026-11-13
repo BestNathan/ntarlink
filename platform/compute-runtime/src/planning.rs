@@ -28,7 +28,19 @@ pub struct PlannedWorkload {
 /// transfer arrival or contact-aware placement; callers must supply input-ready times.
 pub fn plan_shared(
     nodes: &[ComputeNode],
+    candidates: Vec<Candidate>,
+    horizon_ns: u64,
+) -> Result<Vec<PlannedWorkload>, String> {
+    plan_shared_with_arrivals(nodes, candidates, &BTreeMap::new(), horizon_ns)
+}
+
+/// Model transfer readiness as an external packet-runtime observation. Planning
+/// never infers arrival from link geometry or advances the network clock.
+/// Missing observations preserve the original release-time-only planning API.
+pub fn plan_shared_with_arrivals(
+    nodes: &[ComputeNode],
     mut candidates: Vec<Candidate>,
+    input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
 ) -> Result<Vec<PlannedWorkload>, String> {
     let mut capacities = BTreeMap::new();
@@ -74,7 +86,9 @@ pub fn plan_shared(
     let mut results = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let task = &candidate.workload;
-        let start = task.release_ns;
+        let start = task.release_ns.max(
+            input_arrivals_ns.get(&task.id).copied().unwrap_or(task.release_ns),
+        );
         let mut outcome = PlannedWorkload {
             admission: Admission {
                 task_id: task.id.clone(),
@@ -196,6 +210,47 @@ mod tests {
         );
         assert_eq!(first[0].end_ns, Some(20_000_000));
         assert_eq!(first[3].start_ns, 30_000_000);
+    }
+
+    #[test]
+    fn observed_packet_arrival_delays_admission_and_can_miss_deadline() {
+        let scenario = fixture();
+        let make = |id: &str| {
+            let mut workload = scenario.workload.clone();
+            workload.id = id.into();
+            Candidate {
+                node_id: scenario.orbital_node.id.clone(),
+                workload,
+                input_bytes: scenario.input_artifact.size_bytes,
+            }
+        };
+        let duration = 20_000_000;
+        let arrivals = BTreeMap::from([
+            ("late".to_owned(), scenario.workload.deadline_ns),
+            ("ready".to_owned(), 5_000_000),
+        ]);
+        let results = plan_shared_with_arrivals(
+            &[scenario.orbital_node.clone()],
+            vec![make("ready"), make("late")],
+            &arrivals,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        let ready = results.iter().find(|r| r.admission.task_id == "ready").unwrap();
+        let late = results.iter().find(|r| r.admission.task_id == "late").unwrap();
+        assert_eq!(ready.start_ns, 5_000_000);
+        assert_eq!(ready.end_ns, Some(5_000_000 + duration));
+        assert_eq!(ready.admission.decision, Decision::Admitted);
+        assert_eq!(late.admission.decision, Decision::RejectedInvalidInterval);
+        assert!(late.reservation.is_none());
+        let reversed = plan_shared_with_arrivals(
+            &[scenario.orbital_node.clone()],
+            vec![make("late"), make("ready")],
+            &arrivals,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(serde_json::to_vec(&results).unwrap(), serde_json::to_vec(&reversed).unwrap());
     }
 
     #[test]
