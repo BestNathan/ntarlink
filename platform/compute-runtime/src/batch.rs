@@ -194,8 +194,12 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             reservation: plan.reservation,
         };
         if plan.admission.decision == Decision::Admitted {
-            let end_ns = plan.end_ns.ok_or("admitted workload missing compute completion")?;
-            let count = task.artifact_bytes.div_ceil(experiment.packet_payload_bytes);
+            let end_ns = plan
+                .end_ns
+                .ok_or("admitted workload missing compute completion")?;
+            let count = task
+                .artifact_bytes
+                .div_ceil(experiment.packet_payload_bytes);
             let last_at = end_ns.checked_add(count - 1);
             if last_at.is_none_or(|at| at >= network.duration_ns) {
                 task.status = BatchStatus::DeadlineMissed;
@@ -221,7 +225,8 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
                         source: node.site_id.clone(),
                         destination: experiment.ground_site_id.clone(),
                         packet_size_bytes: bytes,
-                        packet_count: u32::try_from(packets).map_err(|_| "batch packet overflow")?,
+                        packet_count: u32::try_from(packets)
+                            .map_err(|_| "batch packet overflow")?,
                         start_ns: start,
                         interval_ns: u64::from(packets > 1),
                     });
@@ -244,7 +249,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             PacketStatus::Delivered => {
                 task.delivered_packets += 1;
                 task.delivered_bytes += bytes;
-                let at = packet.completed_ns.ok_or("delivered packet has no arrival")?;
+                let at = packet
+                    .completed_ns
+                    .ok_or("delivered packet has no arrival")?;
                 task.ground_arrival_ns = Some(task.ground_arrival_ns.map_or(at, |old| old.max(at)));
             }
             PacketStatus::Dropped => {
@@ -266,9 +273,10 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         if task.delivered_bytes != task.artifact_bytes {
             task.status = BatchStatus::TransferFailed;
             task.reason = Some("modeled artifact lost in shared packet network".into());
-        } else if task.ground_arrival_ns.is_none_or(|at| {
-            at > jobs[task.task_id.as_str()].workload.deadline_ns
-        }) {
+        } else if task
+            .ground_arrival_ns
+            .is_none_or(|at| at > jobs[task.task_id.as_str()].workload.deadline_ns)
+        {
             task.status = BatchStatus::DeadlineMissed;
             task.reason = Some("network artifact arrived after deadline".into());
         }
@@ -298,13 +306,24 @@ mod tests {
         assert_eq!(report.tasks[1].status, BatchStatus::Rejected);
         assert_eq!(report.tasks[2].status, BatchStatus::Completed);
         assert_eq!(report.tasks[3].status, BatchStatus::Completed);
-        assert_eq!(report.network.injected, report.network.delivered + report.network.dropped);
-        for task in report.tasks.iter().filter(|t| t.status == BatchStatus::Completed) {
+        assert_eq!(
+            report.network.injected,
+            report.network.delivered + report.network.dropped
+        );
+        for task in report
+            .tasks
+            .iter()
+            .filter(|t| t.status == BatchStatus::Completed)
+        {
             assert_eq!(task.delivered_bytes, task.artifact_bytes);
             assert_eq!(task.dropped_bytes, 0);
             assert_eq!(task.delivered_packets, task.injected_packets);
         }
-        let accepted = report.tasks.iter().filter(|t| t.reservation.is_some()).count();
+        let accepted = report
+            .tasks
+            .iter()
+            .filter(|t| t.reservation.is_some())
+            .count();
         let artifact_packets = report
             .network
             .packets
@@ -314,9 +333,16 @@ mod tests {
         assert_eq!(accepted, 3);
         assert_eq!(
             artifact_packets,
-            report.tasks.iter().map(|t| t.injected_packets).sum::<usize>()
+            report
+                .tasks
+                .iter()
+                .map(|t| t.injected_packets)
+                .sum::<usize>()
         );
-        let a_hops: Vec<_> = report.network.packets.iter()
+        let a_hops: Vec<_> = report
+            .network
+            .packets
+            .iter()
             .filter(|p| p.flow_id.starts_with("__c1:a:"))
             .flat_map(|p| p.hops.iter().map(|h| h.link_id.as_str()))
             .collect();
@@ -336,14 +362,23 @@ mod tests {
     #[test]
     fn common_feeder_failure_affects_both_satellites_without_fake_delivery() {
         let mut experiment = fixture();
-        experiment.network.links.iter_mut().find(|l| l.id == "feeder-b-gw").unwrap().up = false;
+        experiment
+            .network
+            .links
+            .iter_mut()
+            .find(|l| l.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
         let report = run_batch(&experiment).unwrap();
         for task in report.tasks.iter().filter(|t| t.reservation.is_some()) {
             assert_eq!(task.status, BatchStatus::TransferFailed);
             assert_eq!(task.delivered_bytes, 0);
             assert_eq!(task.dropped_bytes, task.artifact_bytes);
         }
-        assert_eq!(report.network.injected, report.network.delivered + report.network.dropped);
+        assert_eq!(
+            report.network.injected,
+            report.network.delivered + report.network.dropped
+        );
     }
 
     #[test]

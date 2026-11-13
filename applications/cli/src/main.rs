@@ -9,7 +9,12 @@ fn main() {
     if !(args.len() == 3 || (args.len() == 4 && args[3] == "--json"))
         || !matches!(
             args[1].as_str(),
-            "validate" | "simulate" | "validate-compute" | "simulate-compute" | "validate-batch" | "simulate-batch"
+            "validate"
+                | "simulate"
+                | "validate-compute"
+                | "simulate-compute"
+                | "validate-batch"
+                | "simulate-batch"
         )
     {
         eprintln!("usage: ntarlink-cli <validate|simulate|validate-compute|simulate-compute|validate-batch|simulate-batch> <scenario.json> [--json]");
