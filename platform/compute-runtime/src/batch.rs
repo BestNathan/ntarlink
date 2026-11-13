@@ -157,10 +157,22 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
     let candidates = experiment
         .jobs
         .iter()
-        .map(|job| Candidate {
-            node_id: job.node_id.clone(),
-            workload: job.workload.clone(),
-            input_bytes: job.input_artifact.size_bytes,
+        .map(|job| {
+            // A task that cannot inject every output packet before the horizon
+            // must not reserve shared compute resources and block feasible jobs.
+            // This is only an injection bound; delivery still belongs to L1.
+            let mut workload = job.workload.clone();
+            let packets = workload
+                .output_size_bytes
+                .div_ceil(experiment.packet_payload_bytes);
+            workload.deadline_ns = workload
+                .deadline_ns
+                .min(experiment.network.duration_ns.saturating_sub(packets));
+            Candidate {
+                node_id: job.node_id.clone(),
+                workload,
+                input_bytes: job.input_artifact.size_bytes,
+            }
         })
         .collect();
     let planned = plan_shared(
@@ -379,6 +391,37 @@ mod tests {
             report.network.injected,
             report.network.delivered + report.network.dropped
         );
+    }
+
+    #[test]
+    fn output_injection_horizon_rejects_without_reserving_shared_capacity() {
+        let mut experiment = fixture();
+        experiment.packet_payload_bytes = 1;
+        let mut too_late = experiment.jobs[0].clone();
+        too_late.workload.id = "too-late".into();
+        too_late.workload.release_ns = 2_979_998_500;
+        too_late.workload.deadline_ns = experiment.network.duration_ns;
+        too_late.workload.output_size_bytes = 2_000;
+        let mut feasible = too_late.clone();
+        feasible.workload.id = "feasible".into();
+        feasible.workload.release_ns = 2_979_998_600;
+        feasible.workload.output_size_bytes = 1;
+        experiment.jobs = vec![too_late, feasible];
+        let report = run_batch(&experiment).unwrap();
+        let rejected = report
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "too-late")
+            .unwrap();
+        let accepted = report
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "feasible")
+            .unwrap();
+        assert_eq!(rejected.status, BatchStatus::Rejected);
+        assert!(rejected.reservation.is_none());
+        assert!(accepted.reservation.is_some());
+        assert_eq!(accepted.compute_completed_ns, Some(2_999_998_600));
     }
 
     #[test]
