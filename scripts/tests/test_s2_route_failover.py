@@ -49,11 +49,11 @@ class S2RouteTests(unittest.TestCase):
     def test_late_reply_is_not_counted_as_confirmed_missing_probe(self):
         # iputils ping -O may emit "no answer yet" before a delayed reply.
         output = (
-            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\\n"
-            "[1000.200000] no answer yet for icmp_seq=2\\n"
-            "[1000.300000] 64 bytes from host: icmp_seq=2 ttl=64 time=300 ms\\n"
-            "[1000.400000] no answer yet for icmp_seq=3\\n"
-            "[1000.600000] 64 bytes from host: icmp_seq=4 ttl=64 time=1 ms\\n"
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.200000] no answer yet for icmp_seq=2\n"
+            "[1000.300000] 64 bytes from host: icmp_seq=2 ttl=64 time=300 ms\n"
+            "[1000.400000] no answer yet for icmp_seq=3\n"
+            "[1000.600000] 64 bytes from host: icmp_seq=4 ttl=64 time=1 ms\n"
         )
         ping = parse_continuous_ping(output)
         self.assertEqual(ping["late_reply_sequences"], [2])
