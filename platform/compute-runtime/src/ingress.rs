@@ -71,7 +71,9 @@ pub(crate) fn observe_input(
 ) -> Result<BTreeMap<String, InputReceipt>, String> {
     let mut receipts = BTreeMap::new();
     for (_, (task_id, _)) in flows {
-        receipts.entry(task_id.clone()).or_insert_with(InputReceipt::default);
+        receipts
+            .entry(task_id.clone())
+            .or_insert_with(InputReceipt::default);
     }
     for packet in &network.packets {
         let Some((task_id, bytes)) = flows.get(&packet.flow_id) else {
@@ -83,7 +85,9 @@ pub(crate) fn observe_input(
             PacketStatus::Delivered => {
                 receipt.delivered_packets += 1;
                 receipt.delivered_bytes += bytes;
-                let at = packet.completed_ns.ok_or("delivered input has no packet arrival")?;
+                let at = packet
+                    .completed_ns
+                    .ok_or("delivered input has no packet arrival")?;
                 receipt.ready_at_ns = Some(receipt.ready_at_ns.map_or(at, |prev| prev.max(at)));
             }
             PacketStatus::Dropped => {

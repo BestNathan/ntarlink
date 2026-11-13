@@ -444,7 +444,8 @@ impl Scenario {
                 (Some(NodeKind::Terminal), Some(NodeKind::Internet))
                     | (Some(NodeKind::Satellite), Some(NodeKind::GroundStation))
                     | (Some(NodeKind::Satellite), Some(NodeKind::Satellite))
-            ) || flow.source == flow.destination {
+            ) || flow.source == flow.destination
+            {
                 return Err(format!(
                     "flow {} requires distinct terminal-to-internet, satellite-to-ground-station or satellite-to-satellite endpoints",
                     flow.id

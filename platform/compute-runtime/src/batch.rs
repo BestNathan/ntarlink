@@ -139,9 +139,11 @@ impl BatchExperiment {
                 || task.release_ns >= task.deadline_ns
                 || task.deadline_ns > self.network.duration_ns
                 || node.is_none()
-                || !self.network.nodes.iter().any(|n| {
-                    n.id == input.origin_site_id && n.kind == NodeKind::Satellite
-                })
+                || !self
+                    .network
+                    .nodes
+                    .iter()
+                    .any(|n| n.id == input.origin_site_id && n.kind == NodeKind::Satellite)
             {
                 return Err("invalid batch workload or input artifact origin".into());
             }
@@ -157,9 +159,7 @@ impl BatchExperiment {
             flow_budget = flow_budget.saturating_add(output_packets);
             if node.is_some_and(|n| n.site_id != input.origin_site_id) {
                 let input_packets = input.size_bytes.div_ceil(self.packet_payload_bytes);
-                let latest_injection = task
-                    .release_ns
-                    .checked_add(input_packets.saturating_sub(1));
+                let latest_injection = task.release_ns.checked_add(input_packets.saturating_sub(1));
                 if latest_injection.is_none_or(|at| at >= self.network.duration_ns) {
                     return Err("remote input packet injection exceeds simulation horizon".into());
                 }
@@ -192,18 +192,16 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
     let candidates = experiment
         .jobs
         .iter()
-        .filter(|job| {
-            match receipts.get(&job.workload.id) {
-                Some(receipt) => {
-                    if let Some(at) = receipt.ready_at_ns {
-                        arrivals.insert(job.workload.id.clone(), at);
-                        true
-                    } else {
-                        false
-                    }
+        .filter(|job| match receipts.get(&job.workload.id) {
+            Some(receipt) => {
+                if let Some(at) = receipt.ready_at_ns {
+                    arrivals.insert(job.workload.id.clone(), at);
+                    true
+                } else {
+                    false
                 }
-                None => true,
             }
+            None => true,
         })
         .map(|job| {
             // An infeasible output cannot reserve capacity while awaiting ingress.
@@ -539,7 +537,10 @@ mod tests {
         let task = &report.tasks[2];
         assert_eq!(task.status, BatchStatus::Completed);
         let receipt = task.input_transfer.as_ref().unwrap();
-        assert_eq!(receipt.delivered_bytes, experiment.jobs[2].input_artifact.size_bytes);
+        assert_eq!(
+            receipt.delivered_bytes,
+            experiment.jobs[2].input_artifact.size_bytes
+        );
         assert_eq!(receipt.dropped_bytes, 0);
         assert!(receipt.injected_packets > 100);
         let ready = task.input_ready_ns.unwrap();
@@ -562,7 +563,13 @@ mod tests {
     fn isl_input_outage_blocks_remote_cpu_and_output_not_prepaid_by_resources() {
         let mut experiment = fixture();
         experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
-        experiment.network.links.iter_mut().find(|l| l.id == "isl-a-b").unwrap().up = false;
+        experiment
+            .network
+            .links
+            .iter_mut()
+            .find(|l| l.id == "isl-a-b")
+            .unwrap()
+            .up = false;
         let report = run_batch(&experiment).unwrap();
         let task = &report.tasks[2];
         assert_eq!(task.status, BatchStatus::InputTransferFailed);
@@ -575,7 +582,11 @@ mod tests {
             experiment.jobs[2].input_artifact.size_bytes
         );
         assert_eq!(task.injected_packets, 0);
-        assert!(!report.network.packets.iter().any(|p| p.flow_id.starts_with("__c1:c:")));
+        assert!(!report
+            .network
+            .packets
+            .iter()
+            .any(|p| p.flow_id.starts_with("__c1:c:")));
     }
 
     #[test]
@@ -593,7 +604,11 @@ mod tests {
             task.input_transfer.as_ref().unwrap().delivered_bytes,
             experiment.jobs[2].input_artifact.size_bytes
         );
-        assert!(!report.network.packets.iter().any(|p| p.flow_id.starts_with("__c1:c:")));
+        assert!(!report
+            .network
+            .packets
+            .iter()
+            .any(|p| p.flow_id.starts_with("__c1:c:")));
     }
 
     #[test]
@@ -604,6 +619,9 @@ mod tests {
         experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
         experiment.jobs[2].workload.release_ns = experiment.network.duration_ns - 1;
         experiment.jobs[2].workload.deadline_ns = experiment.network.duration_ns;
-        assert!(experiment.validate().unwrap_err().contains("remote input packet injection"));
+        assert!(experiment
+            .validate()
+            .unwrap_err()
+            .contains("remote input packet injection"));
     }
 }
