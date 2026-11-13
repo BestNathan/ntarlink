@@ -59,7 +59,12 @@ pub fn plan_shared_with_arrivals(
     }
     candidates.sort_by(|a, b| {
         (
-            a.workload.release_ns.max(input_arrivals_ns.get(&a.workload.id).copied().unwrap_or(a.workload.release_ns)),
+            a.workload.release_ns.max(
+                input_arrivals_ns
+                    .get(&a.workload.id)
+                    .copied()
+                    .unwrap_or(a.workload.release_ns),
+            ),
             &a.workload.id,
             &a.node_id,
             a.workload.deadline_ns,
@@ -70,7 +75,12 @@ pub fn plan_shared_with_arrivals(
             a.input_bytes,
         )
             .cmp(&(
-                b.workload.release_ns.max(input_arrivals_ns.get(&b.workload.id).copied().unwrap_or(b.workload.release_ns)),
+                b.workload.release_ns.max(
+                    input_arrivals_ns
+                        .get(&b.workload.id)
+                        .copied()
+                        .unwrap_or(b.workload.release_ns),
+                ),
                 &b.workload.id,
                 &b.node_id,
                 b.workload.deadline_ns,
@@ -87,7 +97,10 @@ pub fn plan_shared_with_arrivals(
     for candidate in candidates {
         let task = &candidate.workload;
         let start = task.release_ns.max(
-            input_arrivals_ns.get(&task.id).copied().unwrap_or(task.release_ns),
+            input_arrivals_ns
+                .get(&task.id)
+                .copied()
+                .unwrap_or(task.release_ns),
         );
         let mut outcome = PlannedWorkload {
             admission: Admission {
@@ -236,8 +249,14 @@ mod tests {
             scenario.network.duration_ns,
         )
         .unwrap();
-        let ready = results.iter().find(|r| r.admission.task_id == "ready").unwrap();
-        let late = results.iter().find(|r| r.admission.task_id == "late").unwrap();
+        let ready = results
+            .iter()
+            .find(|r| r.admission.task_id == "ready")
+            .unwrap();
+        let late = results
+            .iter()
+            .find(|r| r.admission.task_id == "late")
+            .unwrap();
         assert_eq!(ready.start_ns, 5_000_000);
         assert_eq!(ready.end_ns, Some(5_000_000 + duration));
         assert_eq!(ready.admission.decision, Decision::Admitted);
@@ -250,7 +269,10 @@ mod tests {
             scenario.network.duration_ns,
         )
         .unwrap();
-        assert_eq!(serde_json::to_vec(&results).unwrap(), serde_json::to_vec(&reversed).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&results).unwrap(),
+            serde_json::to_vec(&reversed).unwrap()
+        );
     }
 
     #[test]
