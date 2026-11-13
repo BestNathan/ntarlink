@@ -163,10 +163,9 @@ mod tests {
 
     #[test]
     fn replay_divergence_reports_first_packet_without_accepting_speculative_input() {
-        let mut experiment = BatchExperiment::from_json(include_str!(
-            "../../../scenarios/c1-shared-network.json"
-        ))
-        .unwrap();
+        let mut experiment =
+            BatchExperiment::from_json(include_str!("../../../scenarios/c1-shared-network.json"))
+                .unwrap();
         experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
         let mut network = experiment.network.clone();
         let flows = append_input_flows(&experiment, &mut network).unwrap();
