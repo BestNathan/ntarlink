@@ -162,7 +162,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             // must not reserve shared compute resources and block feasible jobs.
             // This is only an injection bound; delivery still belongs to L1.
             let mut workload = job.workload.clone();
-            let packets = workload.output_size_bytes.div_ceil(experiment.packet_payload_bytes);
+            let packets = workload
+                .output_size_bytes
+                .div_ceil(experiment.packet_payload_bytes);
             workload.deadline_ns = workload
                 .deadline_ns
                 .min(experiment.network.duration_ns.saturating_sub(packets));
