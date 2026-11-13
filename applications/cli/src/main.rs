@@ -1,3 +1,4 @@
+use ntarlink_compute_runtime::batch::{run_batch, BatchExperiment};
 use ntarlink_compute_runtime::{run_experiment, ComputeExperiment};
 use ntarlink_contracts::Scenario;
 use ntarlink_packet_runtime::run;
@@ -8,13 +9,40 @@ fn main() {
     if !(args.len() == 3 || (args.len() == 4 && args[3] == "--json"))
         || !matches!(
             args[1].as_str(),
-            "validate" | "simulate" | "validate-compute" | "simulate-compute"
+            "validate"
+                | "simulate"
+                | "validate-compute"
+                | "simulate-compute"
+                | "validate-batch"
+                | "simulate-batch"
         )
     {
-        eprintln!("usage: ntarlink-cli <validate|simulate|validate-compute|simulate-compute> <scenario.json> [--json]");
+        eprintln!("usage: ntarlink-cli <validate|simulate|validate-compute|simulate-compute|validate-batch|simulate-batch> <scenario.json> [--json]");
         process::exit(2);
     }
     let raw = fs::read_to_string(&args[2]).unwrap_or_else(|e| fail(&e.to_string()));
+    if matches!(args[1].as_str(), "validate-batch" | "simulate-batch") {
+        let experiment = BatchExperiment::from_json(&raw).unwrap_or_else(|e| fail(&e));
+        if args[1] == "validate-batch" {
+            println!("validated compute batch {}", experiment.network.name);
+            return;
+        }
+        let report = run_batch(&experiment).unwrap_or_else(|e| fail(&e));
+        if args.len() == 4 {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).unwrap_or_else(|e| fail(&e.to_string()))
+            );
+        } else {
+            for task in &report.tasks {
+                println!(
+                    "task={} node={} status={:?} delivered_bytes={}",
+                    task.task_id, task.node_id, task.status, task.delivered_bytes
+                );
+            }
+        }
+        return;
+    }
     if matches!(args[1].as_str(), "validate-compute" | "simulate-compute") {
         let scenario = ComputeExperiment::from_json(&raw).unwrap_or_else(|e| fail(&e));
         if args[1] == "validate-compute" {

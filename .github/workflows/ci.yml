@@ -27,6 +27,23 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Verify C1 shared packet network and deterministic competing tasks
+        run: |
+          cargo run -p ntarlink-cli -- validate-batch scenarios/c1-shared-network.json
+          cargo run -p ntarlink-cli -- simulate-batch scenarios/c1-shared-network.json --json > /tmp/c1-batch-report.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open("/tmp/c1-batch-report.json"))
+          tasks = r["tasks"]
+          assert [t["status"] for t in tasks] == ["completed", "rejected", "completed", "completed"]
+          assert (r["network"]["injected"], r["network"]["delivered"] + r["network"]["dropped"]) == (r["network"]["injected"], r["network"]["injected"])
+          assert sum(t["delivered_bytes"] for t in tasks) == 3 * 2001
+          assert all(t["delivered_bytes"] + t["dropped_bytes"] == t["artifact_bytes"] for t in tasks if t["status"] == "completed")
+          packets = [p for p in r["network"]["packets"] if p["flow_id"].startswith("__c1:")]
+          assert len(packets) == sum(t["injected_packets"] for t in tasks)
+          assert any(h["link_id"] == "isl-a-b" for p in packets for h in p["hops"])
+          print("C1 network-attached batch:", len(packets), "artifact packets")
+          PY
       - name: Verify C0 orbital compute uses actual packet paths and finite resource budgets
         run: |
           cargo run -p ntarlink-cli -- validate-compute scenarios/c0-orbital-edge.json

@@ -2,6 +2,7 @@
 //! CPU service units and power budgets are scenario assumptions, not hardware measurements.
 
 pub mod admission;
+pub mod batch;
 pub mod planning;
 
 use ntarlink_contracts::{Flow, NodeKind, Scenario};
