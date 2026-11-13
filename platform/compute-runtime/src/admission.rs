@@ -312,7 +312,9 @@ mod tests {
         assert!(ledger.terminate_at("queued", 10));
         assert!(ledger.admitted().is_empty());
         assert_eq!(
-            ledger.admit(req("replacement", "sat-a", 50, 100, 10)).decision,
+            ledger
+                .admit(req("replacement", "sat-a", 50, 100, 10))
+                .decision,
             Decision::Admitted
         );
         assert_eq!(
