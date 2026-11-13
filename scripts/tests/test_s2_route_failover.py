@@ -46,6 +46,31 @@ class S2RouteTests(unittest.TestCase):
         self.assertIsNone(parse_continuous_ping("no replies")["largest_observed_reply_gap_wall_ns"])
 
 
+    def test_late_reply_is_not_counted_as_confirmed_missing_probe(self):
+        # iputils ping -O may emit "no answer yet" before a delayed reply.
+        output = (
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.200000] no answer yet for icmp_seq=2\n"
+            "[1000.300000] 64 bytes from host: icmp_seq=2 ttl=64 time=300 ms\n"
+            "[1000.400000] no answer yet for icmp_seq=3\n"
+            "[1000.600000] 64 bytes from host: icmp_seq=4 ttl=64 time=1 ms\n"
+        )
+        ping = parse_continuous_ping(output)
+        self.assertEqual(ping["late_reply_sequences"], [2])
+        self.assertEqual(ping["observed_missing_sequences"], [3])
+        self.assertEqual([p["seq"] for p in ping["unanswered_samples"]], [3])
+        self.assertEqual(
+            [p["seq"] for p in ping["provisional_unanswered_samples"]], [2, 3]
+        )
+        event = {
+            "link_id": "isl-a-b", "action": "down",
+            "fault_start_wall_utc_ns": 1_000_100_000_000,
+            "route_applied_wall_utc_ns": 1_000_150_000_000,
+        }
+        observation = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(observation["observed_unanswered_at_probe_interval"], 1)
+        self.assertEqual(observation["first_unanswered_wall_utc_ns"], 1_000_400_000_000)
+
     def test_route_transition_attribution_uses_real_utc_samples_not_virtual_time(self):
         output = (
             "[1000.000000] 64 bytes from 10.248.7.2: icmp_seq=1 ttl=64 time=1 ms\n"

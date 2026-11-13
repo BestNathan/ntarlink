@@ -271,6 +271,13 @@ def parse_continuous_ping(output: str) -> dict:
         elif "no answer yet" in line:
             missed.append(seq)
             unanswered_samples.append({"seq": seq, "wall_utc_ns": timestamp_ns})
+    # ping -O reports an unanswered probe at the next send, not a final
+    # packet loss. A delayed reply may still arrive later in the capture.
+    replied_sequences = {seq for seq, _ in replies}
+    confirmed_unanswered = [
+        sample for sample in unanswered_samples
+        if sample["seq"] not in replied_sequences
+    ]
     gaps = [
         {"before_seq": previous[0], "after_seq": current[0],
          "elapsed_wall_ns": current[1] - previous[1],
@@ -280,11 +287,13 @@ def parse_continuous_ping(output: str) -> dict:
     ]
     return {
         "received_reply_count": len(replies),
-        "observed_missing_sequences": sorted(set(missed)),
+        "observed_missing_sequences": sorted(set(missed) - replied_sequences),
+        "late_reply_sequences": sorted(set(missed) & replied_sequences),
         "reply_samples": [
             {"seq": seq, "wall_utc_ns": stamp} for seq, stamp in replies
         ],
-        "unanswered_samples": unanswered_samples,
+        "unanswered_samples": confirmed_unanswered,
+        "provisional_unanswered_samples": unanswered_samples,
         "reply_gaps": gaps,
         "largest_observed_reply_gap_wall_ns": max(
             (gap["elapsed_wall_ns"] for gap in gaps), default=None
