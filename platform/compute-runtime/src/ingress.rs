@@ -134,11 +134,55 @@ pub(crate) fn assert_replayed_input(
         packets.sort_by(|a, b| a.packet_id.cmp(&b.packet_id));
         packets
     }
-    if input_packets(observed, flows) != input_packets(final_network, flows) {
-        return Err(
-            "input packet observations changed in final shared network replay; refusing causal execution"
-                .into(),
-        );
+    let expected = input_packets(observed, flows);
+    let actual = input_packets(final_network, flows);
+    if expected != actual {
+        let first_difference = expected
+            .iter()
+            .zip(&actual)
+            .position(|(before, after)| before != after)
+            .unwrap_or(expected.len().min(actual.len()));
+        let packet_id = actual
+            .get(first_difference)
+            .or_else(|| expected.get(first_difference))
+            .map(|packet| packet.packet_id.as_str())
+            .unwrap_or("unknown");
+        return Err(format!(
+            "input packet observations changed in final shared network replay; refusing causal execution: first divergent packet {packet_id} at index {first_difference} (observed {}, replayed {})",
+            expected.len(),
+            actual.len()
+        ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntarlink_packet_runtime::run;
+
+    #[test]
+    fn replay_divergence_reports_first_packet_without_accepting_speculative_input() {
+        let mut experiment = BatchExperiment::from_json(include_str!(
+            "../../../scenarios/c1-shared-network.json"
+        ))
+        .unwrap();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        let mut network = experiment.network.clone();
+        let flows = append_input_flows(&experiment, &mut network).unwrap();
+        let observed = run(&network).unwrap();
+        let mut changed = run(&network).unwrap();
+        assert_replayed_input(&observed, &changed, &flows).unwrap();
+        let packet = changed
+            .packets
+            .iter_mut()
+            .find(|packet| flows.contains_key(&packet.flow_id))
+            .unwrap();
+        let divergent_id = packet.packet_id.clone();
+        packet.completed_ns = packet.completed_ns.map(|time| time + 1);
+        let error = assert_replayed_input(&observed, &changed, &flows).unwrap_err();
+        assert!(error.contains("refusing causal execution"));
+        assert!(error.contains(&divergent_id));
+        assert!(error.contains("observed 121, replayed 121"));
+    }
 }
