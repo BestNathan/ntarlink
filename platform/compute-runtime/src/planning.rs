@@ -59,7 +59,7 @@ pub fn plan_shared_with_arrivals(
     }
     candidates.sort_by(|a, b| {
         (
-            a.workload.release_ns,
+            a.workload.release_ns.max(input_arrivals_ns.get(&a.workload.id).copied().unwrap_or(a.workload.release_ns)),
             &a.workload.id,
             &a.node_id,
             a.workload.deadline_ns,
@@ -70,7 +70,7 @@ pub fn plan_shared_with_arrivals(
             a.input_bytes,
         )
             .cmp(&(
-                b.workload.release_ns,
+                b.workload.release_ns.max(input_arrivals_ns.get(&b.workload.id).copied().unwrap_or(b.workload.release_ns)),
                 &b.workload.id,
                 &b.node_id,
                 b.workload.deadline_ns,
