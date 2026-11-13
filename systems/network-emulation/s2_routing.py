@@ -216,6 +216,13 @@ class LinuxRouteGraph(LinuxPath):
 
     def program_routes(self) -> dict:
         path = find_path(self.plan, self.disabled)
+        selected = [link["id"] for link in path]
+        # An unrelated link fault must not tear down healthy /32 routes.
+        # Linux route deletion/replacement is observable packet disruption,
+        # so only reprogram when the selected forwarding path changes.
+        if selected == self.active_path:
+            return {"selected_path": selected, "route_available": bool(path),
+                    "routes_changed": False}
         # Routes are scoped to owned namespaces and only to experiment /32
         # endpoints. This is an explicit centralized controller, *not* FRR.
         for node in self.plan["nodes"]:
@@ -237,8 +244,9 @@ class LinuxRouteGraph(LinuxPath):
                     self.plan["source_ip"] + "/32", "via", link["left_ip"],
                     "dev", link["right_if"],
                 ])
-        self.active_path = [link["id"] for link in path]
-        return {"selected_path": self.active_path, "route_available": bool(path)}
+        self.active_path = selected
+        return {"selected_path": selected, "route_available": bool(path),
+                "routes_changed": True}
 
     def fault_and_reconfigure(self, event: dict) -> dict:
         link = next(edge for edge in self.plan["links"] if edge["id"] == event["link_id"])
