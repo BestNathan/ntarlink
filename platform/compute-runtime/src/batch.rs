@@ -209,9 +209,10 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             let packets = workload
                 .output_size_bytes
                 .div_ceil(experiment.packet_payload_bytes);
-            workload.deadline_ns = workload
-                .deadline_ns
-                .min(experiment.network.duration_ns.saturating_sub(packets));
+            // Every output packet must be injected before both the run
+            // horizon and the task deadline; actual delivery remains L1-owned.
+            let injection_horizon = workload.deadline_ns.min(experiment.network.duration_ns);
+            workload.deadline_ns = injection_horizon.saturating_sub(packets);
             Candidate {
                 node_id: job.node_id.clone(),
                 workload,
@@ -512,6 +513,36 @@ mod tests {
             .tasks
             .iter()
             .find(|task| task.task_id == "feasible")
+            .unwrap();
+        assert_eq!(rejected.status, BatchStatus::Rejected);
+        assert!(rejected.reservation.is_none());
+        assert!(accepted.reservation.is_some());
+        assert_eq!(accepted.compute_completed_ns, Some(2_999_998_600));
+    }
+
+    #[test]
+    fn deadline_infeasible_output_does_not_starve_feasible_shared_workload() {
+        let mut experiment = fixture();
+        experiment.packet_payload_bytes = 1;
+        let mut impossible = experiment.jobs[0].clone();
+        impossible.workload.id = "deadline-impossible".into();
+        impossible.workload.release_ns = 2_979_998_600;
+        impossible.workload.deadline_ns = 2_999_998_650;
+        impossible.workload.output_size_bytes = 200;
+        let mut feasible = impossible.clone();
+        feasible.workload.id = "deadline-feasible".into();
+        feasible.workload.output_size_bytes = 1;
+        experiment.jobs = vec![impossible, feasible];
+        let report = run_batch(&experiment).unwrap();
+        let rejected = report
+            .tasks
+            .iter()
+            .find(|t| t.task_id == "deadline-impossible")
+            .unwrap();
+        let accepted = report
+            .tasks
+            .iter()
+            .find(|t| t.task_id == "deadline-feasible")
             .unwrap();
         assert_eq!(rejected.status, BatchStatus::Rejected);
         assert!(rejected.reservation.is_none());
