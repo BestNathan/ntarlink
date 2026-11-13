@@ -113,7 +113,8 @@ pub fn plan_shared(
                                 outcome.reason = Some("shared compute capacity exceeded".into());
                             }
                         } else {
-                            outcome.reason = Some("modeled execution misses deadline or horizon".into());
+                            outcome.reason =
+                                Some("modeled execution misses deadline or horizon".into());
                         }
                     } else {
                         outcome.reason = Some("modeled execution time overflow".into());
@@ -153,7 +154,11 @@ mod tests {
             let mut workload = scenario.workload.clone();
             workload.id = id.into();
             workload.release_ns = release_ns;
-            Candidate { node_id: node_id.into(), workload, input_bytes: scenario.input_artifact.size_bytes }
+            Candidate {
+                node_id: node_id.into(),
+                workload,
+                input_bytes: scenario.input_artifact.size_bytes,
+            }
         };
         let jobs = vec![
             candidate("b", &sat.id, 0),
@@ -161,11 +166,34 @@ mod tests {
             candidate("c", &peer.id, 0),
             candidate("d", &sat.id, 30_000_000),
         ];
-        let first = plan_shared(&[sat.clone(), peer.clone()], jobs.clone(), scenario.network.duration_ns).unwrap();
-        let second = plan_shared(&[sat, peer], jobs.into_iter().rev().collect(), scenario.network.duration_ns).unwrap();
-        assert_eq!(serde_json::to_vec(&first).unwrap(), serde_json::to_vec(&second).unwrap());
-        assert_eq!(first.iter().map(|r| &r.admission.decision).collect::<Vec<_>>(),
-            vec![&Decision::Admitted, &Decision::RejectedCapacity, &Decision::Admitted, &Decision::Admitted]);
+        let first = plan_shared(
+            &[sat.clone(), peer.clone()],
+            jobs.clone(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        let second = plan_shared(
+            &[sat, peer],
+            jobs.into_iter().rev().collect(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&second).unwrap()
+        );
+        assert_eq!(
+            first
+                .iter()
+                .map(|r| &r.admission.decision)
+                .collect::<Vec<_>>(),
+            vec![
+                &Decision::Admitted,
+                &Decision::RejectedCapacity,
+                &Decision::Admitted,
+                &Decision::Admitted
+            ]
+        );
         assert_eq!(first[0].end_ns, Some(20_000_000));
         assert_eq!(first[3].start_ns, 30_000_000);
     }
@@ -178,9 +206,20 @@ mod tests {
             workload: scenario.workload.clone(),
             input_bytes: scenario.input_artifact.size_bytes,
         };
-        let plan = plan_shared(&[scenario.orbital_node.clone()], vec![job], scenario.network.duration_ns).unwrap();
+        let plan = plan_shared(
+            &[scenario.orbital_node.clone()],
+            vec![job],
+            scenario.network.duration_ns,
+        )
+        .unwrap();
         assert_eq!(plan[0].admission.decision, Decision::Admitted);
-        scenario.network.links.iter_mut().find(|l| l.id == "feeder-b-gw").unwrap().up = false;
+        scenario
+            .network
+            .links
+            .iter_mut()
+            .find(|l| l.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
         let report = run_experiment(&scenario).unwrap();
         assert_eq!(report.onboard_first.status, WorkloadStatus::TransferFailed);
         assert!(report.onboard_first.transfer.unwrap().dropped_bytes > 0);
