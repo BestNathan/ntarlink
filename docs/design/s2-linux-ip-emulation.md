@@ -70,3 +70,31 @@ a production worker/image contract remain in Issue #4.
 ## Sustained real-IP failover sampling
 
 The route-controller experiment now starts a Linux `ping -D -O -i 0.2` process in the source namespace before fault replay and stops it after the final kernel snapshot. The measured report contains received replies, missing ICMP sequences and gaps between successful replies in host wall-clock nanoseconds. These are sampled observations, **not** exact blackout start/end times or distributed routing convergence. Host scheduling, ICMP sampling, subprocess startup and kernel timestamp precision limit inference. The existing controller-apply durations remain separately labeled. The GitHub-hosted S2 acceptance requires at least one sustained reply; outage gaps are recorded rather than artificially required because short faults can fall between probes.
+
+## Host-clock probe correlation at controller route transitions
+
+The S2 route-controller report now carries two different *measured* clocks:
+`fault_start_wall_utc_ns` / `route_applied_wall_utc_ns` are sampled
+from the host UTC clock around actual namespace link/route operations;
+`controller_total_elapsed_monotonic_ns` and the existing controller
+route-apply and scheduler lateness durations use the host monotonic clock.
+`probe_clock` records the monotonic and UTC origin pair with a sampling
+uncertainty interval. The `ping -D` timestamps are host UTC wall clock;
+they are **never** S1 virtual-time nanoseconds.
+
+`route_transition_observations[]` joins each actual controller transition
+to sustained ICMP replies and `-O` unanswered notifications **only until
+the next fault**. It reports the first reply after route application, the
+number and first timestamp of unanswered probe observations, and the
+reply-to-reply gap bracketing a sampled disruption *if a subsequent reply
+exists*. Any absence of an unanswered notice is labeled
+`no_unanswered_observed_at_probe_cadence`, not zero blackout or proof
+that no packets were lost. An unresolved gap stays unmeasured, not an
+invented convergence time. A reply after the next fault cannot be attributed
+to recovery from an earlier fault. Host UTC adjustments, the probe cadence
+and ICMP delays limit time precision.
+
+This adds reproducible **observed S2 route-disruption evidence** to the
+privileged GitHub-hosted graph experiment, not dynamic routing protocol
+convergence or a guaranteed exact outage bound. The existing synthetic
+Pages dashboard does not consume these reports.

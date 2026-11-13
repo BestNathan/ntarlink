@@ -8,7 +8,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
-from s2_routing import PlanError, build_graph, find_path, parse_continuous_ping, remaining_probe_window_ns  # noqa: E402
+from s2_routing import (  # noqa: E402
+    PlanError, build_graph, correlate_route_transition_observations,
+    find_path, parse_continuous_ping, remaining_probe_window_ns,
+)
 
 FIXTURE = ROOT / "scenarios" / "s2-route-failover.json"
 
@@ -34,9 +37,102 @@ class S2RouteTests(unittest.TestCase):
         result = parse_continuous_ping(output)
         self.assertEqual(result["received_reply_count"], 3)
         self.assertEqual(result["observed_missing_sequences"], [3, 4])
+        self.assertEqual(result["reply_samples"][1],
+                         {"seq": 2, "wall_utc_ns": 1_000_200_000_000})
+        self.assertEqual(result["unanswered_samples"][0],
+                         {"seq": 3, "wall_utc_ns": 1_000_400_000_000})
         self.assertEqual(result["reply_gaps"][0]["missing_sequence_count"], 2)
         self.assertEqual(result["largest_observed_reply_gap_wall_ns"], 600_000_000)
         self.assertIsNone(parse_continuous_ping("no replies")["largest_observed_reply_gap_wall_ns"])
+
+
+    def test_route_transition_attribution_uses_real_utc_samples_not_virtual_time(self):
+        output = (
+            "[1000.000000] 64 bytes from 10.248.7.2: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.200000] 64 bytes from 10.248.7.2: icmp_seq=2 ttl=64 time=1 ms\n"
+            "[1000.400000] no answer yet for icmp_seq=3\n"
+            "[1000.600000] no answer yet for icmp_seq=4\n"
+            "[1000.800000] 64 bytes from 10.248.7.2: icmp_seq=5 ttl=64 time=1 ms\n"
+            "[1001.000000] 64 bytes from 10.248.7.2: icmp_seq=6 ttl=64 time=1 ms\n"
+            "[1001.200000] no answer yet for icmp_seq=7\n"
+        )
+        events = [
+            {
+                "link_id": "isl-a-b", "action": "down",
+                "fault_start_wall_utc_ns": 1_000_300_000_000,
+                "route_applied_wall_utc_ns": 1_000_350_000_000,
+            },
+            {
+                "link_id": "isl-a-b", "action": "up",
+                "fault_start_wall_utc_ns": 1_001_100_000_000,
+                "route_applied_wall_utc_ns": 1_001_150_000_000,
+            },
+        ]
+        rows = correlate_route_transition_observations(
+            events, parse_continuous_ping(output)
+        )
+        self.assertEqual(len(rows), 2)
+        first, second = rows
+        self.assertEqual(first["assessment"], "sampled_unanswered_then_replied")
+        self.assertEqual(first["observed_unanswered_at_probe_interval"], 2)
+        self.assertEqual(first["first_reply_after_apply_elapsed_wall_ns"], 450_000_000)
+        self.assertEqual(first["sampled_reply_gap_bracketing_loss_wall_ns"], 600_000_000)
+        self.assertEqual(first["next_fault_start_wall_utc_ns"], 1_001_100_000_000)
+        self.assertEqual(second["assessment"],
+                         "sampled_unanswered_without_recovery_in_window")
+        self.assertIsNone(second["first_reply_after_unanswered_wall_utc_ns"])
+        self.assertIsNone(second["sampled_reply_gap_bracketing_loss_wall_ns"])
+        self.assertEqual(second["observed_unanswered_at_probe_interval"], 1)
+
+    def test_route_transition_without_sampled_loss_does_not_claim_no_blackout(self):
+        output = (
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.200000] 64 bytes from host: icmp_seq=2 ttl=64 time=1 ms\n"
+            "[1000.400000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+        )
+        event = {
+            "link_id": "isl-a-b", "action": "down",
+            "fault_start_wall_utc_ns": 1_000_250_000_000,
+            "route_applied_wall_utc_ns": 1_000_300_000_000,
+        }
+        result = correlate_route_transition_observations(
+            [event], parse_continuous_ping(output)
+        )[0]
+        self.assertEqual(result["assessment"], "no_unanswered_observed_at_probe_cadence")
+        self.assertEqual(result["first_reply_after_apply_elapsed_wall_ns"], 100_000_000)
+        self.assertIsNone(result["sampled_reply_gap_bracketing_loss_wall_ns"])
+        event["route_applied_wall_utc_ns"] = 1_000_200_000_000
+        with self.assertRaisesRegex(RuntimeError, "moved backwards"):
+            correlate_route_transition_observations(
+                [event], parse_continuous_ping(output)
+            )
+
+    def test_disruption_attribution_never_uses_replies_after_next_fault(self):
+        output = (
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.400000] no answer yet for icmp_seq=2\n"
+            "[1001.200000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+        )
+        events = [
+            {
+                "link_id": "isl-a-b", "action": "down",
+                "fault_start_wall_utc_ns": 1_000_300_000_000,
+                "route_applied_wall_utc_ns": 1_000_350_000_000,
+            },
+            {
+                "link_id": "isl-a-b", "action": "up",
+                "fault_start_wall_utc_ns": 1_001_100_000_000,
+                "route_applied_wall_utc_ns": 1_001_150_000_000,
+            },
+        ]
+        first, second = correlate_route_transition_observations(
+            events, parse_continuous_ping(output)
+        )
+        self.assertEqual(first["assessment"],
+                         "sampled_unanswered_without_recovery_in_window")
+        self.assertIsNone(first["first_reply_after_apply_wall_utc_ns"])
+        self.assertEqual(second["assessment"], "no_unanswered_observed_at_probe_cadence")
+        self.assertEqual(second["first_reply_after_apply_elapsed_wall_ns"], 50_000_000)
 
     def test_continuous_probe_waits_for_full_scaled_horizon(self):
         origin = 1_000_000_000

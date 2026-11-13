@@ -98,6 +98,17 @@ jobs:
           assert report['iperf_initial']['received_bytes'] > 0, report['iperf_initial']
           assert Path('/tmp/ntarlink-s2-routing.pcap').stat().st_size > 24
           assert report['continuous_ping']['received_reply_count'] > 0, report['continuous_ping']
+          transitions = report['route_transition_observations']
+          assert len(transitions) == len(events), transitions
+          assert all(t['clock'] == 'S2_host_UTC_wall_clock_not_S1_virtual_time' for t in transitions)
+          assert all(t['route_applied_wall_utc_ns'] >= t['fault_start_wall_utc_ns'] for t in transitions)
+          assert all(t['assessment'] in (
+              'sampled_unanswered_then_replied',
+              'sampled_unanswered_without_recovery_in_window',
+              'no_unanswered_observed_at_probe_cadence',
+              'insufficient_probe_evidence',
+          ) for t in transitions), transitions
+          assert report['probe_clock']['origin_clock_pair_uncertainty_ns'] >= 0
           assert report['probe_window_wall_ns'] >= report['expected_probe_window_wall_ns'], report
           assert report['expected_probe_window_wall_ns'] > events[-1]['at_ns'] * 20, report
           assert not report['cleanup_errors'], report['cleanup_errors']
