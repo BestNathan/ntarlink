@@ -151,8 +151,28 @@ pub fn admit_deterministic(
     capacities: BTreeMap<String, Capacity>,
     mut requests: Vec<Request>,
 ) -> (Vec<Admission>, Vec<Request>) {
+    // A task ID may appear more than once with conflicting payloads. Include
+    // every admission-relevant field in the tie break so a reversed input
+    // cannot change which attempt wins the unique task identity.
     requests.sort_by(|a, b| {
-        (a.start_ns, &a.task_id, &a.node_id).cmp(&(b.start_ns, &b.task_id, &b.node_id))
+        (
+            a.start_ns,
+            &a.task_id,
+            &a.node_id,
+            a.end_ns,
+            a.memory_bytes,
+            a.storage_bytes,
+            a.power_mw,
+        )
+            .cmp(&(
+                b.start_ns,
+                &b.task_id,
+                &b.node_id,
+                b.end_ns,
+                b.memory_bytes,
+                b.storage_bytes,
+                b.power_mw,
+            ))
     });
     let mut ledger = Ledger::new(capacities);
     let decisions = requests.into_iter().map(|r| ledger.admit(r)).collect();
@@ -214,6 +234,31 @@ mod tests {
             ]
         );
         assert_eq!(admitted.len(), 2);
+    }
+
+    #[test]
+    fn conflicting_same_identity_requests_are_permutation_invariant() {
+        // Same release, task ID and node but different resource demand.
+        // Previously the stable sort preserved input order for this tie,
+        // changing both the admitted request and later capacity decisions.
+        let requests = vec![
+            req("same", "sat-a", 0, 20, 9),
+            req("same", "sat-a", 0, 10, 4),
+            req("other", "sat-a", 1, 9, 6),
+        ];
+        let first = admit_deterministic(capacities(), requests.clone());
+        let reversed = admit_deterministic(capacities(), requests.into_iter().rev().collect());
+        assert_eq!(first, reversed);
+        assert_eq!(
+            first.0.iter().map(|a| &a.decision).collect::<Vec<_>>(),
+            vec![
+                &Decision::Admitted,
+                &Decision::RejectedDuplicateTask,
+                &Decision::Admitted
+            ]
+        );
+        assert_eq!(first.1[0].memory_bytes, 4);
+        assert_eq!(first.1[0].end_ns, 10);
     }
 
     #[test]
