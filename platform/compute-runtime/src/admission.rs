@@ -89,10 +89,24 @@ impl Ledger {
     /// This is a modeled resource transaction, not a packet delivery receipt.
     pub fn admit_bundle(&mut self, mut phases: Vec<Request>) -> Vec<Admission> {
         phases.sort_by(|a, b| {
-            (&a.task_id, &a.node_id, a.start_ns, a.end_ns,
-             a.memory_bytes, a.storage_bytes, a.power_mw)
-                .cmp(&(&b.task_id, &b.node_id, b.start_ns, b.end_ns,
-                       b.memory_bytes, b.storage_bytes, b.power_mw))
+            (
+                &a.task_id,
+                &a.node_id,
+                a.start_ns,
+                a.end_ns,
+                a.memory_bytes,
+                a.storage_bytes,
+                a.power_mw,
+            )
+                .cmp(&(
+                    &b.task_id,
+                    &b.node_id,
+                    b.start_ns,
+                    b.end_ns,
+                    b.memory_bytes,
+                    b.storage_bytes,
+                    b.power_mw,
+                ))
         });
         let mut staged = Vec::with_capacity(phases.len());
         let mut seen = BTreeSet::new();
@@ -425,7 +439,10 @@ mod tests {
         cpu.power_mw = 10;
         let mut output = req("job:output", "sat-a", 10, 40, 0);
         output.storage_bytes = 10;
-        assert!(ledger.admit_bundle(vec![output, cpu]).iter().all(|a| a.decision == Decision::Admitted));
+        assert!(ledger
+            .admit_bundle(vec![output, cpu])
+            .iter()
+            .all(|a| a.decision == Decision::Admitted));
         let mut next = req("next", "sat-a", 10, 20, 0);
         next.memory_bytes = 10;
         next.power_mw = 10;
@@ -447,9 +464,16 @@ mod tests {
         for candidate in [phases.clone(), phases.into_iter().rev().collect()] {
             let mut ledger = Ledger::new(capacities());
             let result = ledger.admit_bundle(candidate);
-            assert!(result.iter().any(|a| a.decision == Decision::RejectedCapacity));
+            assert!(result
+                .iter()
+                .any(|a| a.decision == Decision::RejectedCapacity));
             assert!(ledger.admitted().is_empty());
-            assert_eq!(ledger.admit(req("replacement", "sat-a", 0, 30, 10)).decision, Decision::Admitted);
+            assert_eq!(
+                ledger
+                    .admit(req("replacement", "sat-a", 0, 30, 10))
+                    .decision,
+                Decision::Admitted
+            );
         }
     }
 
