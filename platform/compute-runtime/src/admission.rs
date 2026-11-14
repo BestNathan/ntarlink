@@ -199,13 +199,21 @@ impl Ledger {
             let Some(reservation) = self.admitted.iter().find(|r| r.task_id == *id) else {
                 return false;
             };
-            if at_ns >= reservation.end_ns {
-                return false;
-            }
+        }
+        // Completed phases are historical evidence, not a reason to reject
+        // cancellation of a still-active output staging phase.
+        if !task_ids.iter().any(|id| {
+            self.admitted
+                .iter()
+                .any(|r| r.task_id == *id && at_ns < r.end_ns)
+        }) {
+            return false;
         }
         for id in task_ids {
             // Every ID was preflighted against the same unchanged ledger.
-            assert!(self.terminate_at(id, at_ns));
+            if self.admitted.iter().any(|r| r.task_id == *id && at_ns < r.end_ns) {
+                assert!(self.terminate_at(id, at_ns));
+            }
         }
         true
     }
@@ -502,6 +510,27 @@ mod tests {
             ledger.admit(req("job:output", "sat-a", 40, 50, 1)).decision,
             Decision::RejectedDuplicateTask
         );
+    }
+
+    #[test]
+    fn completed_compute_phase_does_not_block_output_staging_release() {
+        let mut ledger = Ledger::new(capacities());
+        let mut cpu = req("task:cpu", "sat-a", 0, 10, 0);
+        cpu.memory_bytes = 10;
+        let mut output = req("task:output", "sat-a", 10, 100, 0);
+        output.storage_bytes = 10;
+        assert!(ledger
+            .admit_bundle(vec![cpu, output])
+            .iter()
+            .all(|a| a.decision == Decision::Admitted));
+        let ids = vec!["task:cpu".to_owned(), "task:output".to_owned()];
+        assert!(ledger.terminate_bundle_at(&ids, 30));
+        assert_eq!(ledger.admitted()[0].end_ns, 10);
+        assert_eq!(ledger.admitted()[1].end_ns, 30);
+        let mut replacement = req("replacement", "sat-a", 30, 100, 0);
+        replacement.storage_bytes = 10;
+        assert_eq!(ledger.admit(replacement).decision, Decision::Admitted);
+        assert!(!ledger.terminate_bundle_at(&ids, 40));
     }
 
     #[test]
