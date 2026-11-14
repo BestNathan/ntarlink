@@ -476,7 +476,9 @@ mod tests {
         assert_eq!(ledger.admitted().len(), 1);
         assert_eq!(ledger.admitted()[0].end_ns, 5);
         assert_eq!(
-            ledger.admit(req("replacement", "sat-a", 5, 30, 10)).decision,
+            ledger
+                .admit(req("replacement", "sat-a", 5, 30, 10))
+                .decision,
             Decision::Admitted
         );
         assert!(!ledger.terminate_bundle_at(&ids, 6));
