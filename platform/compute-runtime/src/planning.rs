@@ -382,9 +382,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|result| {
-            result.admission.decision != Decision::RejectedDuplicateTask
-        }));
+        assert!(results
+            .iter()
+            .all(|result| { result.admission.decision != Decision::RejectedDuplicateTask }));
     }
 
     #[test]
