@@ -148,7 +148,7 @@ fn plan_shared_internal(
                         if end <= task.deadline_ns && end < horizon_ns {
                             let execution = Request {
                                 task_id: if stage_output {
-                                    format!("{}:execution", task.id)
+                                    format!("phase:{}:{}:execution", task.id.len(), task.id)
                                 } else {
                                     task.id.clone()
                                 },
@@ -161,7 +161,7 @@ fn plan_shared_internal(
                             };
                             outcome.admission = if stage_output {
                                 let output = Request {
-                                    task_id: format!("{}:output", task.id),
+                                    task_id: format!("phase:{}:{}:output", task.id.len(), task.id),
                                     node_id: node.id.clone(),
                                     start_ns: end,
                                     end_ns: horizon_ns,
@@ -358,6 +358,33 @@ mod tests {
         .unwrap();
         assert_eq!(results[0].admission.decision, Decision::Admitted);
         assert_eq!(results[1].admission.decision, Decision::RejectedCapacity);
+    }
+
+    #[test]
+    fn phase_ids_cannot_alias_other_workload_ids() {
+        let scenario = fixture();
+        let node = scenario.orbital_node.clone();
+        let make = |id: &str, release_ns: u64| {
+            let mut workload = scenario.workload.clone();
+            workload.id = id.into();
+            workload.release_ns = release_ns;
+            Candidate {
+                node_id: node.id.clone(),
+                workload,
+                input_bytes: scenario.input_artifact.size_bytes,
+            }
+        };
+        let results = plan_shared_with_output_staging(
+            std::slice::from_ref(&node),
+            vec![make("a:execution", 0), make("a", 30_000_000)],
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| {
+            result.admission.decision != Decision::RejectedDuplicateTask
+        }));
     }
 
     #[test]
