@@ -350,7 +350,7 @@ mod tests {
             input_bytes: scenario.input_artifact.size_bytes,
         };
         let results = plan_shared_with_output_staging(
-            &[node],
+            std::slice::from_ref(&node),
             vec![make(first), make(second)],
             &BTreeMap::new(),
             scenario.network.duration_ns,
