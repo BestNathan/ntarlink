@@ -211,7 +211,11 @@ impl Ledger {
         }
         for id in task_ids {
             // Every ID was preflighted against the same unchanged ledger.
-            if self.admitted.iter().any(|r| r.task_id == *id && at_ns < r.end_ns) {
+            if self
+                .admitted
+                .iter()
+                .any(|r| r.task_id == *id && at_ns < r.end_ns)
+            {
                 assert!(self.terminate_at(id, at_ns));
             }
         }
