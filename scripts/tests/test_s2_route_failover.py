@@ -5,11 +5,12 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
 from s2_routing import (  # noqa: E402
-    PlanError, build_graph, correlate_route_transition_observations,
+    LinuxRouteGraph, PlanError, build_graph, correlate_route_transition_observations,
     find_path, parse_continuous_ping, remaining_probe_window_ns,
 )
 
@@ -173,6 +174,32 @@ class S2RouteTests(unittest.TestCase):
             0,
         )
         self.assertEqual(remaining_probe_window_ns(origin, duration, 1.0, origin), duration)
+
+    def test_unrelated_fault_preserves_active_linux_routes(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        worker.active_path = list(plan["initial_path"])
+        unused = next(link["id"] for link in plan["links"]
+                      if link["id"] not in worker.active_path)
+        with patch.object(worker, "run") as run:
+            worker.disabled.add(unused)
+            unchanged = worker.program_routes()
+            self.assertFalse(unchanged["routes_changed"])
+            self.assertEqual(unchanged["selected_path"], plan["initial_path"])
+            run.assert_not_called()
+
+            worker.disabled.add("isl-a-b")
+            rerouted = worker.program_routes()
+            self.assertTrue(rerouted["routes_changed"])
+            self.assertNotEqual(rerouted["selected_path"], plan["initial_path"])
+            self.assertTrue(run.called)
+
+            run.reset_mock()
+            worker.disabled.discard("isl-a-b")
+            recovered = worker.program_routes()
+            self.assertTrue(recovered["routes_changed"])
+            self.assertEqual(recovered["selected_path"], plan["initial_path"])
+            self.assertTrue(run.called)
 
     def test_initial_backup_and_recovery_topology(self):
         plan = self.plan()
