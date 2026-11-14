@@ -201,6 +201,62 @@ class S2RouteTests(unittest.TestCase):
             self.assertEqual(recovered["selected_path"], plan["initial_path"])
             self.assertTrue(run.called)
 
+    def test_route_updates_preserve_shared_hops_and_remove_abandoned_hops(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        with patch.object(worker, "run") as run:
+            initial = worker.program_routes()
+            self.assertTrue(initial["routes_changed"])
+            self.assertTrue(run.called)
+            run.reset_mock()
+            worker.disabled.add("isl-a-b")
+            alternate = worker.program_routes()
+            self.assertTrue(alternate["routes_changed"])
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertTrue(commands)
+            self.assertTrue(all(cmd[4] != "del" for cmd in commands
+                                if len(cmd) > 4 and cmd[3] == "route"
+                                and cmd[4] == "replace"))
+            # The source and destination attachments are unchanged, so their
+            # forwarding entries must not be replaced on failover.
+            shared = set(plan["initial_path"]) & set(alternate["selected_path"])
+            self.assertIn("user-ue-a", shared)
+            self.assertIn("pop-internet", shared)
+            unchanged_ns = next(edge["left_ns"] for edge in plan["links"]
+                                if edge["id"] == "user-ue-a")
+            self.assertFalse(any(cmd[:4] == ["ip", "-n", unchanged_ns, "route"]
+                                 for cmd in commands))
+            run.reset_mock()
+            worker.disabled.discard("isl-a-b")
+            restored = worker.program_routes()
+            self.assertEqual(restored["selected_path"], plan["initial_path"])
+            self.assertTrue(restored["routes_changed"])
+            self.assertTrue(run.called)
+            run.reset_mock()
+            worker.program_routes()
+            run.assert_not_called()
+
+    def test_route_loss_removes_previous_forwarding_without_fake_path(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        with patch.object(worker, "run") as run:
+            worker.program_routes()
+            run.reset_mock()
+            worker.disabled.add("user-ue-a")
+            lost = worker.program_routes()
+            self.assertFalse(lost["route_available"])
+            self.assertEqual(lost["selected_path"], [])
+            self.assertTrue(run.called)
+            self.assertTrue(all(call.args[0][4] == "del"
+                                for call in run.call_args_list))
+            run.reset_mock()
+            worker.disabled.discard("user-ue-a")
+            recovered = worker.program_routes()
+            self.assertTrue(recovered["route_available"])
+            self.assertEqual(recovered["selected_path"], plan["initial_path"])
+            self.assertTrue(all(call.args[0][4] == "replace"
+                                for call in run.call_args_list))
+
     def test_initial_backup_and_recovery_topology(self):
         plan = self.plan()
         self.assertEqual(len(plan["links"]), 7)
