@@ -643,6 +643,29 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_output_and_remote_input_on_shared_isl_fail_closed() {
+        // Task a completes at 20 ms and injects its output on sat-a -> sat-b.
+        // Task c begins remote ingress at the same time on that same ISL.
+        // The observational ingress run has no output traffic; the final
+        // packet-authoritative run must reject a changed ingress trace.
+        let mut experiment = fixture();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        experiment.jobs[2].workload.release_ns = 20_000_000;
+        let error = run_batch(&experiment).unwrap_err();
+        assert!(
+            error.contains("refusing causal execution"),
+            "unexpected shared-queue result: {error}"
+        );
+        assert!(error.contains("__c1_input:c:"));
+
+        // Independent of caller enumeration: no speculative CPU execution
+        // may be published from either ordering.
+        experiment.jobs.reverse();
+        let reversed = run_batch(&experiment).unwrap_err();
+        assert_eq!(error, reversed);
+    }
+
+    #[test]
     fn remote_input_cannot_reference_a_non_satellite_or_overrun_horizon() {
         let mut experiment = fixture();
         experiment.jobs[2].input_artifact.origin_site_id = "gw-a".into();
