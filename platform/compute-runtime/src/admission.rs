@@ -168,6 +168,32 @@ impl Ledger {
         true
     }
 
+    /// Atomically cancel multiple phase reservations at caller-owned virtual time.
+    /// Invalid or retired IDs leave the entire ledger unchanged. Future phases
+    /// are removed; active phases retain historical occupancy before `at_ns`.
+    pub fn terminate_bundle_at(&mut self, task_ids: &[String], at_ns: u64) -> bool {
+        if task_ids.is_empty() {
+            return false;
+        }
+        let mut seen = BTreeSet::new();
+        for id in task_ids {
+            if !seen.insert(id.as_str()) || self.retired_tasks.contains(id) {
+                return false;
+            }
+            let Some(reservation) = self.admitted.iter().find(|r| r.task_id == *id) else {
+                return false;
+            };
+            if at_ns >= reservation.end_ns {
+                return false;
+            }
+        }
+        for id in task_ids {
+            // Every ID was preflighted against the same unchanged ledger.
+            assert!(self.terminate_at(id, at_ns));
+        }
+        true
+    }
+
     fn fits(&self, request: &Request) -> bool {
         let capacity = &self.capacities[&request.node_id];
         // Resource usage changes only at interval boundaries. For each start
@@ -429,6 +455,35 @@ mod tests {
         );
         assert!(!ledger.terminate_at("replacement", 100));
         assert_eq!(ledger.admitted()[0].end_ns, 100);
+    }
+
+    #[test]
+    fn atomic_phase_cancellation_removes_future_staging_without_partial_mutation() {
+        let mut ledger = Ledger::new(capacities());
+        let mut cpu = req("job:cpu", "sat-a", 0, 10, 0);
+        cpu.memory_bytes = 10;
+        let mut output = req("job:output", "sat-a", 10, 40, 0);
+        output.storage_bytes = 10;
+        assert!(ledger
+            .admit_bundle(vec![cpu, output])
+            .iter()
+            .all(|a| a.decision == Decision::Admitted));
+        let ids = vec!["job:cpu".to_owned(), "job:output".to_owned()];
+        assert!(!ledger.terminate_bundle_at(&[ids[0].clone(), "missing".into()], 5));
+        assert_eq!(ledger.admitted().len(), 2);
+        assert_eq!(ledger.admitted()[0].end_ns, 10);
+        assert!(ledger.terminate_bundle_at(&ids, 5));
+        assert_eq!(ledger.admitted().len(), 1);
+        assert_eq!(ledger.admitted()[0].end_ns, 5);
+        assert_eq!(
+            ledger.admit(req("replacement", "sat-a", 5, 30, 10)).decision,
+            Decision::Admitted
+        );
+        assert!(!ledger.terminate_bundle_at(&ids, 6));
+        assert_eq!(
+            ledger.admit(req("job:output", "sat-a", 40, 50, 1)).decision,
+            Decision::RejectedDuplicateTask
+        );
     }
 
     #[test]
