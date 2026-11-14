@@ -170,13 +170,20 @@ fn plan_shared_internal(
                                     power_mw: 0,
                                 };
                                 let phases = ledger.admit_bundle(vec![execution, output]);
-                                let decision = if phases.iter().all(|p| p.decision == Decision::Admitted) {
+                                let decision = if phases.iter().all(|p| p.decision == Decision::Admitted)
+                                {
                                     Decision::Admitted
                                 } else {
-                                    phases.iter().find(|p| p.decision != Decision::RejectedBundle)
+                                    phases
+                                        .iter()
+                                        .find(|p| p.decision != Decision::RejectedBundle)
                                         .map_or(Decision::RejectedCapacity, |p| p.decision.clone())
                                 };
-                                Admission { task_id: task.id.clone(), node_id: node.id.clone(), decision }
+                                Admission {
+                                    task_id: task.id.clone(),
+                                    node_id: node.id.clone(),
+                                    decision,
+                                }
                             } else {
                                 ledger.admit(execution)
                             };
@@ -333,9 +340,9 @@ mod tests {
         let mut second = first.clone();
         second.id = "second".into();
         second.release_ns = 30_000_000;
-        node.storage_bytes = first.output_size_bytes.max(
-            scenario.input_artifact.size_bytes + first.output_size_bytes,
-        );
+        node.storage_bytes = first
+            .output_size_bytes
+            .max(scenario.input_artifact.size_bytes + first.output_size_bytes);
         let make = |workload| Candidate {
             node_id: node.id.clone(),
             workload,
