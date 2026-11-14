@@ -223,27 +223,30 @@ class LinuxRouteGraph(LinuxPath):
         if selected == self.active_path:
             return {"selected_path": selected, "route_available": bool(path),
                     "routes_changed": False}
-        # Routes are scoped to owned namespaces and only to experiment /32
-        # endpoints. This is an explicit centralized controller, *not* FRR.
-        for node in self.plan["nodes"]:
-            ns = node["namespace"]
-            if node["id"] != self.plan["target"]:
-                self.run(["ip", "-n", ns, "route", "del", self.plan["target_ip"] + "/32"], check=False)
-            if node["id"] != self.plan["source"]:
-                self.run(["ip", "-n", ns, "route", "del", self.plan["source_ip"] + "/32"], check=False)
-        for i, link in enumerate(path):
-            if i < len(path) - 1:
-                self.run([
-                    "ip", "-n", link["left_ns"], "route", "replace",
-                    self.plan["target_ip"] + "/32", "via", link["right_ip"],
-                    "dev", link["left_if"],
-                ])
-            if i > 0:
-                self.run([
-                    "ip", "-n", link["right_ns"], "route", "replace",
-                    self.plan["source_ip"] + "/32", "via", link["left_ip"],
-                    "dev", link["right_if"],
-                ])
+        # Program changed next hops before removing routes on abandoned nodes.
+        # Replacing an unchanged /32 tears down a healthy forwarding path
+        # transiently; only update nodes whose next hop actually changed.
+        links_by_id = {edge["id"]: edge for edge in self.plan["links"]}
+        def routes(link_ids: list[str]) -> dict[tuple[str, str], tuple[str, str]]:
+            path_edges = [links_by_id[link_id] for link_id in link_ids]
+            desired = {}
+            for i, edge in enumerate(path_edges):
+                if i < len(path_edges) - 1:
+                    desired[(edge["left_ns"], self.plan["target_ip"])] = (
+                        edge["right_ip"], edge["left_if"])
+                if i > 0:
+                    desired[(edge["right_ns"], self.plan["source_ip"])] = (
+                        edge["left_ip"], edge["right_if"])
+            return desired
+
+        previous = routes(self.active_path)
+        desired = routes(selected)
+        for (ns, destination), (gateway, interface) in sorted(desired.items()):
+            if previous.get((ns, destination)) != (gateway, interface):
+                self.run(["ip", "-n", ns, "route", "replace",
+                          destination + "/32", "via", gateway, "dev", interface])
+        for ns, destination in sorted(previous.keys() - desired.keys()):
+            self.run(["ip", "-n", ns, "route", "del", destination + "/32"])
         self.active_path = selected
         return {"selected_path": selected, "route_available": bool(path),
                 "routes_changed": True}
