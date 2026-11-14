@@ -39,7 +39,7 @@ pub fn plan_shared(
 /// Missing observations preserve the original release-time-only planning API.
 pub fn plan_shared_with_arrivals(
     nodes: &[ComputeNode],
-    mut candidates: Vec<Candidate>,
+    candidates: Vec<Candidate>,
     input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
 ) -> Result<Vec<PlannedWorkload>, String> {
