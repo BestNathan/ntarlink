@@ -31,6 +31,8 @@ pub enum Decision {
     RejectedUnknownNode,
     RejectedDuplicateTask,
     RejectedCapacity,
+    /// A different phase failed, so this phase was not committed.
+    RejectedBundle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -137,6 +139,20 @@ impl Ledger {
                     if accepted.decision == Decision::Admitted {
                         self.admitted.retain(|r| r.task_id != accepted.task_id);
                     }
+                }
+                // No phase is committed after rollback. Never report a
+                // successful admission to callers for a reverted reservation.
+                for admission in &mut staged {
+                    if admission.decision == Decision::Admitted {
+                        admission.decision = Decision::RejectedBundle;
+                    }
+                }
+                for remaining in phases.iter().skip(staged.len()) {
+                    staged.push(Admission {
+                        task_id: remaining.task_id.clone(),
+                        node_id: remaining.node_id.clone(),
+                        decision: Decision::RejectedBundle,
+                    });
                 }
                 return staged;
             }
@@ -486,6 +502,22 @@ mod tests {
             ledger.admit(req("job:output", "sat-a", 40, 50, 1)).decision,
             Decision::RejectedDuplicateTask
         );
+    }
+
+    #[test]
+    fn rejected_bundle_never_reports_rolled_back_phase_as_admitted() {
+        let mut ledger = Ledger::new(capacities());
+        let phases = vec![
+            req("a", "sat-a", 0, 10, 1),
+            req("b", "sat-a", 0, 10, 11),
+            req("c", "sat-b", 0, 10, 1),
+        ];
+        let result = ledger.admit_bundle(phases);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].decision, Decision::RejectedBundle);
+        assert_eq!(result[1].decision, Decision::RejectedCapacity);
+        assert_eq!(result[2].decision, Decision::RejectedBundle);
+        assert!(ledger.admitted().is_empty());
     }
 
     #[test]
