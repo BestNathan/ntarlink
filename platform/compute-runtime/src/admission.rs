@@ -196,9 +196,9 @@ impl Ledger {
             if !seen.insert(id.as_str()) || self.retired_tasks.contains(id) {
                 return false;
             }
-            let Some(reservation) = self.admitted.iter().find(|r| r.task_id == *id) else {
+            if !self.admitted.iter().any(|r| r.task_id == *id) {
                 return false;
-            };
+            }
         }
         // Completed phases are historical evidence, not a reason to reject
         // cancellation of a still-active output staging phase.
