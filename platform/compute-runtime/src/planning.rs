@@ -170,7 +170,9 @@ fn plan_shared_internal(
                                     power_mw: 0,
                                 };
                                 let phases = ledger.admit_bundle(vec![execution, output]);
-                                let decision = if phases.iter().all(|p| p.decision == Decision::Admitted)
+                                let decision = if phases
+                                    .iter()
+                                    .all(|p| p.decision == Decision::Admitted)
                                 {
                                     Decision::Admitted
                                 } else {
@@ -328,7 +330,6 @@ mod tests {
             serde_json::to_vec(&reversed).unwrap()
         );
     }
-
 
     #[test]
     fn output_staging_blocks_later_storage_even_after_cpu_finishes() {
