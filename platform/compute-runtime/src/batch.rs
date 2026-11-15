@@ -116,11 +116,14 @@ impl BatchExperiment {
             }
         }
         let mut job_ids = BTreeSet::new();
-        let mut flow_budget: u64 = self
+        // Count untrusted scenario traffic in a wider type before adding generated
+        // artifact packets. Validation must fail closed, never overflow in debug
+        // builds or wrap into a misleadingly small release-build budget.
+        let mut flow_budget: u128 = self
             .network
             .flows
             .iter()
-            .map(|f| u64::from(f.packet_count))
+            .map(|f| u128::from(f.packet_count))
             .sum();
         for job in &self.jobs {
             let task = &job.workload;
@@ -156,14 +159,14 @@ impl BatchExperiment {
                 }
             }
             let output_packets = task.output_size_bytes.div_ceil(self.packet_payload_bytes);
-            flow_budget = flow_budget.saturating_add(output_packets);
+            flow_budget += u128::from(output_packets);
             if node.is_some_and(|n| n.site_id != input.origin_site_id) {
                 let input_packets = input.size_bytes.div_ceil(self.packet_payload_bytes);
                 let latest_injection = task.release_ns.checked_add(input_packets.saturating_sub(1));
                 if latest_injection.is_none_or(|at| at >= self.network.duration_ns) {
                     return Err("remote input packet injection exceeds simulation horizon".into());
                 }
-                flow_budget = flow_budget.saturating_add(input_packets);
+                flow_budget += u128::from(input_packets);
             }
             if flow_budget > 1_000_000 {
                 return Err("batch packet event budget exceeded".into());
@@ -548,6 +551,17 @@ mod tests {
         assert!(rejected.reservation.is_none());
         assert!(accepted.reservation.is_some());
         assert_eq!(accepted.compute_completed_ns, Some(2_999_998_600));
+    }
+
+    #[test]
+    fn batch_packet_budget_rejects_oversized_generated_output() {
+        let mut experiment = fixture();
+        experiment.packet_payload_bytes = 1;
+        experiment.jobs[0].workload.output_size_bytes = 1_000_001;
+        assert_eq!(
+            experiment.validate().unwrap_err(),
+            "batch packet event budget exceeded"
+        );
     }
 
     #[test]
