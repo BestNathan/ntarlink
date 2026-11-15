@@ -1,6 +1,6 @@
 use ntarlink_contracts::Link;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 fn link_cost_ns(link: &Link, packet_size_bytes: u64) -> Option<u64> {
     let bits_ns = u128::from(packet_size_bytes) * 8 * 1_000_000_000;
@@ -32,15 +32,21 @@ pub fn next_hops(
     let mut distances: HashMap<String, u64> = HashMap::new();
     let mut routes: HashMap<String, usize> = HashMap::new();
     let mut heap = BinaryHeap::new();
+    // Finalized vertices cannot be relaxed again, even on zero-cost cycles.
+    // This preserves a destination-rooted forwarding tree for zero-byte probes.
     distances.insert(destination.to_owned(), 0);
     heap.push(Reverse((0u64, destination.to_owned())));
+    let mut settled = HashSet::new();
     while let Some(Reverse((cost, current))) = heap.pop() {
-        if distances.get(&current) != Some(&cost) {
+        if distances.get(&current) != Some(&cost) || !settled.insert(current.clone()) {
             continue;
         }
         if let Some(candidate_links) = incoming.get(current.as_str()) {
             for &index in candidate_links {
                 let link = &links[index];
+                if settled.contains(&link.from) {
+                    continue;
+                }
                 let Some(edge_cost) = link_cost_ns(link, packet_size_bytes) else {
                     continue;
                 };
@@ -82,6 +88,30 @@ mod tests {
         down[direct_index] = false;
         let reroute = next_hops(&s.links, &down, "internet", 1200);
         assert_eq!(s.links[reroute["sat-a"]].id, "isl-a-c");
+    }
+
+
+    #[test]
+    fn zero_cost_cycles_never_create_forwarding_loops() {
+        let mut s = Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
+        for link in &mut s.links {
+            link.propagation_delay_ns = 0;
+            link.processing_delay_ns = 0;
+        }
+        let available = vec![true; s.links.len()];
+        let routes = next_hops(&s.links, &available, "internet", 0);
+        for origin in routes.keys() {
+            let mut current = origin.as_str();
+            let mut visited = std::collections::HashSet::new();
+            while current != "internet" {
+                assert!(visited.insert(current.to_owned()), "routing loop from {origin}");
+                let index = *routes.get(current).expect("reachable route must terminate");
+                current = &s.links[index].to;
+            }
+        }
+        assert!(!routes.contains_key("internet"));
+        let again = next_hops(&s.links, &available, "internet", 0);
+        assert_eq!(routes, again);
     }
 
     #[test]
