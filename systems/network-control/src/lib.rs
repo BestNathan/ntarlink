@@ -98,6 +98,13 @@ mod tests {
             link.propagation_delay_ns = 0;
             link.processing_delay_ns = 0;
         }
+        // Introduce a real directed zero-cost cycle; the base fixture is acyclic.
+        // The reverse edge sorts before the forward path to expose equal-cost ties.
+        let mut reverse = s.links.iter().find(|link| link.id == "isl-a-c").unwrap().clone();
+        reverse.id = "aaa-isl-c-a".into();
+        reverse.from = "sat-c".into();
+        reverse.to = "sat-a".into();
+        s.links.push(reverse);
         let available = vec![true; s.links.len()];
         let routes = next_hops(&s.links, &available, "internet", 0);
         for origin in routes.keys() {
