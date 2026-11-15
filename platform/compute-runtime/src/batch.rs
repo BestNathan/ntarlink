@@ -217,7 +217,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             let injection_horizon = workload.deadline_ns.min(experiment.network.duration_ns);
             // A packet emitted at completion occupies its start timestamp; N packets
             // spaced one nanosecond apart require N - 1 additional instants.
-            workload.deadline_ns = injection_horizon.saturating_sub(packets.saturating_sub(1));
+            // The workload deadline is exclusive for packet injection: the last
+            // packet must start strictly before it, not at the deadline.
+            workload.deadline_ns = injection_horizon.saturating_sub(packets);
             Candidate {
                 node_id: job.node_id.clone(),
                 workload,
@@ -574,6 +576,25 @@ mod tests {
             report.network.injected,
             report.network.delivered + report.network.dropped
         );
+    }
+
+    #[test]
+    fn output_packet_injected_at_exact_deadline_cannot_reserve_compute() {
+        let mut experiment = fixture();
+        let mut job = experiment.jobs[0].clone();
+        job.workload.output_size_bytes = 1;
+        job.workload.deadline_ns = 20_000_000;
+        experiment.jobs = vec![job];
+        let report = run_batch(&experiment).unwrap();
+        let task = &report.tasks[0];
+        assert_eq!(task.status, BatchStatus::Rejected);
+        assert!(task.reservation.is_none());
+        assert_eq!(task.injected_packets, 0);
+        assert!(!report
+            .network
+            .packets
+            .iter()
+            .any(|packet| packet.flow_id.starts_with("__c1:")));
     }
 
     #[test]
