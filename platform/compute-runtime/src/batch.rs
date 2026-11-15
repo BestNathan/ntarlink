@@ -215,7 +215,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             // Every output packet must be injected before both the run
             // horizon and the task deadline; actual delivery remains L1-owned.
             let injection_horizon = workload.deadline_ns.min(experiment.network.duration_ns);
-            workload.deadline_ns = injection_horizon.saturating_sub(packets);
+            // A packet emitted at completion occupies its start timestamp; N packets
+            // spaced one nanosecond apart require N - 1 additional instants.
+            workload.deadline_ns = injection_horizon.saturating_sub(packets.saturating_sub(1));
             Candidate {
                 node_id: job.node_id.clone(),
                 workload,
@@ -551,6 +553,27 @@ mod tests {
         assert!(rejected.reservation.is_none());
         assert!(accepted.reservation.is_some());
         assert_eq!(accepted.compute_completed_ns, Some(2_999_998_600));
+    }
+
+    #[test]
+    fn single_packet_output_at_last_predeadline_instant_is_admitted() {
+        let mut experiment = fixture();
+        let mut job = experiment.jobs[0].clone();
+        job.workload.output_size_bytes = 1;
+        job.workload.deadline_ns = 20_000_001;
+        experiment.jobs = vec![job];
+        let report = run_batch(&experiment).unwrap();
+        let task = &report.tasks[0];
+        assert!(task.reservation.is_some());
+        assert_eq!(task.compute_completed_ns, Some(20_000_000));
+        assert_eq!(task.injected_packets, 1);
+        // Injection is feasible, but actual ground delivery remains subject
+        // to packet-network latency and the original workload deadline.
+        assert_eq!(task.status, BatchStatus::DeadlineMissed);
+        assert_eq!(
+            report.network.injected,
+            report.network.delivered + report.network.dropped
+        );
     }
 
     #[test]
