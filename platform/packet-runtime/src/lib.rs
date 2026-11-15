@@ -4926,7 +4926,7 @@ mod tests {
             Flow {
                 id: "before".into(),
                 source: "sat-a".into(),
-                destination: "internet".into(),
+                destination: "sat-b".into(),
                 packet_size_bytes: 1_200,
                 packet_count: 3,
                 start_ns: 0,
@@ -4935,7 +4935,7 @@ mod tests {
             Flow {
                 id: "during".into(),
                 source: "sat-a".into(),
-                destination: "internet".into(),
+                destination: "sat-b".into(),
                 packet_size_bytes: 1_200,
                 packet_count: 1,
                 start_ns: 5_000_000,
@@ -4944,7 +4944,7 @@ mod tests {
             Flow {
                 id: "after".into(),
                 source: "sat-a".into(),
-                destination: "internet".into(),
+                destination: "sat-b".into(),
                 packet_size_bytes: 1_200,
                 packet_count: 2,
                 start_ns: 30_000_000,
