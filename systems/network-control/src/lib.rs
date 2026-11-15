@@ -90,10 +90,10 @@ mod tests {
         assert_eq!(s.links[reroute["sat-a"]].id, "isl-a-c");
     }
 
-
     #[test]
     fn zero_cost_cycles_never_create_forwarding_loops() {
-        let mut s = Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
+        let mut s =
+            Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
         for link in &mut s.links {
             link.propagation_delay_ns = 0;
             link.processing_delay_ns = 0;
@@ -104,7 +104,10 @@ mod tests {
             let mut current = origin.as_str();
             let mut visited = std::collections::HashSet::new();
             while current != "internet" {
-                assert!(visited.insert(current.to_owned()), "routing loop from {origin}");
+                assert!(
+                    visited.insert(current.to_owned()),
+                    "routing loop from {origin}"
+                );
                 let index = *routes.get(current).expect("reachable route must terminate");
                 current = &s.links[index].to;
             }
