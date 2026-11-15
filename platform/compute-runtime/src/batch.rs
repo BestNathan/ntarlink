@@ -570,7 +570,10 @@ mod tests {
         // Injection is feasible, but actual ground delivery remains subject
         // to packet-network latency and the original workload deadline.
         assert_eq!(task.status, BatchStatus::DeadlineMissed);
-        assert_eq!(report.network.injected, report.network.delivered + report.network.dropped);
+        assert_eq!(
+            report.network.injected,
+            report.network.delivered + report.network.dropped
+        );
     }
 
     #[test]
