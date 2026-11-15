@@ -4911,6 +4911,89 @@ mod tests {
     }
 
     #[test]
+    fn fault_recovery_preserves_accepted_transmissions_and_reclaims_queue_capacity() {
+        use ntarlink_contracts::{Fault, Flow};
+
+        let mut scenario = basic();
+        let isl = scenario
+            .links
+            .iter_mut()
+            .find(|link| link.id == "isl-a-b")
+            .unwrap();
+        isl.capacity_bps = 1_000_000;
+        isl.queue_limit_bytes = 2_400;
+        scenario.flows = vec![
+            Flow {
+                id: "before".into(),
+                source: "sat-a".into(),
+                destination: "sat-b".into(),
+                packet_size_bytes: 1_200,
+                packet_count: 3,
+                start_ns: 0,
+                interval_ns: 1_000_000,
+            },
+            Flow {
+                id: "during".into(),
+                source: "sat-a".into(),
+                destination: "sat-b".into(),
+                packet_size_bytes: 1_200,
+                packet_count: 1,
+                start_ns: 5_000_000,
+                interval_ns: 1_000_000,
+            },
+            Flow {
+                id: "after".into(),
+                source: "sat-a".into(),
+                destination: "sat-b".into(),
+                packet_size_bytes: 1_200,
+                packet_count: 2,
+                start_ns: 30_000_000,
+                interval_ns: 1_000_000,
+            },
+        ];
+        scenario.faults = vec![
+            Fault {
+                at_ns: 3_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Down,
+                cause: FaultCause::Administrative,
+            },
+            Fault {
+                at_ns: 20_000_000,
+                link_id: "isl-a-b".into(),
+                action: LinkAction::Up,
+                cause: FaultCause::Administrative,
+            },
+        ];
+
+        let first = run(&scenario).unwrap();
+        assert_eq!((first.injected, first.delivered, first.dropped), (6, 4, 2));
+        assert_eq!(first.packets[0].status, PacketStatus::Delivered);
+        assert_eq!(first.packets[1].status, PacketStatus::Delivered);
+        assert_eq!(
+            first.packets[2].drop_reason.as_deref(),
+            Some("queue_overflow")
+        );
+        assert!(matches!(
+            first.packets[3].drop_reason.as_deref(),
+            Some("link_unavailable" | "no_route")
+        ));
+        for packet in &first.packets[4..] {
+            assert_eq!(packet.status, PacketStatus::Delivered);
+            let isl_hop = packet
+                .hops
+                .iter()
+                .find(|hop| hop.link_id == "isl-a-b")
+                .unwrap();
+            assert!(isl_hop.transmit_started_ns >= 30_000_000);
+        }
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&run(&scenario).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
     fn disconnected_feeder_is_not_teleported() {
         let mut s = basic();
         let feeder = s.links.iter_mut().find(|l| l.id == "feeder-b-gw").unwrap();
