@@ -282,6 +282,17 @@ def parse_continuous_ping(output: str) -> dict:
         elif "no answer yet" in line:
             missed.append(seq)
             unanswered_samples.append({"seq": seq, "wall_utc_ns": timestamp_ns})
+    # ICMP replies can be duplicated or arrive out of sequence. Count unique
+    # probe IDs and derive gaps from sequence order, not arrival order.
+    unique_replies = {}
+    for seq, stamp in replies:
+        unique_replies[seq] = min(stamp, unique_replies.get(seq, stamp))
+    ordered_replies = sorted(unique_replies.items())
+    summary = re.search(
+        r"(\d+) packets transmitted, (\d+) (?:packets )?received", output
+    )
+    transmitted = int(summary.group(1)) if summary else None
+    received = int(summary.group(2)) if summary else None
     # ping -O reports an unanswered probe at the next send, not a final
     # packet loss. A delayed reply may still arrive later in the capture.
     replied_sequences = {seq for seq, _ in replies}
@@ -293,11 +304,15 @@ def parse_continuous_ping(output: str) -> dict:
         {"before_seq": previous[0], "after_seq": current[0],
          "elapsed_wall_ns": current[1] - previous[1],
          "missing_sequence_count": max(0, current[0] - previous[0] - 1)}
-        for previous, current in zip(replies, replies[1:])
+        for previous, current in zip(ordered_replies, ordered_replies[1:])
         if current[0] > previous[0] + 1
     ]
     return {
-        "received_reply_count": len(replies),
+        "received_reply_count": len(unique_replies),
+        "duplicate_reply_count": len(replies) - len(unique_replies),
+        "ping_summary_transmitted": transmitted,
+        "ping_summary_received": received,
+        "ping_summary_lost": transmitted - received if summary else None,
         "observed_missing_sequences": sorted(set(missed) - replied_sequences),
         "late_reply_sequences": sorted(set(missed) & replied_sequences),
         "reply_samples": [
@@ -403,14 +418,17 @@ def remaining_probe_window_ns(origin_ns: int, duration_ns: int, scale: float, no
     return max(0, origin_ns + int(duration_ns * scale) - now_ns)
 
 
-def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -> dict:
+def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None, probe_interval_ms: int = 200) -> dict:
     if not 1.0 <= scale <= 100.0 or plan["duration_ns"] * scale / 1e9 > 120:
         raise PlanError("invalid time-scale or excessive wall duration")
+    if type(probe_interval_ms) is not int or not 50 <= probe_interval_ms <= 1000:
+        raise PlanError("probe interval must be 50..1000 milliseconds")
     worker = LinuxRouteGraph(plan)
     report = {
         "fidelity": "S2-real-IP-centralized-route-controller-not-FRR",
         "source_sha256": plan["source_sha256"],
         "kernel": platform.release(), "scale": scale,
+        "probe_interval_ms": probe_interval_ms,
         "events": [], "probes": [],
     }
     continuous_ping = None
@@ -430,7 +448,7 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None) -
                          if node["id"] == plan["source"])
         continuous_ping = subprocess.Popen(
             ["ip", "netns", "exec", source_ns, "ping", "-n", "-D", "-O",
-             "-i", "0.2", plan["target_ip"]],
+             "-i", f"{probe_interval_ms / 1000:.3f}", plan["target_ip"]],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         origin_wall_utc_before_ns = time.time_ns()
@@ -510,6 +528,8 @@ def main() -> int:
     parser.add_argument("--tag", default="r2")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--time-scale", type=float, default=20.0)
+    parser.add_argument("--probe-interval-ms", type=int, default=200,
+                        help="host ICMP sampling cadence (50..1000 ms; apply only)")
     parser.add_argument("--iperf", action="store_true")
     parser.add_argument("--pcap", type=Path)
     parser.add_argument("--output", type=Path)
@@ -517,13 +537,14 @@ def main() -> int:
     try:
         plan = build_graph(args.scenario.read_bytes(), args.source, args.target, args.tag)
         if not args.apply:
-            if args.iperf or args.pcap:
-                raise PlanError("--iperf/--pcap require --apply")
+            if args.iperf or args.pcap or args.probe_interval_ms != 200:
+                raise PlanError("--iperf/--pcap/--probe-interval-ms require --apply")
             result = {"mode": "dry-run", "plan": plan, "changes_applied": False}
         else:
             result = {
                 "mode": "applied", "plan": plan,
-                "report": execute_graph(plan, scale=args.time_scale, iperf=args.iperf, pcap=args.pcap),
+                "report": execute_graph(plan, scale=args.time_scale, iperf=args.iperf, pcap=args.pcap,
+                                     probe_interval_ms=args.probe_interval_ms),
             }
         serialized = json.dumps(result, indent=2, sort_keys=True) + "\n"
         if args.output:
