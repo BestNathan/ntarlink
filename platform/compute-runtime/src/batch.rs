@@ -517,11 +517,13 @@ mod tests {
         assert_eq!(task.status, BatchStatus::TransferFailed);
         assert!(task.delivered_bytes > 0);
         assert!(task.dropped_bytes > 0);
-        assert_eq!(task.delivered_bytes + task.dropped_bytes, task.artifact_bytes);
+        assert_eq!(
+            task.delivered_bytes + task.dropped_bytes,
+            task.artifact_bytes
+        );
         assert_eq!(task.ground_arrival_ns, None);
         assert!(report.network.packets.iter().any(|packet| {
-            packet.flow_id.starts_with("__c1:a:")
-                && packet.status == PacketStatus::Delivered
+            packet.flow_id.starts_with("__c1:a:") && packet.status == PacketStatus::Delivered
         }));
         let replay = run_batch(&experiment).unwrap();
         assert_eq!(
