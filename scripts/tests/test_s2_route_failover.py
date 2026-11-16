@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
 from s2_routing import (  # noqa: E402
     LinuxRouteGraph, PlanError, build_graph, correlate_route_transition_observations,
+    execute_graph,
     find_path, parse_continuous_ping, remaining_probe_window_ns,
 )
 
@@ -26,6 +27,45 @@ class S2RouteTests(unittest.TestCase):
             json.dumps(obj if obj is not None else self.raw).encode(),
             "ue-a", "internet", "r2",
         )
+
+    def test_probe_cadence_rejects_unsafe_values_before_host_setup(self):
+        plan = self.plan()
+        for value in (0, 49, 1001, True, 50.5, "50"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                PlanError, "probe interval"
+            ):
+                execute_graph(plan, scale=1.0, iperf=False, pcap=None,
+                              probe_interval_ms=value)
+
+    def test_cli_rejects_custom_probe_cadence_in_dry_run(self):
+        command = [
+            sys.executable,
+            str(ROOT / "systems" / "network-emulation" / "s2_routing.py"),
+            str(FIXTURE), "--source", "ue-a", "--target", "internet",
+            "--probe-interval-ms", "50",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("require --apply", result.stderr)
+
+    def test_host_probe_cadence_is_reported_and_passed_to_ping(self):
+        plan = self.plan()
+        class StopAfterProbe(Exception):
+            pass
+
+        class FakeProbe:
+            def __init__(self, args, **kwargs):
+                self.args = args
+                raise StopAfterProbe
+
+        with patch("s2_routing.LinuxRouteGraph.setup"), patch(
+            "s2_routing.LinuxRouteGraph.snapshot", return_value={}
+        ), patch("s2_routing.LinuxRouteGraph.ping", return_value={"success": True}), patch(
+            "s2_routing.subprocess.Popen", FakeProbe
+        ), patch("s2_routing.LinuxRouteGraph.close", return_value=[]):
+            with self.assertRaises(StopAfterProbe):
+                execute_graph(plan, scale=1.0, iperf=False, pcap=None,
+                              probe_interval_ms=50)
 
     def test_continuous_probe_detects_missing_replies_and_bounds_gap(self):
         output = (
