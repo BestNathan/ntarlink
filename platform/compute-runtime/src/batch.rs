@@ -59,6 +59,8 @@ pub struct BatchTaskResult {
     pub dropped_bytes: u64,
     /// Complete artifact arrival only; partial packet delivery is not a release receipt.
     pub ground_arrival_ns: Option<u64>,
+    /// Latest successful packet arrival, including incomplete artifacts; not a delivery receipt.
+    pub last_packet_arrival_ns: Option<u64>,
     pub reservation: Option<ResourceReservation>,
 }
 
@@ -265,6 +267,7 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             delivered_bytes: 0,
             dropped_bytes: 0,
             ground_arrival_ns: None,
+            last_packet_arrival_ns: None,
             reservation: plan.reservation,
         };
         if plan.admission.decision == Decision::Admitted {
@@ -335,6 +338,7 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             delivered_bytes: 0,
             dropped_bytes: 0,
             ground_arrival_ns: None,
+            last_packet_arrival_ns: None,
             reservation: None,
         });
     }
@@ -356,7 +360,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
                 let at = packet
                     .completed_ns
                     .ok_or("delivered packet has no arrival")?;
-                task.ground_arrival_ns = Some(task.ground_arrival_ns.map_or(at, |old| old.max(at)));
+                task.last_packet_arrival_ns =
+                    Some(task.last_packet_arrival_ns.map_or(at, |old| old.max(at)));
+                task.ground_arrival_ns = task.last_packet_arrival_ns;
             }
             PacketStatus::Dropped => {
                 task.dropped_packets += 1;
@@ -522,6 +528,7 @@ mod tests {
             task.artifact_bytes
         );
         assert_eq!(task.ground_arrival_ns, None);
+        assert!(task.last_packet_arrival_ns.is_some());
         assert!(report.network.packets.iter().any(|packet| {
             packet.flow_id.starts_with("__c1:a:") && packet.status == PacketStatus::Delivered
         }));
