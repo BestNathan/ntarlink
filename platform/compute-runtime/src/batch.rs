@@ -439,7 +439,6 @@ mod tests {
 
     #[test]
     fn shared_input_identity_must_preserve_origin_size_and_digest() {
-        let baseline = fixture();
         let mut shared = fixture();
         let first = shared.jobs[0].input_artifact.clone();
         shared.jobs[1].input_artifact = first.clone();
