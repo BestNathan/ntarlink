@@ -440,14 +440,16 @@ mod tests {
     #[test]
     fn shared_input_identity_must_preserve_origin_size_and_digest() {
         let baseline = fixture();
-        let mut shared = baseline.clone();
+        let mut shared = fixture();
         let first = shared.jobs[0].input_artifact.clone();
         shared.jobs[1].input_artifact = first.clone();
         shared.jobs[1].workload.input_artifact_id = first.id.clone();
         assert!(shared.validate().is_ok());
 
         for variant in 0..3 {
-            let mut conflicting = shared.clone();
+            let mut conflicting = fixture();
+            conflicting.jobs[1].input_artifact = first.clone();
+            conflicting.jobs[1].workload.input_artifact_id = first.id.clone();
             let artifact = &mut conflicting.jobs[1].input_artifact;
             match variant {
                 0 => artifact.content_digest.push_str("-different"),
