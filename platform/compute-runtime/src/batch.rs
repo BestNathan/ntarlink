@@ -119,6 +119,10 @@ impl BatchExperiment {
             }
         }
         let mut job_ids = BTreeSet::new();
+        // An artifact ID is a stable content identity across jobs. Reject
+        // conflicting declarations instead of silently treating two different
+        // inputs as the same source artifact.
+        let mut artifact_identities = BTreeMap::new();
         // Count untrusted scenario traffic in a wider type before adding generated
         // artifact packets. Validation must fail closed, never overflow in debug
         // builds or wrap into a misleadingly small release-build budget.
@@ -132,6 +136,17 @@ impl BatchExperiment {
             let task = &job.workload;
             let input = &job.input_artifact;
             let node = self.compute_nodes.iter().find(|n| n.id == job.node_id);
+            let identity = (
+                input.origin_site_id.as_str(),
+                input.size_bytes,
+                input.content_digest.as_str(),
+            );
+            if artifact_identities
+                .insert(input.id.as_str(), identity)
+                .is_some_and(|previous| previous != identity)
+            {
+                return Err("conflicting input artifact identity across batch jobs".into());
+            }
             if task.id.is_empty()
                 || !job_ids.insert(task.id.as_str())
                 || task.input_artifact_id != input.id
@@ -420,6 +435,31 @@ mod tests {
     fn fixture() -> BatchExperiment {
         BatchExperiment::from_json(include_str!("../../../scenarios/c1-shared-network.json"))
             .unwrap()
+    }
+
+    #[test]
+    fn shared_input_identity_must_preserve_origin_size_and_digest() {
+        let mut shared = fixture();
+        let first = shared.jobs[0].input_artifact.clone();
+        shared.jobs[1].input_artifact = first.clone();
+        shared.jobs[1].workload.input_artifact_id = first.id.clone();
+        assert!(shared.validate().is_ok());
+
+        for variant in 0..3 {
+            let mut conflicting = fixture();
+            conflicting.jobs[1].input_artifact = first.clone();
+            conflicting.jobs[1].workload.input_artifact_id = first.id.clone();
+            let artifact = &mut conflicting.jobs[1].input_artifact;
+            match variant {
+                0 => artifact.content_digest.push_str("-different"),
+                1 => artifact.size_bytes += 1,
+                _ => artifact.origin_site_id = "sat-b".into(),
+            }
+            assert!(conflicting
+                .validate()
+                .unwrap_err()
+                .contains("conflicting input artifact identity"));
+        }
     }
 
     #[test]
