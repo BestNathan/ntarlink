@@ -53,9 +53,11 @@ class S2RouteTests(unittest.TestCase):
         class StopAfterProbe(Exception):
             pass
 
+        observed = []
+
         class FakeProbe:
             def __init__(self, args, **kwargs):
-                self.args = args
+                observed.extend(args)
                 raise StopAfterProbe
 
         with patch("s2_routing.LinuxRouteGraph.setup"), patch(
@@ -66,6 +68,7 @@ class S2RouteTests(unittest.TestCase):
             with self.assertRaises(StopAfterProbe):
                 execute_graph(plan, scale=1.0, iperf=False, pcap=None,
                               probe_interval_ms=50)
+        self.assertEqual(observed[observed.index("-i") + 1], "0.050")
 
     def test_continuous_probe_detects_missing_replies_and_bounds_gap(self):
         output = (
