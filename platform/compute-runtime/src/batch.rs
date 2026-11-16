@@ -57,6 +57,7 @@ pub struct BatchTaskResult {
     pub dropped_packets: usize,
     pub delivered_bytes: u64,
     pub dropped_bytes: u64,
+    /// Complete artifact arrival only; partial packet delivery is not a release receipt.
     pub ground_arrival_ns: Option<u64>,
     pub reservation: Option<ResourceReservation>,
 }
@@ -374,6 +375,8 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             return Err("shared batch artifact accounting invariant failed".into());
         }
         if task.delivered_bytes != task.artifact_bytes {
+            // Packet timestamps are not proof of complete artifact delivery.
+            task.ground_arrival_ns = None;
             task.status = BatchStatus::TransferFailed;
             task.reason = Some("modeled artifact lost in shared packet network".into());
         } else if task
@@ -493,6 +496,39 @@ mod tests {
         assert_eq!(
             report.network.injected,
             report.network.delivered + report.network.dropped
+        );
+    }
+
+    #[test]
+    fn partial_output_delivery_never_claims_complete_artifact_arrival() {
+        let mut experiment = fixture();
+        experiment.jobs = vec![experiment.jobs[0].clone()];
+        // The first packet can enter the feeder, but its one-packet queue
+        // cannot accept the other packets injected a nanosecond apart.
+        experiment
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .queue_limit_bytes = 1000;
+        let report = run_batch(&experiment).unwrap();
+        let task = &report.tasks[0];
+        assert_eq!(task.status, BatchStatus::TransferFailed);
+        assert!(task.delivered_bytes > 0);
+        assert!(task.dropped_bytes > 0);
+        assert_eq!(
+            task.delivered_bytes + task.dropped_bytes,
+            task.artifact_bytes
+        );
+        assert_eq!(task.ground_arrival_ns, None);
+        assert!(report.network.packets.iter().any(|packet| {
+            packet.flow_id.starts_with("__c1:a:") && packet.status == PacketStatus::Delivered
+        }));
+        let replay = run_batch(&experiment).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
         );
     }
 
