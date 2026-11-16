@@ -92,12 +92,12 @@ class S2RouteTests(unittest.TestCase):
 
     def test_reordered_and_duplicate_replies_do_not_invent_loss(self):
         output = (
-            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\\n"
-            "[1000.300000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\\n"
-            "[1000.400000] 64 bytes from host: icmp_seq=2 ttl=64 time=200 ms\\n"
-            "[1000.450000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms (DUP!)\\n"
-            "[1000.600000] no answer yet for icmp_seq=4\\n"
-            "5 packets transmitted, 4 received, +1 duplicates, 20% packet loss\\n"
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1000.300000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+            "[1000.400000] 64 bytes from host: icmp_seq=2 ttl=64 time=200 ms\n"
+            "[1000.450000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms (DUP!)\n"
+            "[1000.600000] no answer yet for icmp_seq=4\n"
+            "5 packets transmitted, 4 received, +1 duplicates, 20% packet loss\n"
         )
         ping = parse_continuous_ping(output)
         self.assertEqual(ping["received_reply_count"], 3)
