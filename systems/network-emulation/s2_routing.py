@@ -289,7 +289,7 @@ def parse_continuous_ping(output: str) -> dict:
         unique_replies[seq] = min(stamp, unique_replies.get(seq, stamp))
     ordered_replies = sorted(unique_replies.items())
     summary = re.search(
-        r"(\\d+) packets transmitted, (\\d+) (?:packets )?received", output
+        r"(\d+) packets transmitted, (\d+) (?:packets )?received", output
     )
     transmitted = int(summary.group(1)) if summary else None
     received = int(summary.group(2)) if summary else None
