@@ -116,6 +116,60 @@ jobs:
           print('S2 controller apply wall ns:', [e['controller_apply_elapsed_ns'] for e in events])
           PY
           ! sudo ip netns list | grep -E '^ntr2n[0-9]+($| )'
+      - name: Compare measured 50 ms and 200 ms continuous-probe sampling
+        run: |
+          python - <<'PY'
+          import json
+          import resource
+          import subprocess
+          import time
+
+          results = []
+          for cadence in (200, 50):
+              output = f"/tmp/s2-cadence-{cadence}.json"
+              before = resource.getrusage(resource.RUSAGE_CHILDREN)
+              started = time.monotonic_ns()
+              subprocess.run([
+                  "sudo", "python", "systems/network-emulation/s2_routing.py",
+                  "scenarios/s2-route-failover.json", "--source", "ue-a",
+                  "--target", "internet", "--tag", "r2", "--apply",
+                  "--time-scale", "20", "--probe-interval-ms", str(cadence),
+                  "--output", output,
+              ], check=True)
+              elapsed = time.monotonic_ns() - started
+              after = resource.getrusage(resource.RUSAGE_CHILDREN)
+              report = json.load(open(output))["report"]
+              probe = report["continuous_ping"]
+              assert report["probe_interval_ms"] == cadence, report
+              assert probe["received_reply_count"] > 0, probe
+              assert len(report["route_transition_observations"]) == 2, report
+              assert not report["cleanup_errors"], report["cleanup_errors"]
+              results.append({
+                  "probe_interval_ms": cadence,
+                  "host_elapsed_monotonic_ns": elapsed,
+                  "orchestrator_child_cpu_seconds": (
+                      after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime
+                  ),
+                  "unique_replies": probe["received_reply_count"],
+                  "duplicate_replies": probe["duplicate_reply_count"],
+                  "summary_transmitted": probe["ping_summary_transmitted"],
+                  "summary_received": probe["ping_summary_received"],
+                  "summary_lost": probe["ping_summary_lost"],
+                  "route_transition_observations": report["route_transition_observations"],
+              })
+              assert results[-1]["summary_transmitted"] is not None, probe
+          # A bounded 6-second host experiment is not a statistical performance
+          # benchmark: preserve raw evidence rather than assert an ideal ratio.
+          with open("/tmp/s2-cadence-comparison.json", "w") as output:
+              json.dump({
+                  "fidelity": "S2-measured-Linux-IP",
+                  "clock": "host_monotonic_elapsed_and_UTC_ping_samples",
+                  "cpu_scope": "orchestrator_child_processes_not_total_host_cpu",
+                  "runs": results,
+              }, output, indent=2)
+          print("S2 measured probe cadence comparison:", results)
+          PY
+          ! sudo ip netns list | grep -E '^ntr2n[0-9]+($| )'
       - name: Save measured S2 evidence (no synthetic labels)
         if: always()
         uses: actions/upload-artifact@v4
@@ -125,6 +179,7 @@ jobs:
             /tmp/s2-plan.json
             /tmp/s2-routing-plan.json
             /tmp/s2-routing-report.json
+            /tmp/s2-cadence-*.json
             /tmp/ntarlink-s2-routing.pcap
             /tmp/s2-host-deps.json
             /tmp/s2-report.json
