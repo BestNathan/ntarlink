@@ -110,6 +110,20 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(ping["ping_summary_lost"], 1)
         self.assertIsNone(parse_continuous_ping("probe terminated")["ping_summary_lost"])
 
+    def test_reordered_reply_timestamps_cannot_create_negative_gap(self):
+        # Sequence 3 replies before a delayed sequence 1. Sequence 2 never
+        # replies, but sequence ordering cannot measure a wall-clock gap.
+        output = (
+            "[1000.300000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+            "[1000.400000] 64 bytes from host: icmp_seq=1 ttl=64 time=400 ms\n"
+            "[1000.500000] no answer yet for icmp_seq=2\n"
+        )
+        ping = parse_continuous_ping(output)
+        self.assertEqual(ping["received_reply_count"], 2)
+        self.assertEqual(ping["observed_missing_sequences"], [2])
+        self.assertEqual(ping["reply_gaps"], [])
+        self.assertIsNone(ping["largest_observed_reply_gap_wall_ns"])
+
     def test_late_reply_is_not_counted_as_confirmed_missing_probe(self):
         # iputils ping -O may emit "no answer yet" before a delayed reply.
         output = (
