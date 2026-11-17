@@ -352,6 +352,8 @@ def correlate_route_transition_observations(events: list[dict], ping: dict) -> l
             raise RuntimeError("host wall clock moved backwards during route update")
         if next_start is not None and next_start <= start:
             raise RuntimeError("fault wall-clock timestamps are not increasing")
+        if next_start is not None and applied > next_start:
+            raise RuntimeError("route application overlaps the next fault window")
         in_window = lambda t: start <= t and (next_start is None or t < next_start)
         missing = [sample for sample in unanswered if in_window(sample["wall_utc_ns"])]
         after_apply = next(
@@ -364,7 +366,7 @@ def correlate_route_transition_observations(events: list[dict], ping: dict) -> l
         before_missing = (
             next(
                 (sample for sample in reversed(replies)
-                 if sample["wall_utc_ns"] < first_missing["wall_utc_ns"]),
+                 if start <= sample["wall_utc_ns"] < first_missing["wall_utc_ns"]),
                 None,
             )
             if first_missing else None
