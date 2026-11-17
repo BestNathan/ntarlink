@@ -27,6 +27,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Benchmark C1 background-flow validation on hosted runner
+        run: cargo test -p ntarlink-compute-runtime --release benchmark_generated_flow_id_validation -- --ignored --nocapture
       - name: Verify C1 satellite ingress causality and packet output transfer
         run: |
           cargo run -p ntarlink-cli -- simulate-batch scenarios/c1-remote-ingress.json --json > /tmp/c1-remote-report.json
