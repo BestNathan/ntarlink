@@ -179,7 +179,7 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(first["assessment"], "sampled_unanswered_then_replied")
         self.assertEqual(first["observed_unanswered_at_probe_interval"], 2)
         self.assertEqual(first["first_reply_after_apply_elapsed_wall_ns"], 450_000_000)
-        self.assertEqual(first["sampled_reply_gap_bracketing_loss_wall_ns"], 600_000_000)
+        self.assertIsNone(first["sampled_reply_gap_bracketing_loss_wall_ns"])
         self.assertEqual(first["next_fault_start_wall_utc_ns"], 1_001_100_000_000)
         self.assertEqual(second["assessment"],
                          "sampled_unanswered_without_recovery_in_window")
@@ -236,6 +236,52 @@ class S2RouteTests(unittest.TestCase):
         self.assertIsNone(first["first_reply_after_apply_wall_utc_ns"])
         self.assertEqual(second["assessment"], "no_unanswered_observed_at_probe_cadence")
         self.assertEqual(second["first_reply_after_apply_elapsed_wall_ns"], 50_000_000)
+
+    def test_loss_bracket_does_not_cross_previous_fault_window(self):
+        output = (
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1001.200000] no answer yet for icmp_seq=2\n"
+            "[1001.400000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+        )
+        events = [
+            {
+                "link_id": "isl-a-b", "action": "down",
+                "fault_start_wall_utc_ns": 1_000_100_000_000,
+                "route_applied_wall_utc_ns": 1_000_200_000_000,
+            },
+            {
+                "link_id": "isl-a-b", "action": "up",
+                "fault_start_wall_utc_ns": 1_001_100_000_000,
+                "route_applied_wall_utc_ns": 1_001_150_000_000,
+            },
+        ]
+        first, second = correlate_route_transition_observations(
+            events, parse_continuous_ping(output)
+        )
+        self.assertIsNone(first["sampled_reply_gap_bracketing_loss_wall_ns"])
+        self.assertEqual(second["assessment"], "sampled_unanswered_then_replied")
+        # A reply from the previous fault interval cannot bound the new
+        # interval's observed disruption.
+        self.assertIsNone(second["sampled_reply_gap_bracketing_loss_wall_ns"])
+        self.assertEqual(second["first_reply_after_unanswered_wall_utc_ns"],
+                         1_001_400_000_000)
+
+    def test_route_application_cannot_extend_into_next_fault_window(self):
+        ping = parse_continuous_ping("")
+        events = [
+            {
+                "link_id": "isl-a-b", "action": "down",
+                "fault_start_wall_utc_ns": 1_000_000_000_000,
+                "route_applied_wall_utc_ns": 1_000_300_000_000,
+            },
+            {
+                "link_id": "isl-a-b", "action": "up",
+                "fault_start_wall_utc_ns": 1_000_200_000_000,
+                "route_applied_wall_utc_ns": 1_000_400_000_000,
+            },
+        ]
+        with self.assertRaisesRegex(RuntimeError, "overlaps the next fault"):
+            correlate_route_transition_observations(events, ping)
 
     def test_continuous_probe_waits_for_full_scaled_horizon(self):
         origin = 1_000_000_000
