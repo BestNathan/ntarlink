@@ -305,8 +305,7 @@ def parse_continuous_ping(output: str) -> dict:
          "elapsed_wall_ns": current[1] - previous[1],
          "missing_sequence_count": max(0, current[0] - previous[0] - 1)}
         for previous, current in zip(ordered_replies, ordered_replies[1:])
-        if current[0] > previous[0] + 1
-    ]
+        # Sequence order need not match wall-clock arrival order. A negative\n        # duration is not a physical reply gap and must not enter telemetry.\n        if current[0] > previous[0] + 1 and current[1] >= previous[1]\n    ]
     return {
         "received_reply_count": len(unique_replies),
         "duplicate_reply_count": len(replies) - len(unique_replies),
