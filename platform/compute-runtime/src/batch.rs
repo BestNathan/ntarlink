@@ -132,6 +132,15 @@ impl BatchExperiment {
             .iter()
             .map(|f| u128::from(f.packet_count))
             .sum();
+        // Generated C1 flows share the packet runtime's ID namespace with
+        // scenario traffic. Index once instead of scanning every background
+        // flow for each job (up to 10,000 jobs and four generated IDs each).
+        let background_flow_ids: BTreeSet<&str> = self
+            .network
+            .flows
+            .iter()
+            .map(|flow| flow.id.as_str())
+            .collect();
         for job in &self.jobs {
             let task = &job.workload;
             let input = &job.input_artifact;
@@ -171,7 +180,7 @@ impl BatchExperiment {
             for prefix in ["__c1", "__c1_input"] {
                 for suffix in ["full", "tail"] {
                     let id = format!("{prefix}:{}:{suffix}", task.id);
-                    if self.network.flows.iter().any(|f| f.id == id) {
+                    if background_flow_ids.contains(id.as_str()) {
                         return Err("batch flow ID collides with existing traffic".into());
                     }
                 }
@@ -460,6 +469,71 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicting input artifact identity"));
         }
+    }
+
+    #[test]
+    fn generated_flow_ids_cannot_shadow_background_packet_traffic() {
+        let mut experiment = fixture();
+        let original = experiment.network.flows[0].clone();
+        // Both generated output and remote-input namespaces must be reserved.
+        for id in ["__c1:a:full", "__c1_input:a:tail"] {
+            let mut conflicting = experiment.clone();
+            let mut background = original.clone();
+            background.id = id.into();
+            conflicting.network.flows.push(background);
+            assert!(conflicting
+                .validate()
+                .unwrap_err()
+                .contains("batch flow ID collides with existing traffic"));
+        }
+        // An unrelated background flow remains legal and must still be
+        // accounted by the authoritative packet runtime.
+        experiment.network.flows.push(original);
+        // Scenario validation owns duplicate background IDs.
+        assert!(experiment.validate().is_err());
+    }
+
+    // Explicitly opt-in: wall-clock microbenchmark, not a simulated-time metric.
+    // Compare the former linear scan against the indexed lookup using identical
+    // synthetic background IDs and generated C1 IDs on the same runner.
+    #[test]
+    #[ignore = "run explicitly on a GitHub-hosted runner for performance evidence"]
+    fn benchmark_generated_flow_id_validation() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        let background: Vec<String> = (0..10_000).map(|i| format!("background:{i}")).collect();
+        let generated: Vec<String> = (0..1_000)
+            .flat_map(|i| {
+                ["__c1", "__c1_input"].into_iter().flat_map(move |prefix| {
+                    ["full", "tail"]
+                        .into_iter()
+                        .map(move |suffix| format!("{prefix}:{i}:{suffix}"))
+                })
+            })
+            .collect();
+        let index: BTreeSet<&str> = background.iter().map(String::as_str).collect();
+        let mut timings = Vec::new();
+        for _ in 0..5 {
+            let start = Instant::now();
+            let old: usize = generated
+                .iter()
+                .filter(|id| background.iter().any(|flow| flow == *id))
+                .count();
+            let linear_ns = start.elapsed().as_nanos();
+            let start = Instant::now();
+            let new: usize = generated
+                .iter()
+                .filter(|id| index.contains(id.as_str()))
+                .count();
+            let indexed_ns = start.elapsed().as_nanos();
+            assert_eq!(black_box(old), black_box(new));
+            timings.push((linear_ns, indexed_ns));
+        }
+        println!(
+            "C1 validation wall-clock ns, 10000 background flows, 1000 jobs, 5 samples: {:?}",
+            timings
+        );
     }
 
     #[test]
