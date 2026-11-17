@@ -4840,10 +4840,10 @@ mod tests {
     #[test]
     fn shared_beam_does_not_grant_transmissions_starting_after_horizon() {
         let mut scenario = two_terminal_beam();
-        // Two 10-ms packet grants fit one 20-ms frame, but only the
-        // first transmission starts before the 5-ms simulation horizon.
+        // Two 10-ms packet grants fit each 20-ms frame. A 25-ms
+        // horizon admits starts at 0, 10, and 20 ms, but not 30 ms.
         scenario.access_beams[0].frame_duration_ns = 20_000_000;
-        scenario.duration_ns = 5_000_000;
+        scenario.duration_ns = 25_000_000;
         let report = run(&scenario).unwrap();
         assert_eq!(report.injected, report.delivered + report.dropped);
         assert!(report.dropped > 0);
