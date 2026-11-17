@@ -502,9 +502,7 @@ mod tests {
         use std::hint::black_box;
         use std::time::Instant;
 
-        let background: Vec<String> = (0..10_000)
-            .map(|i| format!("background:{i}"))
-            .collect();
+        let background: Vec<String> = (0..10_000).map(|i| format!("background:{i}")).collect();
         let generated: Vec<String> = (0..1_000)
             .flat_map(|i| {
                 ["__c1", "__c1_input"].into_iter().flat_map(move |prefix| {
