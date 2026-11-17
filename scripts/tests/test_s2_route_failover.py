@@ -179,7 +179,7 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(first["assessment"], "sampled_unanswered_then_replied")
         self.assertEqual(first["observed_unanswered_at_probe_interval"], 2)
         self.assertEqual(first["first_reply_after_apply_elapsed_wall_ns"], 450_000_000)
-        self.assertEqual(first["sampled_reply_gap_bracketing_loss_wall_ns"], 600_000_000)
+        self.assertIsNone(first["sampled_reply_gap_bracketing_loss_wall_ns"])
         self.assertEqual(first["next_fault_start_wall_utc_ns"], 1_001_100_000_000)
         self.assertEqual(second["assessment"],
                          "sampled_unanswered_without_recovery_in_window")
