@@ -4837,7 +4837,6 @@ mod tests {
         scenario
     }
 
-
     #[test]
     fn shared_beam_does_not_grant_transmissions_starting_after_horizon() {
         let mut scenario = two_terminal_beam();
