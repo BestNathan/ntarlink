@@ -114,9 +114,9 @@ class S2RouteTests(unittest.TestCase):
         # Sequence 3 replies before a delayed sequence 1. Sequence 2 never
         # replies, but sequence ordering cannot measure a wall-clock gap.
         output = (
-            "[1000.300000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\\n"
-            "[1000.400000] 64 bytes from host: icmp_seq=1 ttl=64 time=400 ms\\n"
-            "[1000.500000] no answer yet for icmp_seq=2\\n"
+            "[1000.300000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+            "[1000.400000] 64 bytes from host: icmp_seq=1 ttl=64 time=400 ms\n"
+            "[1000.500000] no answer yet for icmp_seq=2\n"
         )
         ping = parse_continuous_ping(output)
         self.assertEqual(ping["received_reply_count"], 2)
