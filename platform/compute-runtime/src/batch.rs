@@ -493,6 +493,51 @@ mod tests {
         assert!(experiment.validate().is_err());
     }
 
+    // Explicitly opt-in: wall-clock microbenchmark, not a simulated-time metric.
+    // Compare the former linear scan against the indexed lookup using identical
+    // synthetic background IDs and generated C1 IDs on the same runner.
+    #[test]
+    #[ignore = "run explicitly on a GitHub-hosted runner for performance evidence"]
+    fn benchmark_generated_flow_id_validation() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        let background: Vec<String> = (0..10_000)
+            .map(|i| format!("background:{i}"))
+            .collect();
+        let generated: Vec<String> = (0..1_000)
+            .flat_map(|i| {
+                ["__c1", "__c1_input"].into_iter().flat_map(move |prefix| {
+                    ["full", "tail"]
+                        .into_iter()
+                        .map(move |suffix| format!("{prefix}:{i}:{suffix}"))
+                })
+            })
+            .collect();
+        let index: BTreeSet<&str> = background.iter().map(String::as_str).collect();
+        let mut timings = Vec::new();
+        for _ in 0..5 {
+            let start = Instant::now();
+            let old: usize = generated
+                .iter()
+                .filter(|id| background.iter().any(|flow| flow == *id))
+                .count();
+            let linear_ns = start.elapsed().as_nanos();
+            let start = Instant::now();
+            let new: usize = generated
+                .iter()
+                .filter(|id| index.contains(id.as_str()))
+                .count();
+            let indexed_ns = start.elapsed().as_nanos();
+            assert_eq!(black_box(old), black_box(new));
+            timings.push((linear_ns, indexed_ns));
+        }
+        println!(
+            "C1 validation wall-clock ns, 10000 background flows, 1000 jobs, 5 samples: {:?}",
+            timings
+        );
+    }
+
     #[test]
     fn competing_satellites_share_real_packet_queues_and_exact_bytes() {
         let report = run_batch(&fixture()).unwrap();
