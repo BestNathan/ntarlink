@@ -135,8 +135,12 @@ impl BatchExperiment {
         // Generated C1 flows share the packet runtime's ID namespace with
         // scenario traffic. Index once instead of scanning every background
         // flow for each job (up to 10,000 jobs and four generated IDs each).
-        let background_flow_ids: BTreeSet<&str> =
-            self.network.flows.iter().map(|flow| flow.id.as_str()).collect();
+        let background_flow_ids: BTreeSet<&str> = self
+            .network
+            .flows
+            .iter()
+            .map(|flow| flow.id.as_str())
+            .collect();
         for job in &self.jobs {
             let task = &job.workload;
             let input = &job.input_artifact;
