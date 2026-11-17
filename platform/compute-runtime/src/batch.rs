@@ -132,6 +132,11 @@ impl BatchExperiment {
             .iter()
             .map(|f| u128::from(f.packet_count))
             .sum();
+        // Generated C1 flows share the packet runtime's ID namespace with
+        // scenario traffic. Index once instead of scanning every background
+        // flow for each job (up to 10,000 jobs and four generated IDs each).
+        let background_flow_ids: BTreeSet<&str> =
+            self.network.flows.iter().map(|flow| flow.id.as_str()).collect();
         for job in &self.jobs {
             let task = &job.workload;
             let input = &job.input_artifact;
@@ -171,7 +176,7 @@ impl BatchExperiment {
             for prefix in ["__c1", "__c1_input"] {
                 for suffix in ["full", "tail"] {
                     let id = format!("{prefix}:{}:{suffix}", task.id);
-                    if self.network.flows.iter().any(|f| f.id == id) {
+                    if background_flow_ids.contains(id.as_str()) {
                         return Err("batch flow ID collides with existing traffic".into());
                     }
                 }
@@ -460,6 +465,28 @@ mod tests {
                 .unwrap_err()
                 .contains("conflicting input artifact identity"));
         }
+    }
+
+    #[test]
+    fn generated_flow_ids_cannot_shadow_background_packet_traffic() {
+        let mut experiment = fixture();
+        let original = experiment.network.flows[0].clone();
+        // Both generated output and remote-input namespaces must be reserved.
+        for id in ["__c1:a:full", "__c1_input:a:tail"] {
+            let mut conflicting = experiment.clone();
+            let mut background = original.clone();
+            background.id = id.into();
+            conflicting.network.flows.push(background);
+            assert!(conflicting
+                .validate()
+                .unwrap_err()
+                .contains("batch flow ID collides with existing traffic"));
+        }
+        // An unrelated background flow remains legal and must still be
+        // accounted by the authoritative packet runtime.
+        experiment.network.flows.push(original);
+        // Scenario validation owns duplicate background IDs.
+        assert!(experiment.validate().is_err());
     }
 
     #[test]
