@@ -239,9 +239,9 @@ class S2RouteTests(unittest.TestCase):
 
     def test_loss_bracket_does_not_cross_previous_fault_window(self):
         output = (
-            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\\n"
-            "[1001.200000] no answer yet for icmp_seq=2\\n"
-            "[1001.400000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\\n"
+            "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
+            "[1001.200000] no answer yet for icmp_seq=2\n"
+            "[1001.400000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
         )
         events = [
             {
