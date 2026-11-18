@@ -414,6 +414,42 @@ class S2RouteTests(unittest.TestCase):
                 worker.program_routes()
             run.assert_not_called()
 
+    def test_failed_route_delete_compensates_and_allows_retry(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        with patch.object(worker, "run") as run:
+            worker.program_routes()
+            original = list(worker.active_path)
+            worker.disabled.add("isl-a-b")
+            commands = []
+            failed = False
+
+            def apply(command):
+                nonlocal failed
+                commands.append(command)
+                if command[4] == "del" and not failed:
+                    failed = True
+                    raise RuntimeError("injected route delete failure")
+
+            run.side_effect = apply
+            with self.assertRaisesRegex(RuntimeError, "injected route delete failure"):
+                worker.program_routes()
+            self.assertEqual(worker.active_path, original)
+            first_delete = next(
+                i for i, command in enumerate(commands) if command[4] == "del"
+            )
+            self.assertTrue(any(c[4] == "replace" for c in commands[:first_delete]))
+            # All replacements before the failed delete must be compensated.
+            self.assertGreater(len(commands), first_delete + 1)
+            self.assertTrue(all(
+                command[4] in ("replace", "del")
+                for command in commands[first_delete + 1:]
+            ))
+            run.side_effect = None
+            result = worker.program_routes()
+            self.assertTrue(result["routes_changed"])
+            self.assertNotEqual(worker.active_path, original)
+
     def test_route_loss_removes_previous_forwarding_without_fake_path(self):
         plan = self.plan()
         worker = LinuxRouteGraph(plan)
