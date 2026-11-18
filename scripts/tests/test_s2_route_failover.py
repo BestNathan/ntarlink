@@ -420,35 +420,31 @@ class S2RouteTests(unittest.TestCase):
         with patch.object(worker, "run") as run:
             worker.program_routes()
             original = list(worker.active_path)
-            worker.disabled.add("isl-a-b")
+            # Break the source attachment so there is no replacement path.
+            # This forces removal of multiple previously installed /32 routes.
+            worker.disabled.add("user-ue-a")
             commands = []
-            failed = False
+            deletes = 0
 
             def apply(command):
-                nonlocal failed
+                nonlocal deletes
                 commands.append(command)
-                if command[4] == "del" and not failed:
-                    failed = True
-                    raise RuntimeError("injected route delete failure")
+                if command[4] == "del":
+                    deletes += 1
+                    if deletes == 2:
+                        raise RuntimeError("injected route delete failure")
 
             run.side_effect = apply
             with self.assertRaisesRegex(RuntimeError, "injected route delete failure"):
                 worker.program_routes()
             self.assertEqual(worker.active_path, original)
-            first_delete = next(
-                i for i, command in enumerate(commands) if command[4] == "del"
-            )
-            self.assertTrue(any(c[4] == "replace" for c in commands[:first_delete]))
-            # All replacements before the failed delete must be compensated.
-            self.assertGreater(len(commands), first_delete + 1)
-            self.assertTrue(all(
-                command[4] in ("replace", "del")
-                for command in commands[first_delete + 1:]
-            ))
+            self.assertEqual([c[4] for c in commands], ["del", "del", "replace"])
+            self.assertEqual(commands[2][5], commands[0][5])
             run.side_effect = None
             result = worker.program_routes()
             self.assertTrue(result["routes_changed"])
-            self.assertNotEqual(worker.active_path, original)
+            self.assertFalse(result["route_available"])
+            self.assertEqual(worker.active_path, [])
 
     def test_route_loss_removes_previous_forwarding_without_fake_path(self):
         plan = self.plan()
