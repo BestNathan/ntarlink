@@ -6,7 +6,7 @@ use crate::batch::BatchExperiment;
 use ntarlink_contracts::{Flow, Scenario};
 use ntarlink_packet_runtime::{PacketStatus, PacketTrace, SimulationReport};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct InputReceipt {
@@ -75,10 +75,14 @@ pub(crate) fn observe_input(
             .entry(task_id.clone())
             .or_insert_with(InputReceipt::default);
     }
+    let mut seen_packet_ids = BTreeSet::new();
     for packet in &network.packets {
         let Some((task_id, bytes)) = flows.get(&packet.flow_id) else {
             continue;
         };
+        if !seen_packet_ids.insert(packet.packet_id.as_str()) {
+            return Err("duplicate input packet identity in L1 trace".into());
+        }
         let receipt = receipts.get_mut(task_id).ok_or("input receipt missing")?;
         receipt.injected_packets += 1;
         match packet.status {
@@ -101,7 +105,12 @@ pub(crate) fn observe_input(
         let Some(receipt) = receipts.get_mut(&job.workload.id) else {
             continue;
         };
-        if receipt.delivered_bytes + receipt.dropped_bytes != job.input_artifact.size_bytes
+        let expected_packets = job
+            .input_artifact
+            .size_bytes
+            .div_ceil(experiment.packet_payload_bytes);
+        if receipt.injected_packets as u64 != expected_packets
+            || receipt.delivered_bytes + receipt.dropped_bytes != job.input_artifact.size_bytes
             || receipt.injected_packets != receipt.delivered_packets + receipt.dropped_packets
         {
             return Err("input artifact packet accounting mismatch".into());
@@ -160,6 +169,41 @@ pub(crate) fn assert_replayed_input(
 mod tests {
     use super::*;
     use ntarlink_packet_runtime::run;
+
+    #[test]
+    fn input_receipt_rejects_missing_or_duplicated_packet_evidence() {
+        let mut experiment =
+            BatchExperiment::from_json(include_str!("../../../scenarios/c1-shared-network.json"))
+                .unwrap();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        let mut network = experiment.network.clone();
+        let flows = append_input_flows(&experiment, &mut network).unwrap();
+        let baseline = run(&network).unwrap();
+        observe_input(&experiment, &baseline, &flows).unwrap();
+
+        let mut missing = run(&network).unwrap();
+        let index = missing
+            .packets
+            .iter()
+            .position(|packet| flows.contains_key(&packet.flow_id))
+            .unwrap();
+        missing.packets.remove(index);
+        assert!(observe_input(&experiment, &missing, &flows)
+            .unwrap_err()
+            .contains("input artifact packet accounting mismatch"));
+
+        let mut duplicate = run(&network).unwrap();
+        let packet = duplicate
+            .packets
+            .iter()
+            .find(|packet| flows.contains_key(&packet.flow_id))
+            .unwrap()
+            .clone();
+        duplicate.packets.push(packet);
+        assert!(observe_input(&experiment, &duplicate, &flows)
+            .unwrap_err()
+            .contains("duplicate input packet identity"));
+    }
 
     #[test]
     fn replay_divergence_reports_first_packet_without_accepting_speculative_input() {
