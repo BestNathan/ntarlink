@@ -291,14 +291,44 @@ class LinuxRouteGraph(LinuxPath):
     def fault_and_reconfigure(self, event: dict) -> dict:
         link = next(edge for edge in self.plan["links"] if edge["id"] == event["link_id"])
         action = event["action"]
-        for ns, iface in ((link["left_ns"], link["left_if"]), (link["right_ns"], link["right_if"])):
-            self.run(["ip", "-n", ns, "link", "set", iface, action])
-        if action == "down":
-            self.disabled.add(link["id"])
-        else:
-            self.disabled.discard(link["id"])
-        before = time.monotonic_ns()
-        route = self.program_routes()
+        # A fault transition spans both veth endpoints and the controller's
+        # route state. Do not publish the new disabled set if any host command
+        # fails; restore successfully changed interfaces in reverse order.
+        # Failed compensation leaves the worker unsafe for further updates.
+        if getattr(self, "_routes_inconsistent", False):
+            raise RuntimeError("S2 route state uncertain after failed rollback")
+        previous_down = link["id"] in self.disabled
+        previous_action = "down" if previous_down else "up"
+        changed = []
+        try:
+            for ns, iface in ((link["left_ns"], link["left_if"]),
+                              (link["right_ns"], link["right_if"])):
+                self.run(["ip", "-n", ns, "link", "set", iface, action])
+                changed.append((ns, iface))
+            if action == "down":
+                self.disabled.add(link["id"])
+            else:
+                self.disabled.discard(link["id"])
+            before = time.monotonic_ns()
+            route = self.program_routes()
+        except Exception as error:
+            if previous_down:
+                self.disabled.add(link["id"])
+            else:
+                self.disabled.discard(link["id"])
+            rollback_errors = []
+            for ns, iface in reversed(changed):
+                try:
+                    self.run(["ip", "-n", ns, "link", "set", iface, previous_action])
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                self._routes_inconsistent = True
+                raise RuntimeError(
+                    "S2 link/route transition failed and rollback was incomplete; "
+                    "kernel state requires teardown"
+                ) from error
+            raise
         route["controller_apply_elapsed_ns"] = time.monotonic_ns() - before
         return route
 
