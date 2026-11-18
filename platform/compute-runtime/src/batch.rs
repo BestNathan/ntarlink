@@ -545,7 +545,10 @@ mod tests {
         // Three output packets begin at completion, +1 ns and +2 ns.
         // The final start is valid strictly before the exclusive deadline.
         let completed_at = 20_000_000;
-        let packet_count = job.workload.output_size_bytes.div_ceil(experiment.packet_payload_bytes);
+        let packet_count = job
+            .workload
+            .output_size_bytes
+            .div_ceil(experiment.packet_payload_bytes);
         assert_eq!(packet_count, 3);
         job.workload.deadline_ns = completed_at + packet_count;
         let accepted = run_batch(&experiment).unwrap();
