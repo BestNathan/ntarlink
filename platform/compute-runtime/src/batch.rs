@@ -246,7 +246,7 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             // spaced one nanosecond apart require N - 1 additional instants.
             // The workload deadline is exclusive for packet injection: the last
             // packet must start strictly before it, not at the deadline.
-            workload.deadline_ns = injection_horizon.saturating_sub(packets);
+            workload.deadline_ns = injection_horizon.saturating_sub(packets.saturating_sub(1));
             Candidate {
                 node_id: job.node_id.clone(),
                 workload,
@@ -534,6 +534,31 @@ mod tests {
             "C1 validation wall-clock ns, 10000 background flows, 1000 jobs, 5 samples: {:?}",
             timings
         );
+    }
+
+    #[test]
+    fn output_injection_accepts_last_instant_before_exclusive_deadline() {
+        let mut experiment = fixture();
+        experiment.jobs.truncate(1);
+        let job = &mut experiment.jobs[0];
+        // The modeled 20 ms CPU execution completes at 20_000_000 ns.
+        // Three output packets begin at completion, +1 ns and +2 ns.
+        // The final start is valid strictly before the exclusive deadline.
+        let completed_at = 20_000_000;
+        let packet_count = job.workload.output_size_bytes.div_ceil(experiment.packet_payload_bytes);
+        assert_eq!(packet_count, 3);
+        job.workload.deadline_ns = completed_at + packet_count;
+        let accepted = run_batch(&experiment).unwrap();
+        assert!(accepted.tasks[0].reservation.is_some());
+        assert_eq!(accepted.tasks[0].injected_packets, packet_count as usize);
+        assert_eq!(accepted.tasks[0].compute_completed_ns, Some(completed_at));
+        // Actual arrival may miss this tight deadline; that is L1's decision.
+        assert_eq!(accepted.tasks[0].status, BatchStatus::DeadlineMissed);
+
+        experiment.jobs[0].workload.deadline_ns -= 1;
+        let rejected = run_batch(&experiment).unwrap();
+        assert!(rejected.tasks[0].reservation.is_none());
+        assert_eq!(rejected.tasks[0].injected_packets, 0);
     }
 
     #[test]
