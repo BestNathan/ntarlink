@@ -359,6 +359,93 @@ class S2RouteTests(unittest.TestCase):
             worker.program_routes()
             run.assert_not_called()
 
+    def test_failed_route_replace_compensates_and_preserves_controller_path(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        worker.program_routes = worker.program_routes
+        with patch.object(worker, "run") as run:
+            worker.program_routes()
+            original = list(worker.active_path)
+            worker.disabled.add("isl-a-b")
+            calls = []
+            failed = False
+
+            def apply(command):
+                nonlocal failed
+                calls.append(command)
+                if command[4] == "replace" and not failed and sum(
+                    c[4] == "replace" for c in calls
+                ) == 2:
+                    failed = True
+                    raise RuntimeError("injected route failure")
+
+            run.side_effect = apply
+            with self.assertRaisesRegex(RuntimeError, "injected route failure"):
+                worker.program_routes()
+            self.assertEqual(worker.active_path, original)
+            # The first successful replacement must be undone before retry.
+            self.assertGreaterEqual(len(calls), 3)
+            self.assertIn(calls[-1][4], ("del", "replace"))
+            self.assertEqual(calls[-1][5], calls[0][5])
+            run.side_effect = None
+            recovered = worker.program_routes()
+            self.assertTrue(recovered["routes_changed"])
+            self.assertNotEqual(worker.active_path, original)
+
+    def test_failed_route_rollback_blocks_further_mutations(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        with patch.object(worker, "run") as run:
+            worker.program_routes()
+            worker.disabled.add("isl-a-b")
+            count = 0
+
+            def fail(command):
+                nonlocal count
+                count += 1
+                if count >= 2:
+                    raise RuntimeError("injected kernel failure")
+
+            run.side_effect = fail
+            with self.assertRaisesRegex(RuntimeError, "rollback was incomplete"):
+                worker.program_routes()
+            run.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "route state uncertain"):
+                worker.program_routes()
+            run.assert_not_called()
+
+    def test_failed_route_delete_compensates_and_allows_retry(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        with patch.object(worker, "run") as run:
+            worker.program_routes()
+            original = list(worker.active_path)
+            # Break the source attachment so there is no replacement path.
+            # This forces removal of multiple previously installed /32 routes.
+            worker.disabled.add("user-ue-a")
+            commands = []
+            deletes = 0
+
+            def apply(command):
+                nonlocal deletes
+                commands.append(command)
+                if command[4] == "del":
+                    deletes += 1
+                    if deletes == 2:
+                        raise RuntimeError("injected route delete failure")
+
+            run.side_effect = apply
+            with self.assertRaisesRegex(RuntimeError, "injected route delete failure"):
+                worker.program_routes()
+            self.assertEqual(worker.active_path, original)
+            self.assertEqual([c[4] for c in commands], ["del", "del", "replace"])
+            self.assertEqual(commands[2][5], commands[0][5])
+            run.side_effect = None
+            result = worker.program_routes()
+            self.assertTrue(result["routes_changed"])
+            self.assertFalse(result["route_available"])
+            self.assertEqual(worker.active_path, [])
+
     def test_route_loss_removes_previous_forwarding_without_fake_path(self):
         plan = self.plan()
         worker = LinuxRouteGraph(plan)
