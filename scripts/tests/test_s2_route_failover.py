@@ -385,7 +385,8 @@ class S2RouteTests(unittest.TestCase):
             self.assertEqual(worker.active_path, original)
             # The first successful replacement must be undone before retry.
             self.assertGreaterEqual(len(calls), 3)
-            self.assertEqual(calls[-1][4], "del")
+            self.assertIn(calls[-1][4], ("del", "replace"))
+            self.assertEqual(calls[-1][5], calls[0][5])
             run.side_effect = None
             recovered = worker.program_routes()
             self.assertTrue(recovered["routes_changed"])
