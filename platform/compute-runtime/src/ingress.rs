@@ -75,6 +75,28 @@ pub(crate) fn observe_input(
             .entry(task_id.clone())
             .or_insert_with(InputReceipt::default);
     }
+    // Exact generated ordinals and injection times are required: aggregate
+    // byte conservation alone cannot detect a substituted packet identity.
+    let mut expected_injections = BTreeMap::new();
+    for job in &experiment.jobs {
+        let full = job.input_artifact.size_bytes / experiment.packet_payload_bytes;
+        let tail = job.input_artifact.size_bytes % experiment.packet_payload_bytes;
+        for (suffix, count, start) in [
+            ("full", full, job.workload.release_ns),
+            ("tail", u64::from(tail > 0), job.workload.release_ns + full),
+        ] {
+            let flow_id = format!("__c1_input:{}:{suffix}", job.workload.id);
+            if !flows.contains_key(&flow_id) {
+                continue;
+            }
+            for ordinal in 0..count {
+                expected_injections.insert(
+                    format!("{flow_id}:{ordinal}"),
+                    start + if count > 1 { ordinal } else { 0 },
+                );
+            }
+        }
+    }
     let mut seen_packet_ids = BTreeSet::new();
     for packet in &network.packets {
         let Some((task_id, bytes)) = flows.get(&packet.flow_id) else {
@@ -82,6 +104,12 @@ pub(crate) fn observe_input(
         };
         if !seen_packet_ids.insert(packet.packet_id.as_str()) {
             return Err("duplicate input packet identity in L1 trace".into());
+        }
+        let Some(&injected_at) = expected_injections.get(&packet.packet_id) else {
+            return Err("unexpected input packet ordinal in L1 trace".into());
+        };
+        if packet.injected_ns != injected_at {
+            return Err("input packet injection timestamp mismatch".into());
         }
         let receipt = receipts.get_mut(task_id).ok_or("input receipt missing")?;
         receipt.injected_packets += 1;
@@ -100,6 +128,9 @@ pub(crate) fn observe_input(
             }
             PacketStatus::InFlight => return Err("unaccounted input artifact packet".into()),
         }
+    }
+    if seen_packet_ids.len() != expected_injections.len() {
+        return Err("input artifact packet accounting mismatch".into());
     }
     for job in &experiment.jobs {
         let Some(receipt) = receipts.get_mut(&job.workload.id) else {
@@ -203,6 +234,40 @@ mod tests {
         assert!(observe_input(&experiment, &duplicate, &flows)
             .unwrap_err()
             .contains("duplicate input packet identity"));
+    }
+
+    #[test]
+    fn input_receipt_rejects_substituted_ordinals_and_injection_times() {
+        let mut experiment =
+            BatchExperiment::from_json(include_str!("../../../scenarios/c1-shared-network.json"))
+                .unwrap();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        let mut network = experiment.network.clone();
+        let flows = append_input_flows(&experiment, &mut network).unwrap();
+        let baseline = run(&network).unwrap();
+        observe_input(&experiment, &baseline, &flows).unwrap();
+
+        let mut substituted = baseline.clone();
+        let packet = substituted
+            .packets
+            .iter_mut()
+            .find(|packet| flows.contains_key(&packet.flow_id))
+            .unwrap();
+        packet.packet_id.push_str("-substituted");
+        assert!(observe_input(&experiment, &substituted, &flows)
+            .unwrap_err()
+            .contains("unexpected input packet ordinal"));
+
+        let mut delayed = baseline;
+        let packet = delayed
+            .packets
+            .iter_mut()
+            .find(|packet| flows.contains_key(&packet.flow_id))
+            .unwrap();
+        packet.injected_ns += 1;
+        assert!(observe_input(&experiment, &delayed, &flows)
+            .unwrap_err()
+            .contains("input packet injection timestamp mismatch"));
     }
 
     #[test]
