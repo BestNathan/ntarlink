@@ -242,11 +242,10 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             // Every output packet must be injected before both the run
             // horizon and the task deadline; actual delivery remains L1-owned.
             let injection_horizon = workload.deadline_ns.min(experiment.network.duration_ns);
-            // A packet emitted at completion occupies its start timestamp; N packets
-            // spaced one nanosecond apart require N - 1 additional instants.
-            // The workload deadline is exclusive for packet injection: the last
-            // packet must start strictly before it, not at the deadline.
-            workload.deadline_ns = injection_horizon.saturating_sub(packets.saturating_sub(1));
+            // Planning allows completion at its deadline (inclusive). With N
+            // packets starting at completion, the final injection is N - 1 ns
+            // later; strict exclusion requires completion <= horizon - N.
+            workload.deadline_ns = injection_horizon.saturating_sub(packets);
             Candidate {
                 node_id: job.node_id.clone(),
                 workload,
