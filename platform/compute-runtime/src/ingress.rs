@@ -105,7 +105,10 @@ pub(crate) fn observe_input(
         let Some(receipt) = receipts.get_mut(&job.workload.id) else {
             continue;
         };
-        let expected_packets = job.input_artifact.size_bytes.div_ceil(experiment.packet_payload_bytes);
+        let expected_packets = job
+            .input_artifact
+            .size_bytes
+            .div_ceil(experiment.packet_payload_bytes);
         if receipt.injected_packets as u64 != expected_packets
             || receipt.delivered_bytes + receipt.dropped_bytes != job.input_artifact.size_bytes
             || receipt.injected_packets != receipt.delivered_packets + receipt.dropped_packets
