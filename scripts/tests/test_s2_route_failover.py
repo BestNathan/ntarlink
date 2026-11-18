@@ -446,6 +446,86 @@ class S2RouteTests(unittest.TestCase):
             self.assertFalse(result["route_available"])
             self.assertEqual(worker.active_path, [])
 
+    def test_fault_route_failure_restores_both_link_ends_and_controller_state(self):
+        plan = self.plan()
+        worker = LinuxRouteGraph(plan)
+        event = {"link_id": "isl-a-b", "action": "down"}
+        with patch.object(worker, "run") as run:
+            worker.program_routes()
+            original = list(worker.active_path)
+            commands = []
+            failed = False
+
+            def inject(command):
+                nonlocal failed
+                commands.append(command)
+                if command[3] == "route" and not failed:
+                    failed = True
+                    raise RuntimeError("route apply failed")
+
+            run.side_effect = inject
+            with self.assertRaisesRegex(RuntimeError, "route apply failed"):
+                worker.fault_and_reconfigure(event)
+            self.assertEqual(worker.active_path, original)
+            self.assertNotIn(event["link_id"], worker.disabled)
+            link_commands = [cmd for cmd in commands if cmd[3] == "link"]
+            self.assertEqual([cmd[-1] for cmd in link_commands],
+                             ["down", "down", "up", "up"])
+            self.assertEqual(
+                [(cmd[2], cmd[5]) for cmd in link_commands[2:]],
+                list(reversed([(cmd[2], cmd[5]) for cmd in link_commands[:2]]))
+            )
+            run.side_effect = None
+            result = worker.fault_and_reconfigure(event)
+            self.assertTrue(result["routes_changed"])
+            self.assertIn(event["link_id"], worker.disabled)
+
+    def test_second_link_endpoint_failure_compensates_first(self):
+        worker = LinuxRouteGraph(self.plan())
+        calls = []
+        failed = False
+
+        def inject(command):
+            nonlocal failed
+            calls.append(command)
+            if command[3] == "link" and command[-1] == "down" and not failed:
+                if sum(c[3] == "link" and c[-1] == "down" for c in calls) == 2:
+                    failed = True
+                    raise RuntimeError("second endpoint failed")
+
+        with patch.object(worker, "run", side_effect=inject):
+            with self.assertRaisesRegex(RuntimeError, "second endpoint failed"):
+                worker.fault_and_reconfigure(
+                    {"link_id": "isl-a-b", "action": "down"})
+        self.assertEqual([c[-1] for c in calls], ["down", "down", "up"])
+        self.assertEqual(calls[0][2:6], calls[-1][2:6])
+        self.assertEqual(worker.disabled, set())
+        self.assertEqual(worker.active_path, [])
+
+    def test_failed_link_compensation_blocks_future_faults(self):
+        worker = LinuxRouteGraph(self.plan())
+        calls = []
+
+        def inject(command):
+            calls.append(command)
+            if command[3] == "link" and (
+                command[-1] == "up" or
+                sum(c[3] == "link" and c[-1] == "down" for c in calls) == 2
+            ):
+                raise RuntimeError("kernel link error")
+
+        with patch.object(worker, "run", side_effect=inject):
+            with self.assertRaisesRegex(RuntimeError, "rollback was incomplete"):
+                worker.fault_and_reconfigure(
+                    {"link_id": "isl-a-b", "action": "down"})
+        self.assertTrue(worker._routes_inconsistent)
+        self.assertEqual(worker.disabled, set())
+        with patch.object(worker, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "state uncertain"):
+                worker.fault_and_reconfigure(
+                    {"link_id": "isl-a-b", "action": "down"})
+            run.assert_not_called()
+
     def test_route_loss_removes_previous_forwarding_without_fake_path(self):
         plan = self.plan()
         worker = LinuxRouteGraph(plan)
