@@ -241,12 +241,49 @@ class LinuxRouteGraph(LinuxPath):
 
         previous = routes(self.active_path)
         desired = routes(selected)
-        for (ns, destination), (gateway, interface) in sorted(desired.items()):
-            if previous.get((ns, destination)) != (gateway, interface):
+        # A failed command must not leave the controller claiming the old
+        # path while the kernel holds a partially installed new path.
+        # Compensate successful mutations in reverse order. If compensation
+        # itself fails, fail closed rather than issuing further route updates
+        # against an unknown kernel state.
+        if getattr(self, "_routes_inconsistent", False):
+            raise RuntimeError("S2 route state uncertain after failed rollback")
+        applied = []
+        def restore(key, old):
+            ns, destination = key
+            if old is None:
+                self.run(["ip", "-n", ns, "route", "del", destination + "/32"])
+            else:
+                gateway, interface = old
                 self.run(["ip", "-n", ns, "route", "replace",
                           destination + "/32", "via", gateway, "dev", interface])
-        for ns, destination in sorted(previous.keys() - desired.keys()):
-            self.run(["ip", "-n", ns, "route", "del", destination + "/32"])
+
+        try:
+            for key, value in sorted(desired.items()):
+                if previous.get(key) != value:
+                    ns, destination = key
+                    gateway, interface = value
+                    self.run(["ip", "-n", ns, "route", "replace",
+                              destination + "/32", "via", gateway, "dev", interface])
+                    applied.append((key, previous.get(key)))
+            for key in sorted(previous.keys() - desired.keys()):
+                ns, destination = key
+                self.run(["ip", "-n", ns, "route", "del", destination + "/32"])
+                applied.append((key, previous[key]))
+        except Exception as error:
+            rollback_errors = []
+            for key, old in reversed(applied):
+                try:
+                    restore(key, old)
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                self._routes_inconsistent = True
+                raise RuntimeError(
+                    "S2 route update failed and rollback was incomplete; "
+                    "kernel routes require teardown"
+                ) from error
+            raise
         self.active_path = selected
         return {"selected_path": selected, "route_available": bool(path),
                 "routes_changed": True}
