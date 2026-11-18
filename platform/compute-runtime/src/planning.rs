@@ -39,9 +39,31 @@ pub fn plan_shared(
 /// Missing observations preserve the original release-time-only planning API.
 pub fn plan_shared_with_arrivals(
     nodes: &[ComputeNode],
+    candidates: Vec<Candidate>,
+    input_arrivals_ns: &BTreeMap<String, u64>,
+    horizon_ns: u64,
+) -> Result<Vec<PlannedWorkload>, String> {
+    plan_shared_internal(nodes, candidates, input_arrivals_ns, horizon_ns, false)
+}
+
+/// Conservatively retain modeled output storage until the simulation horizon.
+/// The final packet run remains authoritative for delivery; this planner never
+/// predicts an earlier release from a speculative route or packet receipt.
+pub fn plan_shared_with_output_staging(
+    nodes: &[ComputeNode],
+    candidates: Vec<Candidate>,
+    input_arrivals_ns: &BTreeMap<String, u64>,
+    horizon_ns: u64,
+) -> Result<Vec<PlannedWorkload>, String> {
+    plan_shared_internal(nodes, candidates, input_arrivals_ns, horizon_ns, true)
+}
+
+fn plan_shared_internal(
+    nodes: &[ComputeNode],
     mut candidates: Vec<Candidate>,
     input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
+    stage_output: bool,
 ) -> Result<Vec<PlannedWorkload>, String> {
     let mut capacities = BTreeMap::new();
     for node in nodes {
@@ -124,15 +146,49 @@ pub fn plan_shared_with_arrivals(
                 Ok(reservation) => {
                     if let Some(end) = start.checked_add(reservation.modeled_cpu_duration_ns) {
                         if end <= task.deadline_ns && end < horizon_ns {
-                            outcome.admission = ledger.admit(Request {
-                                task_id: task.id.clone(),
+                            let execution = Request {
+                                task_id: if stage_output {
+                                    format!("phase:{}:{}:execution", task.id.len(), task.id)
+                                } else {
+                                    task.id.clone()
+                                },
                                 node_id: node.id.clone(),
                                 start_ns: start,
                                 end_ns: end,
                                 memory_bytes: task.memory_bytes,
                                 storage_bytes: reservation.peak_storage_bytes,
                                 power_mw: task.power_demand_mw,
-                            });
+                            };
+                            outcome.admission = if stage_output {
+                                let output = Request {
+                                    task_id: format!("phase:{}:{}:output", task.id.len(), task.id),
+                                    node_id: node.id.clone(),
+                                    start_ns: end,
+                                    end_ns: horizon_ns,
+                                    memory_bytes: 0,
+                                    storage_bytes: task.output_size_bytes,
+                                    power_mw: 0,
+                                };
+                                let phases = ledger.admit_bundle(vec![execution, output]);
+                                let decision = if phases
+                                    .iter()
+                                    .all(|p| p.decision == Decision::Admitted)
+                                {
+                                    Decision::Admitted
+                                } else {
+                                    phases
+                                        .iter()
+                                        .find(|p| p.decision != Decision::RejectedBundle)
+                                        .map_or(Decision::RejectedCapacity, |p| p.decision.clone())
+                                };
+                                Admission {
+                                    task_id: task.id.clone(),
+                                    node_id: node.id.clone(),
+                                    decision,
+                                }
+                            } else {
+                                ledger.admit(execution)
+                            };
                             if outcome.admission.decision == Decision::Admitted {
                                 outcome.reservation = Some(reservation);
                                 outcome.end_ns = Some(end);
@@ -273,6 +329,62 @@ mod tests {
             serde_json::to_vec(&results).unwrap(),
             serde_json::to_vec(&reversed).unwrap()
         );
+    }
+
+    #[test]
+    fn output_staging_blocks_later_storage_even_after_cpu_finishes() {
+        let scenario = fixture();
+        let mut node = scenario.orbital_node.clone();
+        let mut first = scenario.workload.clone();
+        first.id = "first".into();
+        first.release_ns = 0;
+        let mut second = first.clone();
+        second.id = "second".into();
+        second.release_ns = 30_000_000;
+        node.storage_bytes = first
+            .output_size_bytes
+            .max(scenario.input_artifact.size_bytes + first.output_size_bytes);
+        let make = |workload| Candidate {
+            node_id: node.id.clone(),
+            workload,
+            input_bytes: scenario.input_artifact.size_bytes,
+        };
+        let results = plan_shared_with_output_staging(
+            std::slice::from_ref(&node),
+            vec![make(first), make(second)],
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(results[0].admission.decision, Decision::Admitted);
+        assert_eq!(results[1].admission.decision, Decision::RejectedCapacity);
+    }
+
+    #[test]
+    fn phase_ids_cannot_alias_other_workload_ids() {
+        let scenario = fixture();
+        let node = scenario.orbital_node.clone();
+        let make = |id: &str, release_ns: u64| {
+            let mut workload = scenario.workload.clone();
+            workload.id = id.into();
+            workload.release_ns = release_ns;
+            Candidate {
+                node_id: node.id.clone(),
+                workload,
+                input_bytes: scenario.input_artifact.size_bytes,
+            }
+        };
+        let results = plan_shared_with_output_staging(
+            std::slice::from_ref(&node),
+            vec![make("a:execution", 0), make("a", 30_000_000)],
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .all(|result| { result.admission.decision != Decision::RejectedDuplicateTask }));
     }
 
     #[test]

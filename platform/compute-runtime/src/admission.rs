@@ -31,6 +31,8 @@ pub enum Decision {
     RejectedUnknownNode,
     RejectedDuplicateTask,
     RejectedCapacity,
+    /// A different phase failed, so this phase was not committed.
+    RejectedBundle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -83,6 +85,81 @@ impl Ledger {
         }
     }
 
+    /// Atomically admit a set of resource phases. Each phase has its own
+    /// interval and resource profile; all phases are committed or none are.
+    /// Distinct phase identities keep existing cancellation semantics explicit.
+    /// This is a modeled resource transaction, not a packet delivery receipt.
+    pub fn admit_bundle(&mut self, mut phases: Vec<Request>) -> Vec<Admission> {
+        phases.sort_by(|a, b| {
+            (
+                &a.task_id,
+                &a.node_id,
+                a.start_ns,
+                a.end_ns,
+                a.memory_bytes,
+                a.storage_bytes,
+                a.power_mw,
+            )
+                .cmp(&(
+                    &b.task_id,
+                    &b.node_id,
+                    b.start_ns,
+                    b.end_ns,
+                    b.memory_bytes,
+                    b.storage_bytes,
+                    b.power_mw,
+                ))
+        });
+        let mut staged = Vec::with_capacity(phases.len());
+        let mut seen = BTreeSet::new();
+        for phase in &phases {
+            let decision = if phase.task_id.is_empty() || phase.start_ns >= phase.end_ns {
+                Decision::RejectedInvalidInterval
+            } else if !self.capacities.contains_key(&phase.node_id) {
+                Decision::RejectedUnknownNode
+            } else if !seen.insert(phase.task_id.clone())
+                || self.retired_tasks.contains(&phase.task_id)
+                || self.admitted.iter().any(|r| r.task_id == phase.task_id)
+            {
+                Decision::RejectedDuplicateTask
+            } else if self.fits(phase) {
+                self.admitted.push(phase.clone());
+                Decision::Admitted
+            } else {
+                Decision::RejectedCapacity
+            };
+            staged.push(Admission {
+                task_id: phase.task_id.clone(),
+                node_id: phase.node_id.clone(),
+                decision: decision.clone(),
+            });
+            if decision != Decision::Admitted {
+                // Roll back only this bundle, preserving all prior reservations.
+                for accepted in &staged {
+                    if accepted.decision == Decision::Admitted {
+                        self.admitted.retain(|r| r.task_id != accepted.task_id);
+                    }
+                }
+                // No phase is committed after rollback. Never report a
+                // successful admission to callers for a reverted reservation.
+                for admission in &mut staged {
+                    if admission.decision == Decision::Admitted {
+                        admission.decision = Decision::RejectedBundle;
+                    }
+                }
+                for remaining in phases.iter().skip(staged.len()) {
+                    staged.push(Admission {
+                        task_id: remaining.task_id.clone(),
+                        node_id: remaining.node_id.clone(),
+                        decision: Decision::RejectedBundle,
+                    });
+                }
+                return staged;
+            }
+        }
+        staged
+    }
+
     /// Truncate a modeled reservation at a failure/cancellation timestamp.
     /// The caller supplies virtual time; this ledger does not advance the clock.
     /// Historical occupancy before `at_ns` remains committed. A task identity
@@ -104,6 +181,44 @@ impl Ledger {
             self.admitted[index].end_ns = at_ns;
         }
         self.retired_tasks.insert(task_id.to_owned());
+        true
+    }
+
+    /// Atomically cancel multiple phase reservations at caller-owned virtual time.
+    /// Invalid or retired IDs leave the entire ledger unchanged. Future phases
+    /// are removed; active phases retain historical occupancy before `at_ns`.
+    pub fn terminate_bundle_at(&mut self, task_ids: &[String], at_ns: u64) -> bool {
+        if task_ids.is_empty() {
+            return false;
+        }
+        let mut seen = BTreeSet::new();
+        for id in task_ids {
+            if !seen.insert(id.as_str()) || self.retired_tasks.contains(id) {
+                return false;
+            }
+            if !self.admitted.iter().any(|r| r.task_id == *id) {
+                return false;
+            }
+        }
+        // Completed phases are historical evidence, not a reason to reject
+        // cancellation of a still-active output staging phase.
+        if !task_ids.iter().any(|id| {
+            self.admitted
+                .iter()
+                .any(|r| r.task_id == *id && at_ns < r.end_ns)
+        }) {
+            return false;
+        }
+        for id in task_ids {
+            // Every ID was preflighted against the same unchanged ledger.
+            if self
+                .admitted
+                .iter()
+                .any(|r| r.task_id == *id && at_ns < r.end_ns)
+            {
+                assert!(self.terminate_at(id, at_ns));
+            }
+        }
         true
     }
 
@@ -368,6 +483,120 @@ mod tests {
         );
         assert!(!ledger.terminate_at("replacement", 100));
         assert_eq!(ledger.admitted()[0].end_ns, 100);
+    }
+
+    #[test]
+    fn atomic_phase_cancellation_removes_future_staging_without_partial_mutation() {
+        let mut ledger = Ledger::new(capacities());
+        let mut cpu = req("job:cpu", "sat-a", 0, 10, 0);
+        cpu.memory_bytes = 10;
+        let mut output = req("job:output", "sat-a", 10, 40, 0);
+        output.storage_bytes = 10;
+        assert!(ledger
+            .admit_bundle(vec![cpu, output])
+            .iter()
+            .all(|a| a.decision == Decision::Admitted));
+        let ids = vec!["job:cpu".to_owned(), "job:output".to_owned()];
+        assert!(!ledger.terminate_bundle_at(&[ids[0].clone(), "missing".into()], 5));
+        assert_eq!(ledger.admitted().len(), 2);
+        assert_eq!(ledger.admitted()[0].end_ns, 10);
+        assert!(ledger.terminate_bundle_at(&ids, 5));
+        assert_eq!(ledger.admitted().len(), 1);
+        assert_eq!(ledger.admitted()[0].end_ns, 5);
+        assert_eq!(
+            ledger
+                .admit(req("replacement", "sat-a", 5, 30, 10))
+                .decision,
+            Decision::Admitted
+        );
+        assert!(!ledger.terminate_bundle_at(&ids, 6));
+        assert_eq!(
+            ledger.admit(req("job:output", "sat-a", 40, 50, 1)).decision,
+            Decision::RejectedDuplicateTask
+        );
+    }
+
+    #[test]
+    fn completed_compute_phase_does_not_block_output_staging_release() {
+        let mut ledger = Ledger::new(capacities());
+        let mut cpu = req("task:cpu", "sat-a", 0, 10, 0);
+        cpu.memory_bytes = 10;
+        let mut output = req("task:output", "sat-a", 10, 100, 0);
+        output.storage_bytes = 10;
+        assert!(ledger
+            .admit_bundle(vec![cpu, output])
+            .iter()
+            .all(|a| a.decision == Decision::Admitted));
+        let ids = vec!["task:cpu".to_owned(), "task:output".to_owned()];
+        assert!(ledger.terminate_bundle_at(&ids, 30));
+        assert_eq!(ledger.admitted()[0].end_ns, 10);
+        assert_eq!(ledger.admitted()[1].end_ns, 30);
+        let mut replacement = req("replacement", "sat-a", 30, 100, 0);
+        replacement.storage_bytes = 10;
+        assert_eq!(ledger.admit(replacement).decision, Decision::Admitted);
+        assert!(!ledger.terminate_bundle_at(&ids, 40));
+    }
+
+    #[test]
+    fn rejected_bundle_never_reports_rolled_back_phase_as_admitted() {
+        let mut ledger = Ledger::new(capacities());
+        let phases = vec![
+            req("a", "sat-a", 0, 10, 1),
+            req("b", "sat-a", 0, 10, 11),
+            req("c", "sat-b", 0, 10, 1),
+        ];
+        let result = ledger.admit_bundle(phases);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].decision, Decision::RejectedBundle);
+        assert_eq!(result[1].decision, Decision::RejectedCapacity);
+        assert_eq!(result[2].decision, Decision::RejectedBundle);
+        assert!(ledger.admitted().is_empty());
+    }
+
+    #[test]
+    fn phased_storage_holds_capacity_after_cpu_releases() {
+        let mut ledger = Ledger::new(capacities());
+        let mut cpu = req("job:cpu", "sat-a", 0, 10, 0);
+        cpu.memory_bytes = 10;
+        cpu.power_mw = 10;
+        let mut output = req("job:output", "sat-a", 10, 40, 0);
+        output.storage_bytes = 10;
+        assert!(ledger
+            .admit_bundle(vec![output, cpu])
+            .iter()
+            .all(|a| a.decision == Decision::Admitted));
+        let mut next = req("next", "sat-a", 10, 20, 0);
+        next.memory_bytes = 10;
+        next.power_mw = 10;
+        assert_eq!(ledger.admit(next).decision, Decision::Admitted);
+        let mut competing = req("competing", "sat-a", 20, 30, 0);
+        competing.storage_bytes = 1;
+        assert_eq!(ledger.admit(competing).decision, Decision::RejectedCapacity);
+        let mut after = req("after", "sat-a", 40, 50, 0);
+        after.storage_bytes = 10;
+        assert_eq!(ledger.admit(after).decision, Decision::Admitted);
+    }
+
+    #[test]
+    fn failed_bundle_rolls_back_all_phases_and_is_permutation_invariant() {
+        let phases = vec![
+            req("a:cpu", "sat-a", 0, 10, 10),
+            req("a:output", "sat-a", 10, 30, 11),
+        ];
+        for candidate in [phases.clone(), phases.into_iter().rev().collect()] {
+            let mut ledger = Ledger::new(capacities());
+            let result = ledger.admit_bundle(candidate);
+            assert!(result
+                .iter()
+                .any(|a| a.decision == Decision::RejectedCapacity));
+            assert!(ledger.admitted().is_empty());
+            assert_eq!(
+                ledger
+                    .admit(req("replacement", "sat-a", 0, 30, 10))
+                    .decision,
+                Decision::Admitted
+            );
+        }
     }
 
     #[test]

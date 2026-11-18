@@ -4,7 +4,7 @@
 
 use crate::admission::Decision;
 use crate::ingress::{append_input_flows, assert_replayed_input, observe_input, InputReceipt};
-use crate::planning::{plan_shared_with_arrivals, Candidate};
+use crate::planning::{plan_shared_with_output_staging, Candidate};
 use crate::{ComputeNode, ComputeWorkload, DataArtifact, ResourceReservation};
 use ntarlink_contracts::{Flow, NodeKind, Scenario};
 use ntarlink_packet_runtime::{run, PacketStatus, SimulationReport};
@@ -253,7 +253,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             }
         })
         .collect();
-    let planned = plan_shared_with_arrivals(
+    // Reserve output storage conservatively through the modeled horizon.
+    // PacketTrace remains authoritative for eventual delivery and failure.
+    let planned = plan_shared_with_output_staging(
         &experiment.compute_nodes,
         candidates,
         &arrivals,
