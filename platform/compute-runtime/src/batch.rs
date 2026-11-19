@@ -625,7 +625,9 @@ mod tests {
             .filter(|packet| packet.flow_id.starts_with("__c1:"))
         {
             assert!(seen.insert(packet.packet_id.as_str()));
-            assert!(packet.packet_id.starts_with(&format!("{}:", packet.flow_id)));
+            assert!(packet
+                .packet_id
+                .starts_with(&format!("{}:", packet.flow_id)));
             if packet.status == PacketStatus::Delivered {
                 let at = packet.completed_ns.unwrap();
                 assert!(at >= packet.injected_ns);
