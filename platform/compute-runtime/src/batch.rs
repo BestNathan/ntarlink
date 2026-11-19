@@ -616,22 +616,23 @@ mod tests {
         let experiment = fixture();
         let report = run_batch(&experiment).unwrap();
         let mut seen = BTreeSet::new();
-        let output_flows: BTreeMap<_, _> = report
+        let mut output_flows: BTreeMap<&str, Vec<&ntarlink_packet_runtime::PacketTrace>> =
+            BTreeMap::new();
+        for packet in report
             .network
             .packets
             .iter()
             .filter(|packet| packet.flow_id.starts_with("__c1:"))
-            .fold(BTreeMap::<&str, Vec<&ntarlink_packet_runtime::PacketTrace>>::new(), |mut map, packet| {
-                assert!(seen.insert(packet.packet_id.as_str()));
-                assert!(packet.packet_id.starts_with(&format!("{}:", packet.flow_id)));
-                if packet.status == PacketStatus::Delivered {
-                    let at = packet.completed_ns.unwrap();
-                    assert!(at >= packet.injected_ns);
-                    assert!(at <= experiment.network.duration_ns);
-                }
-                map.entry(packet.flow_id.as_str()).or_default().push(packet);
-                map
-            });
+        {
+            assert!(seen.insert(packet.packet_id.as_str()));
+            assert!(packet.packet_id.starts_with(&format!("{}:", packet.flow_id)));
+            if packet.status == PacketStatus::Delivered {
+                let at = packet.completed_ns.unwrap();
+                assert!(at >= packet.injected_ns);
+                assert!(at <= experiment.network.duration_ns);
+            }
+            output_flows.entry(packet.flow_id.as_str()).or_default().push(packet);
+        }
         assert!(!output_flows.is_empty());
         assert!(output_flows.values().all(|packets| !packets.is_empty()));
     }
