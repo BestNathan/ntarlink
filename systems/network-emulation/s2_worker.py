@@ -452,6 +452,7 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
         },
         "time_scale": scale, "events": [], "probes": [],
     }
+    stream = None
     try:
         worker.setup()
         report["initial_kernel_state"] = worker.snapshot()
@@ -461,6 +462,8 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
         report["probes"].append(worker.ping("initial"))
         if use_iperf:
             report["iperf"] = worker.iperf()
+        if continuous_ping:
+            stream = worker.start_continuous_ping()
         start = time.monotonic_ns()
         for event in plan["faults"]:
             expected_ns = int(event["at_ns"] * scale)
@@ -491,6 +494,14 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
             stream = None
         report["final_kernel_state"] = worker.snapshot()
     finally:
+        if stream is not None:
+            if stream.poll() is None:
+                stream.terminate()
+            try:
+                stream.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                stream.kill()
+                stream.communicate(timeout=3)
         report["cleanup_errors"] = worker.close()
         report["operation_count"] = len(worker.commands)
         report["operations"] = worker.commands
@@ -505,19 +516,21 @@ def main() -> int:
     parser.add_argument("--tag", default="s2")
     parser.add_argument("--apply", action="store_true", help="Opt in to privileged Linux changes")
     parser.add_argument("--time-scale", type=float, default=10.0)
-    parser.add_argument("--iperf", action="store_true")\n    parser.add_argument("--continuous-ping", action="store_true", help="Measure wall-clock ICMP traffic throughout fault events")
+    parser.add_argument("--iperf", action="store_true")
+    parser.add_argument("--continuous-ping", action="store_true", help="Measure wall-clock ICMP traffic throughout fault events")
     parser.add_argument("--pcap", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
         plan = build_plan(args.scenario.read_bytes(), args.source, args.target, args.tag)
         if not args.apply:
-            if args.iperf or args.pcap:
-                raise PlanError("--iperf/--pcap are only available with --apply")
+            if args.iperf or args.pcap or args.continuous_ping:
+                raise PlanError("--iperf/--pcap/--continuous-ping require --apply")
             output = {"mode": "dry-run", "plan": plan, "changes_applied": False}
         else:
             output = {"mode": "applied", "plan": plan, "report": execute(
-                plan, scale=args.time_scale, use_iperf=args.iperf, pcap=args.pcap,\n                continuous_ping=args.continuous_ping,
+                plan, scale=args.time_scale, use_iperf=args.iperf, pcap=args.pcap,
+                continuous_ping=args.continuous_ping,
             )}
         serialized = json.dumps(output, indent=2, sort_keys=True) + "\n"
         if args.output:
