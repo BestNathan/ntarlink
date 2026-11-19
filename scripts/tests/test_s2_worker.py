@@ -7,10 +7,11 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
-from s2_worker import PlanError, build_plan  # noqa: E402
+from s2_worker import LinuxPath, PlanError, build_plan  # noqa: E402
 
 SCENARIO = ROOT / "scenarios" / "s2-linux-ip-path.json"
 
@@ -85,6 +86,41 @@ class S2WorkerTests(unittest.TestCase):
         data["duration_ns"] = 31_000_000_000
         with self.assertRaisesRegex(PlanError, "duration_ns"):
             self.plan(data)
+
+    def test_second_endpoint_failure_rolls_back_first_endpoint(self):
+        worker = LinuxPath(self.plan())
+        calls = []
+        failed = False
+
+        def apply(command):
+            nonlocal failed
+            calls.append(command)
+            if command[-1] == "down" and len(calls) == 2 and not failed:
+                failed = True
+                raise RuntimeError("second endpoint failed")
+
+        with patch.object(worker, "run", side_effect=apply):
+            with self.assertRaisesRegex(RuntimeError, "second endpoint failed"):
+                worker.set_fault({"link_id": "space-isl", "action": "down"})
+        self.assertEqual([c[-1] for c in calls], ["down", "down", "up"])
+        self.assertEqual(calls[0][1:7], calls[-1][1:7])
+
+    def test_failed_rollback_blocks_further_faults(self):
+        worker = LinuxPath(self.plan())
+        calls = []
+
+        def apply(command):
+            calls.append(command)
+            if len(calls) >= 2:
+                raise RuntimeError("kernel failure")
+
+        with patch.object(worker, "run", side_effect=apply):
+            with self.assertRaisesRegex(RuntimeError, "rollback was incomplete"):
+                worker.set_fault({"link_id": "space-isl", "action": "down"})
+        with patch.object(worker, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "state uncertain"):
+                worker.set_fault({"link_id": "space-isl", "action": "up"})
+            run.assert_not_called()
 
     def test_dry_run_is_safe_and_reproducible(self):
         cmd = [
