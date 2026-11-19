@@ -122,6 +122,60 @@ class S2WorkerTests(unittest.TestCase):
                 worker.set_fault({"link_id": "space-isl", "action": "up"})
             run.assert_not_called()
 
+    def test_route_recovery_failure_returns_both_endpoints_down(self):
+        worker = LinuxPath(self.plan())
+        calls = []
+
+        def apply(command):
+            calls.append(command)
+            if command[3:5] == ["route", "replace"]:
+                raise RuntimeError("route install failed")
+
+        with patch.object(worker, "run", side_effect=apply):
+            with self.assertRaisesRegex(RuntimeError, "route install failed"):
+                worker.set_fault({"link_id": "space-isl", "action": "up"})
+        self.assertEqual([c[-1] for c in calls[:2]], ["up", "up"])
+        self.assertEqual([c[-1] for c in calls[-2:]], ["down", "down"])
+        self.assertEqual(calls[0][1:6], calls[-1][1:6])
+        self.assertEqual(calls[1][1:6], calls[-2][1:6])
+        self.assertFalse(getattr(worker, "_fault_state_uncertain", False))
+
+    def test_route_recovery_rollback_failure_blocks_future_faults(self):
+        worker = LinuxPath(self.plan())
+        calls = []
+
+        def apply(command):
+            calls.append(command)
+            if command[3:5] == ["route", "replace"] or command[-1] == "down":
+                raise RuntimeError("kernel failure")
+
+        with patch.object(worker, "run", side_effect=apply):
+            with self.assertRaisesRegex(RuntimeError, "route recovery rollback was incomplete"):
+                worker.set_fault({"link_id": "space-isl", "action": "up"})
+        with patch.object(worker, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "state uncertain"):
+                worker.set_fault({"link_id": "space-isl", "action": "down"})
+            run.assert_not_called()
+
+    def test_second_route_failure_rolls_back_after_first_route_replaced(self):
+        worker = LinuxPath(self.plan())
+        calls = []
+        route_count = 0
+
+        def apply(command):
+            nonlocal route_count
+            calls.append(command)
+            if command[3:5] == ["route", "replace"]:
+                route_count += 1
+                if route_count == 2:
+                    raise RuntimeError("return route failed")
+
+        with patch.object(worker, "run", side_effect=apply):
+            with self.assertRaisesRegex(RuntimeError, "return route failed"):
+                worker.set_fault({"link_id": "space-isl", "action": "up"})
+        self.assertEqual(route_count, 2)
+        self.assertEqual([c[-1] for c in calls[-2:]], ["down", "down"])
+
     def test_dry_run_is_safe_and_reproducible(self):
         cmd = [
             sys.executable, str(ROOT / "systems" / "network-emulation" / "s2_worker.py"),
