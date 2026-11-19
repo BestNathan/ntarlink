@@ -284,16 +284,14 @@ mod tests {
         let baseline = run(&network).unwrap();
         let index = baseline.packets.iter().position(|packet| {
             flows.contains_key(&packet.flow_id) && packet.status == PacketStatus::Delivered
+                && packet.injected_ns > 0
         }).expect("fixture must deliver a remote input packet");
 
         let mut before_injection = baseline.clone();
         before_injection.packets[index].completed_ns =
             Some(before_injection.packets[index].injected_ns.saturating_sub(1));
-        // Force a positive injection time so a strictly earlier arrival exists.
-        if before_injection.packets[index].injected_ns > 0 {
-            assert!(observe_input(&experiment, &before_injection, &flows)
-                .unwrap_err().contains("outside causal simulation horizon"));
-        }
+        assert!(observe_input(&experiment, &before_injection, &flows)
+            .unwrap_err().contains("outside causal simulation horizon"));
 
         let mut beyond_horizon = baseline;
         beyond_horizon.packets[index].completed_ns =
