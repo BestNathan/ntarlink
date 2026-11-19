@@ -412,14 +412,13 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         // observation. Do not feed this back into the already completed planner.
         // A failed artifact retains storage until the last terminal packet event;
         // partial receipts never count as successful ground delivery.
-        task.output_release_observed_ns = Some(
-            packet_report.packets.iter()
-                .filter(|p| p.flow_id == format!("__c1:{}:full", task.task_id)
-                    || p.flow_id == format!("__c1:{}:tail", task.task_id))
-                .filter_map(|p| p.completed_ns)
-                .max()
-                .unwrap_or(experiment.network.duration_ns)
-        );
+        task.output_release_observed_ns = if task.dropped_packets > 0 {
+            // A lost artifact has no complete delivery receipt. Keep the
+            // conservative staging hold until the modeled horizon.
+            Some(experiment.network.duration_ns)
+        } else {
+            task.ground_arrival_ns
+        };
         if task.delivered_bytes != task.artifact_bytes {
             // Packet timestamps are not proof of complete artifact delivery.
             task.ground_arrival_ns = None;
@@ -600,6 +599,7 @@ mod tests {
             assert_eq!(task.delivered_bytes, task.artifact_bytes);
             assert_eq!(task.dropped_bytes, 0);
             assert_eq!(task.delivered_packets, task.injected_packets);
+            assert_eq!(task.output_release_observed_ns, task.ground_arrival_ns);
         }
         let accepted = report
             .tasks
@@ -686,7 +686,7 @@ mod tests {
             task.artifact_bytes
         );
         assert_eq!(task.ground_arrival_ns, None);
-        assert!(task.output_release_observed_ns.is_some());
+        assert_eq!(task.output_release_observed_ns, Some(experiment.network.duration_ns));
         assert!(task.last_packet_arrival_ns.is_some());
         assert!(report.network.packets.iter().any(|packet| {
             packet.flow_id.starts_with("__c1:a:") && packet.status == PacketStatus::Delivered
