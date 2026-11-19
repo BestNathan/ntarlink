@@ -282,22 +282,32 @@ mod tests {
         let mut network = experiment.network.clone();
         let flows = append_input_flows(&experiment, &mut network).unwrap();
         let baseline = run(&network).unwrap();
-        let index = baseline.packets.iter().position(|packet| {
-            flows.contains_key(&packet.flow_id) && packet.status == PacketStatus::Delivered
-                && packet.injected_ns > 0
-        }).expect("fixture must deliver a remote input packet");
+        let index = baseline
+            .packets
+            .iter()
+            .position(|packet| {
+                flows.contains_key(&packet.flow_id)
+                    && packet.status == PacketStatus::Delivered
+                    && packet.injected_ns > 0
+            })
+            .expect("fixture must deliver a remote input packet");
 
         let mut before_injection = baseline.clone();
-        before_injection.packets[index].completed_ns =
-            Some(before_injection.packets[index].injected_ns.saturating_sub(1));
+        before_injection.packets[index].completed_ns = Some(
+            before_injection.packets[index]
+                .injected_ns
+                .saturating_sub(1),
+        );
         assert!(observe_input(&experiment, &before_injection, &flows)
-            .unwrap_err().contains("outside causal simulation horizon"));
+            .unwrap_err()
+            .contains("outside causal simulation horizon"));
 
         let mut beyond_horizon = baseline;
         beyond_horizon.packets[index].completed_ns =
             Some(experiment.network.duration_ns.saturating_add(1));
         assert!(observe_input(&experiment, &beyond_horizon, &flows)
-            .unwrap_err().contains("outside causal simulation horizon"));
+            .unwrap_err()
+            .contains("outside causal simulation horizon"));
     }
 
     #[test]
