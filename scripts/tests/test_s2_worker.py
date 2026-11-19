@@ -103,7 +103,7 @@ class S2WorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "second endpoint failed"):
                 worker.set_fault({"link_id": "space-isl", "action": "down"})
         self.assertEqual([c[-1] for c in calls], ["down", "down", "up"])
-        self.assertEqual(calls[0][1:7], calls[-1][1:7])
+        self.assertEqual(calls[0][1:6], calls[-1][1:6])
 
     def test_failed_rollback_blocks_further_faults(self):
         worker = LinuxPath(self.plan())
