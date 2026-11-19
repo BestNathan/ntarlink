@@ -192,6 +192,45 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(result["received_samples"][0]["rtt_ms"], 12.3)
         self.assertIn("not S1 virtual time", result["timestamp_scale"])
 
+    def test_continuous_probe_uses_disk_backed_output_and_closes_handles(self):
+        worker = LinuxPath(self.plan())
+
+        def launch(command, **kwargs):
+            self.assertNotEqual(kwargs["stdout"], subprocess.PIPE)
+            self.assertNotEqual(kwargs["stderr"], subprocess.PIPE)
+            self.assertIn("-O", command)
+            kwargs["stdout"].write(
+                "[1795080000.100] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=12.3 ms\\n"
+            )
+            kwargs["stderr"].write("probe warning\\n")
+            return object()
+
+        with patch("s2_worker.subprocess.Popen", side_effect=launch):
+            worker.start_continuous_ping()
+        stdout, stderr = worker.read_probe_output()
+        self.assertEqual(summarize_ping_stream(stdout)["received"], 1)
+        self.assertIn("probe warning", stderr)
+        handles = (worker.probe_output, worker.probe_errors)
+        worker.close_probe_output()
+        self.assertTrue(all(handle.closed for handle in handles))
+        worker.close_probe_output()
+
+    def test_continuous_probe_spawn_failure_closes_temporary_files(self):
+        worker = LinuxPath(self.plan())
+        handles = []
+
+        def fail(command, **kwargs):
+            handles.extend((kwargs["stdout"], kwargs["stderr"]))
+            raise OSError("ping unavailable")
+
+        with patch("s2_worker.subprocess.Popen", side_effect=fail):
+            with self.assertRaisesRegex(OSError, "ping unavailable"):
+                worker.start_continuous_ping()
+        self.assertEqual(len(handles), 2)
+        self.assertTrue(all(handle.closed for handle in handles))
+        self.assertIsNone(worker.probe_output)
+        self.assertIsNone(worker.probe_errors)
+
     def test_dry_run_is_safe_and_reproducible(self):
         cmd = [
             sys.executable, str(ROOT / "systems" / "network-emulation" / "s2_worker.py"),

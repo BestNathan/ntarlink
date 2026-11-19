@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 TOKEN = re.compile(r"[a-z][a-z0-9_-]{0,30}\Z")
@@ -190,6 +191,8 @@ class LinuxPath:
         self.host_veth: list[str] = []
         self.commands: list[dict] = []
         self.capture: subprocess.Popen | None = None
+        self.probe_output = None
+        self.probe_errors = None
 
     def run(self, args: list[str], *, check: bool = True, timeout: int = 15) -> subprocess.CompletedProcess:
         started = time.monotonic_ns()
@@ -330,11 +333,33 @@ class LinuxPath:
 
     def start_continuous_ping(self) -> subprocess.Popen:
         source = self.plan["nodes"][0]["namespace"]
-        return subprocess.Popen([
-            "ip", "netns", "exec", source, "ping", "-n", "-D", "-O",
-            "-i", "0.2", "-W", "1", "-I", self.plan["source_ip"],
-            self.plan["target_ip"],
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # Disk-backed streams prevent a long-running ping from blocking on a
+        # full subprocess pipe while the fault controller is sleeping.
+        self.probe_output = tempfile.TemporaryFile(mode="w+t")
+        self.probe_errors = tempfile.TemporaryFile(mode="w+t")
+        try:
+            return subprocess.Popen([
+                "ip", "netns", "exec", source, "ping", "-n", "-D", "-O",
+                "-i", "0.2", "-W", "1", "-I", self.plan["source_ip"],
+                self.plan["target_ip"],
+            ], stdout=self.probe_output, stderr=self.probe_errors, text=True)
+        except BaseException:
+            self.close_probe_output()
+            raise
+
+    def read_probe_output(self) -> tuple[str, str]:
+        if self.probe_output is None or self.probe_errors is None:
+            raise RuntimeError("continuous ping output was not initialized")
+        self.probe_output.seek(0)
+        self.probe_errors.seek(0)
+        return self.probe_output.read(), self.probe_errors.read()
+
+    def close_probe_output(self) -> None:
+        for handle in (self.probe_output, self.probe_errors):
+            if handle is not None:
+                handle.close()
+        self.probe_output = None
+        self.probe_errors = None
 
     def ping(self, label: str) -> dict:
         started = time.monotonic_ns()
@@ -484,10 +509,11 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
                 time.sleep(remaining)
             stream.terminate()
             try:
-                stdout, stderr = stream.communicate(timeout=3)
+                stream.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 stream.kill()
-                stdout, stderr = stream.communicate(timeout=3)
+                stream.wait(timeout=3)
+            stdout, stderr = worker.read_probe_output()
             report["continuous_traffic"] = summarize_ping_stream(stdout)
             report["continuous_traffic"]["exit_code_after_termination"] = stream.returncode
             report["continuous_traffic"]["stderr_tail"] = stderr[-400:]
@@ -498,10 +524,11 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
             if stream.poll() is None:
                 stream.terminate()
             try:
-                stream.communicate(timeout=3)
+                stream.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 stream.kill()
-                stream.communicate(timeout=3)
+                stream.wait(timeout=3)
+        worker.close_probe_output()
         report["cleanup_errors"] = worker.close()
         report["operation_count"] = len(worker.commands)
         report["operations"] = worker.commands
