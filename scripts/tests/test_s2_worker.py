@@ -178,11 +178,11 @@ class S2WorkerTests(unittest.TestCase):
 
     def test_continuous_ping_parser_distinguishes_missing_and_late_replies(self):
         output = (
-            "[1795080000.100] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=12.3 ms\\n"
-            "[1795080000.300] no answer yet for icmp_seq=2\\n"
-            "[1795080000.500] no answer yet for icmp_seq=3\\n"
-            "[1795080000.600] 64 bytes from 10.248.3.2: icmp_seq=3 ttl=61 time=300 ms\\n"
-            "[1795080000.700] 64 bytes from 10.248.3.2: icmp_seq=4 ttl=61 time=13.1 ms\\n"
+            "[1795080000.100] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=12.3 ms\n"
+            "[1795080000.300] no answer yet for icmp_seq=2\n"
+            "[1795080000.500] no answer yet for icmp_seq=3\n"
+            "[1795080000.600] 64 bytes from 10.248.3.2: icmp_seq=3 ttl=61 time=300 ms\n"
+            "[1795080000.700] 64 bytes from 10.248.3.2: icmp_seq=4 ttl=61 time=13.1 ms\n"
         )
         result = summarize_ping_stream(output)
         self.assertEqual(result["received"], 3)
