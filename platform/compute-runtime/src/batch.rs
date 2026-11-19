@@ -375,10 +375,36 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
     if let Some(observed) = &observed {
         assert_replayed_input(observed, &packet_report, &input_flows)?;
     }
+    // Verify every generated output packet against the committed flow schedule.
+    // Aggregate byte totals alone cannot detect duplicated or substituted L1
+    // evidence, which would otherwise produce a false artifact receipt.
+    let mut expected_output_packets = BTreeMap::new();
+    for flow in &network.flows {
+        if !transfer_flows.contains_key(&flow.id) {
+            continue;
+        }
+        for ordinal in 0..flow.packet_count {
+            let injected_at = flow
+                .start_ns
+                .checked_add(u64::from(ordinal) * flow.interval_ns)
+                .ok_or("output packet injection timestamp overflow")?;
+            expected_output_packets.insert(format!("{}:{ordinal}", flow.id), injected_at);
+        }
+    }
+    let mut seen_output_packets = BTreeSet::new();
     for packet in &packet_report.packets {
         let Some(&(index, bytes)) = transfer_flows.get(&packet.flow_id) else {
             continue;
         };
+        if !seen_output_packets.insert(packet.packet_id.as_str()) {
+            return Err("duplicate output packet identity in L1 trace".into());
+        }
+        let expected_at = expected_output_packets
+            .get(&packet.packet_id)
+            .ok_or("unexpected output packet ordinal in L1 trace")?;
+        if packet.injected_ns != *expected_at {
+            return Err("output packet injection timestamp mismatch".into());
+        }
         let task = &mut tasks[index];
         task.injected_packets += 1;
         match packet.status {
@@ -388,6 +414,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
                 let at = packet
                     .completed_ns
                     .ok_or("delivered packet has no arrival")?;
+                if at < packet.injected_ns || at > experiment.network.duration_ns {
+                    return Err("output packet arrival outside causal simulation horizon".into());
+                }
                 task.last_packet_arrival_ns =
                     Some(task.last_packet_arrival_ns.map_or(at, |old| old.max(at)));
                 task.ground_arrival_ns = task.last_packet_arrival_ns;
@@ -398,6 +427,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             }
             PacketStatus::InFlight => return Err("unaccounted batch packet".into()),
         }
+    }
+    if seen_output_packets.len() != expected_output_packets.len() {
+        return Err("output packet identity accounting mismatch".into());
     }
     for task in &mut tasks {
         if task.status != BatchStatus::Completed {
@@ -577,6 +609,31 @@ mod tests {
         let rejected = run_batch(&experiment).unwrap();
         assert!(rejected.tasks[0].reservation.is_none());
         assert_eq!(rejected.tasks[0].injected_packets, 0);
+    }
+
+    #[test]
+    fn generated_output_packets_have_unique_scheduled_identities_and_causal_arrivals() {
+        let experiment = fixture();
+        let report = run_batch(&experiment).unwrap();
+        let mut seen = BTreeSet::new();
+        let output_flows: BTreeMap<_, _> = report
+            .network
+            .packets
+            .iter()
+            .filter(|packet| packet.flow_id.starts_with("__c1:"))
+            .fold(BTreeMap::<&str, Vec<&ntarlink_packet_runtime::PacketTrace>>::new(), |mut map, packet| {
+                assert!(seen.insert(packet.packet_id.as_str()));
+                assert!(packet.packet_id.starts_with(&format!("{}:", packet.flow_id)));
+                if packet.status == PacketStatus::Delivered {
+                    let at = packet.completed_ns.unwrap();
+                    assert!(at >= packet.injected_ns);
+                    assert!(at <= experiment.network.duration_ns);
+                }
+                map.entry(packet.flow_id.as_str()).or_default().push(packet);
+                map
+            });
+        assert!(!output_flows.is_empty());
+        assert!(output_flows.values().all(|packets| !packets.is_empty()));
     }
 
     #[test]
