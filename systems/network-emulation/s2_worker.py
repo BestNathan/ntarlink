@@ -247,8 +247,26 @@ class LinuxPath:
         )
         link = self.plan["links"][index]
         state = "down" if event["action"] == "down" else "up"
-        for ns, interface in ((link["left_ns"], link["left_if"]), (link["right_ns"], link["right_if"])):
-            self.run(["ip", "-n", ns, "link", "set", interface, state])
+        if getattr(self, "_fault_state_uncertain", False):
+            raise RuntimeError("kernel link state uncertain after incomplete rollback")
+        endpoints = ((link["left_ns"], link["left_if"]), (link["right_ns"], link["right_if"]))
+        applied = []
+        try:
+            for ns, interface in endpoints:
+                self.run(["ip", "-n", ns, "link", "set", interface, state])
+                applied.append((ns, interface))
+        except Exception:
+            previous = "up" if state == "down" else "down"
+            rollback_failed = False
+            for ns, interface in reversed(applied):
+                try:
+                    self.run(["ip", "-n", ns, "link", "set", interface, previous])
+                except Exception:
+                    rollback_failed = True
+            if rollback_failed:
+                self._fault_state_uncertain = True
+                raise RuntimeError("kernel link rollback was incomplete") from None
+            raise
         if state == "up":
             # Linux removes routes whose output interface goes down. Restoring
             # static routes here is an explicit fixed-path baseline, not a
