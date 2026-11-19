@@ -631,7 +631,10 @@ mod tests {
                 assert!(at >= packet.injected_ns);
                 assert!(at <= experiment.network.duration_ns);
             }
-            output_flows.entry(packet.flow_id.as_str()).or_default().push(packet);
+            output_flows
+                .entry(packet.flow_id.as_str())
+                .or_default()
+                .push(packet);
         }
         assert!(!output_flows.is_empty());
         assert!(output_flows.values().all(|packets| !packets.is_empty()));
