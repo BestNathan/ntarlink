@@ -686,7 +686,10 @@ mod tests {
             task.artifact_bytes
         );
         assert_eq!(task.ground_arrival_ns, None);
-        assert_eq!(task.output_release_observed_ns, Some(experiment.network.duration_ns));
+        assert_eq!(
+            task.output_release_observed_ns,
+            Some(experiment.network.duration_ns)
+        );
         assert!(task.last_packet_arrival_ns.is_some());
         assert!(report.network.packets.iter().any(|packet| {
             packet.flow_id.starts_with("__c1:a:") && packet.status == PacketStatus::Delivered
