@@ -268,21 +268,33 @@ class LinuxPath:
                 raise RuntimeError("kernel link rollback was incomplete") from None
             raise
         if state == "up":
-            # Linux removes routes whose output interface goes down. Restoring
-            # static routes here is an explicit fixed-path baseline, not a
-            # claim about FRRouting convergence or network controller delay.
-            if index < len(self.plan["links"]) - 1:
-                self.run([
-                    "ip", "-n", link["left_ns"], "route", "replace",
-                    self.plan["target_ip"] + "/32", "via", link["right_ip"],
-                    "dev", link["left_if"],
-                ])
-            if index > 0:
-                self.run([
-                    "ip", "-n", link["right_ns"], "route", "replace",
-                    self.plan["source_ip"] + "/32", "via", link["left_ip"],
-                    "dev", link["right_if"],
-                ])
+            # A link is not recovered until its fixed-path routes are restored.
+            # If route installation fails, return both endpoints to down so
+            # subsequent retries cannot observe a partially recovered path.
+            try:
+                if index < len(self.plan["links"]) - 1:
+                    self.run([
+                        "ip", "-n", link["left_ns"], "route", "replace",
+                        self.plan["target_ip"] + "/32", "via", link["right_ip"],
+                        "dev", link["left_if"],
+                    ])
+                if index > 0:
+                    self.run([
+                        "ip", "-n", link["right_ns"], "route", "replace",
+                        self.plan["source_ip"] + "/32", "via", link["left_ip"],
+                        "dev", link["right_if"],
+                    ])
+            except Exception:
+                rollback_failed = False
+                for ns, interface in reversed(endpoints):
+                    try:
+                        self.run(["ip", "-n", ns, "link", "set", interface, "down"])
+                    except Exception:
+                        rollback_failed = True
+                if rollback_failed:
+                    self._fault_state_uncertain = True
+                    raise RuntimeError("kernel route recovery rollback was incomplete") from None
+                raise
 
     def ping(self, label: str) -> dict:
         started = time.monotonic_ns()
