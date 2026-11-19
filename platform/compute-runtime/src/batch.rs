@@ -59,6 +59,9 @@ pub struct BatchTaskResult {
     pub dropped_bytes: u64,
     /// Complete artifact arrival only; partial packet delivery is not a release receipt.
     pub ground_arrival_ns: Option<u64>,
+    /// Observed release eligibility after complete L1 delivery or terminal loss.
+    /// This is post-run evidence, not retroactive shared-ledger admission.
+    pub output_release_observed_ns: Option<u64>,
     /// Latest successful packet arrival, including incomplete artifacts; not a delivery receipt.
     pub last_packet_arrival_ns: Option<u64>,
     pub reservation: Option<ResourceReservation>,
@@ -290,6 +293,7 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             delivered_bytes: 0,
             dropped_bytes: 0,
             ground_arrival_ns: None,
+            output_release_observed_ns: None,
             last_packet_arrival_ns: None,
             reservation: plan.reservation,
         };
@@ -361,6 +365,7 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             delivered_bytes: 0,
             dropped_bytes: 0,
             ground_arrival_ns: None,
+            output_release_observed_ns: None,
             last_packet_arrival_ns: None,
             reservation: None,
         });
@@ -403,6 +408,18 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         {
             return Err("shared batch artifact accounting invariant failed".into());
         }
+        // The final authoritative packet outcome permits a post-run release
+        // observation. Do not feed this back into the already completed planner.
+        // A failed artifact retains storage until the last terminal packet event;
+        // partial receipts never count as successful ground delivery.
+        task.output_release_observed_ns = Some(
+            packet_report.packets.iter()
+                .filter(|p| p.flow_id == format!("__c1:{}:full", task.task_id)
+                    || p.flow_id == format!("__c1:{}:tail", task.task_id))
+                .filter_map(|p| p.completed_ns)
+                .max()
+                .unwrap_or(experiment.network.duration_ns)
+        );
         if task.delivered_bytes != task.artifact_bytes {
             // Packet timestamps are not proof of complete artifact delivery.
             task.ground_arrival_ns = None;
@@ -669,6 +686,7 @@ mod tests {
             task.artifact_bytes
         );
         assert_eq!(task.ground_arrival_ns, None);
+        assert!(task.output_release_observed_ns.is_some());
         assert!(task.last_packet_arrival_ns.is_some());
         assert!(report.network.packets.iter().any(|packet| {
             packet.flow_id.starts_with("__c1:a:") && packet.status == PacketStatus::Delivered
