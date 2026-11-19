@@ -147,6 +147,38 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
     }
 
 
+def summarize_ping_stream(output: str) -> dict:
+    """Summarize measured Linux ping output, never simulated packet delivery."""
+    replies = {}
+    misses = set()
+    for line in output.splitlines():
+        stamp = re.match(r"^\[([0-9]+(?:\.[0-9]+)?)\]", line)
+        sequence = re.search(r"icmp_seq[= ]([0-9]+)", line)
+        if not stamp or not sequence:
+            continue
+        seq = int(sequence.group(1))
+        if "no answer yet" in line:
+            misses.add(seq)
+        elif "time=" in line and "bytes from" in line:
+            rtt = re.search(r"time=([0-9.]+) ms", line)
+            if rtt:
+                replies[seq] = (int(float(stamp.group(1)) * 1e9), float(rtt.group(1)))
+    misses.difference_update(replies)
+    ordered = sorted(replies)
+    return {
+        "fidelity": "S2-measured-Linux-ICMP-wall-clock",
+        "timestamp_scale": "Unix epoch nanoseconds from ping -D; not S1 virtual time",
+        "received": len(replies),
+        "reported_missing": len(misses),
+        "received_samples": [
+            {"sequence": seq, "wall_epoch_ns": replies[seq][0], "rtt_ms": replies[seq][1]}
+            for seq in ordered
+        ],
+        "missing_sequences": sorted(misses),
+        "limitations": "Missing notices are ping -O observations, not a complete sent-packet ledger; wall-clock jumps and host scheduling affect timestamps.",
+    }
+
+
 def cmd_run(args: list[str], *, check: bool = True, timeout: int = 15) -> subprocess.CompletedProcess:
     return subprocess.run(args, text=True, capture_output=True, check=check, timeout=timeout)
 
@@ -296,6 +328,14 @@ class LinuxPath:
                     raise RuntimeError("kernel route recovery rollback was incomplete") from None
                 raise
 
+    def start_continuous_ping(self) -> subprocess.Popen:
+        source = self.plan["nodes"][0]["namespace"]
+        return subprocess.Popen([
+            "ip", "netns", "exec", source, "ping", "-n", "-D", "-O",
+            "-i", "0.2", "-W", "1", "-I", self.plan["source_ip"],
+            self.plan["target_ip"],
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
     def ping(self, label: str) -> dict:
         started = time.monotonic_ns()
         ns = self.plan["nodes"][0]["namespace"]
@@ -399,7 +439,7 @@ class LinuxPath:
         return errors
 
 
-def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None) -> dict:
+def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, continuous_ping: bool = False) -> dict:
     if not 1.0 <= scale <= 100.0 or plan["duration_ns"] * scale / 1e9 > 120.0:
         raise PlanError("time scale must be 1..100 and planned duration no more than 120 wall seconds")
     worker = LinuxPath(plan)
@@ -412,6 +452,7 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None) -> 
         },
         "time_scale": scale, "events": [], "probes": [],
     }
+    stream = None
     try:
         worker.setup()
         report["initial_kernel_state"] = worker.snapshot()
@@ -421,6 +462,8 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None) -> 
         report["probes"].append(worker.ping("initial"))
         if use_iperf:
             report["iperf"] = worker.iperf()
+        if continuous_ping:
+            stream = worker.start_continuous_ping()
         start = time.monotonic_ns()
         for event in plan["faults"]:
             expected_ns = int(event["at_ns"] * scale)
@@ -435,8 +478,30 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None) -> 
                 "scheduler_lateness_ns": max(0, before - start - expected_ns),
             })
             report["probes"].append(worker.ping(f'{event["link_id"]}:{event["action"]}'))
+        if continuous_ping:
+            remaining = (start + int(plan["duration_ns"] * scale) - time.monotonic_ns()) / 1e9
+            if remaining > 0:
+                time.sleep(remaining)
+            stream.terminate()
+            try:
+                stdout, stderr = stream.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                stream.kill()
+                stdout, stderr = stream.communicate(timeout=3)
+            report["continuous_traffic"] = summarize_ping_stream(stdout)
+            report["continuous_traffic"]["exit_code_after_termination"] = stream.returncode
+            report["continuous_traffic"]["stderr_tail"] = stderr[-400:]
+            stream = None
         report["final_kernel_state"] = worker.snapshot()
     finally:
+        if stream is not None:
+            if stream.poll() is None:
+                stream.terminate()
+            try:
+                stream.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                stream.kill()
+                stream.communicate(timeout=3)
         report["cleanup_errors"] = worker.close()
         report["operation_count"] = len(worker.commands)
         report["operations"] = worker.commands
@@ -452,18 +517,20 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="Opt in to privileged Linux changes")
     parser.add_argument("--time-scale", type=float, default=10.0)
     parser.add_argument("--iperf", action="store_true")
+    parser.add_argument("--continuous-ping", action="store_true", help="Measure wall-clock ICMP traffic throughout fault events")
     parser.add_argument("--pcap", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
         plan = build_plan(args.scenario.read_bytes(), args.source, args.target, args.tag)
         if not args.apply:
-            if args.iperf or args.pcap:
-                raise PlanError("--iperf/--pcap are only available with --apply")
+            if args.iperf or args.pcap or args.continuous_ping:
+                raise PlanError("--iperf/--pcap/--continuous-ping require --apply")
             output = {"mode": "dry-run", "plan": plan, "changes_applied": False}
         else:
             output = {"mode": "applied", "plan": plan, "report": execute(
                 plan, scale=args.time_scale, use_iperf=args.iperf, pcap=args.pcap,
+                continuous_ping=args.continuous_ping,
             )}
         serialized = json.dumps(output, indent=2, sort_keys=True) + "\n"
         if args.output:
