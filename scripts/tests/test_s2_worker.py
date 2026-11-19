@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
-from s2_worker import LinuxPath, PlanError, build_plan  # noqa: E402
+from s2_worker import LinuxPath, PlanError, build_plan, summarize_ping_stream  # noqa: E402
 
 SCENARIO = ROOT / "scenarios" / "s2-linux-ip-path.json"
 
@@ -176,6 +176,22 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(route_count, 2)
         self.assertEqual([c[-1] for c in calls[-2:]], ["down", "down"])
 
+    def test_continuous_ping_parser_distinguishes_missing_and_late_replies(self):
+        output = (
+            "[1795080000.100] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=12.3 ms\\n"
+            "[1795080000.300] no answer yet for icmp_seq=2\\n"
+            "[1795080000.500] no answer yet for icmp_seq=3\\n"
+            "[1795080000.600] 64 bytes from 10.248.3.2: icmp_seq=3 ttl=61 time=300 ms\\n"
+            "[1795080000.700] 64 bytes from 10.248.3.2: icmp_seq=4 ttl=61 time=13.1 ms\\n"
+        )
+        result = summarize_ping_stream(output)
+        self.assertEqual(result["received"], 3)
+        self.assertEqual(result["reported_missing"], 1)
+        self.assertEqual(result["missing_sequences"], [2])
+        self.assertEqual([x["sequence"] for x in result["received_samples"]], [1, 3, 4])
+        self.assertEqual(result["received_samples"][0]["rtt_ms"], 12.3)
+        self.assertIn("not S1 virtual time", result["timestamp_scale"])
+
     def test_dry_run_is_safe_and_reproducible(self):
         cmd = [
             sys.executable, str(ROOT / "systems" / "network-emulation" / "s2_worker.py"),
@@ -188,7 +204,7 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(result["mode"], "dry-run")
         self.assertFalse(result["changes_applied"])
         self.assertEqual(len(result["plan"]["links"]), 3)
-        rejected = subprocess.run(cmd + ["--iperf"], capture_output=True, text=True)
+        rejected = subprocess.run(cmd + ["--continuous-ping"], capture_output=True, text=True)
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("--apply", rejected.stderr)
 
