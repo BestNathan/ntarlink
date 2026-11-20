@@ -502,6 +502,15 @@ def remaining_probe_window_ns(origin_ns: int, duration_ns: int, scale: float, no
     return max(0, origin_ns + int(duration_ns * scale) - now_ns)
 
 
+def ensure_continuous_probe_alive(probe) -> None:
+    """Fail the measured experiment if the sustained traffic source exits early."""
+    exit_code = probe.poll()
+    if exit_code is not None:
+        raise RuntimeError(
+            f"continuous S2 ping exited before probe horizon (exit={exit_code})"
+        )
+
+
 def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None, probe_interval_ms: int = 200) -> dict:
     if not 1.0 <= scale <= 100.0 or plan["duration_ns"] * scale / 1e9 > 120:
         raise PlanError("invalid time-scale or excessive wall duration")
@@ -548,10 +557,12 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None, p
             "warning": "host UTC can be adjusted; do not equate ping timestamps with S1 virtual time",
         }
         for event in plan["faults"]:
+            ensure_continuous_probe_alive(continuous_ping)
             target_offset = int(event["at_ns"] * scale)
             wait_s = (origin + target_offset - time.monotonic_ns()) / 1e9
             if wait_s > 0:
                 time.sleep(wait_s)
+            ensure_continuous_probe_alive(continuous_ping)
             at = time.monotonic_ns()
             fault_start_wall_utc_ns = time.time_ns()
             result = worker.fault_and_reconfigure(event)
@@ -576,6 +587,7 @@ def execute_graph(plan: dict, *, scale: float, iperf: bool, pcap: Path | None, p
         )
         if remaining_ns:
             time.sleep(remaining_ns / 1e9)
+        ensure_continuous_probe_alive(continuous_ping)
         report["probe_window_wall_ns"] = time.monotonic_ns() - origin
         report["expected_probe_window_wall_ns"] = int(plan["duration_ns"] * scale)
         report["final_kernel_state"] = worker.snapshot()

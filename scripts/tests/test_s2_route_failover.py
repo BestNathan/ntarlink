@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
 from s2_routing import (  # noqa: E402
     LinuxRouteGraph, PlanError, build_graph, correlate_route_transition_observations,
-    execute_graph,
+    ensure_continuous_probe_alive, execute_graph,
     find_path, parse_continuous_ping, remaining_probe_window_ns,
 )
 
@@ -69,6 +69,43 @@ class S2RouteTests(unittest.TestCase):
                 execute_graph(plan, scale=1.0, iperf=False, pcap=None,
                               probe_interval_ms=50)
         self.assertEqual(observed[observed.index("-i") + 1], "0.050")
+
+    def test_sustained_probe_must_survive_until_scenario_horizon(self):
+        class Probe:
+            def __init__(self, exit_code):
+                self.exit_code = exit_code
+
+            def poll(self):
+                return self.exit_code
+
+        ensure_continuous_probe_alive(Probe(None))
+        for code in (0, 1, -9):
+            with self.subTest(exit_code=code), self.assertRaisesRegex(
+                RuntimeError, "exited before probe horizon"
+            ):
+                ensure_continuous_probe_alive(Probe(code))
+
+    def test_early_probe_exit_aborts_fault_replay_and_cleans_up(self):
+        plan = self.plan()
+
+        class ExitedProbe:
+            def poll(self):
+                return 0
+
+            def communicate(self, timeout=None):
+                return ("", "ping terminated unexpectedly")
+
+        with patch("s2_routing.LinuxRouteGraph.setup"), patch(
+            "s2_routing.LinuxRouteGraph.snapshot", return_value={}
+        ), patch("s2_routing.LinuxRouteGraph.ping", return_value={"success": True}), patch(
+            "s2_routing.LinuxRouteGraph.fault_and_reconfigure"
+        ) as fault, patch(
+            "s2_routing.subprocess.Popen", return_value=ExitedProbe()
+        ), patch("s2_routing.LinuxRouteGraph.close", return_value=[]) as close:
+            with self.assertRaisesRegex(RuntimeError, "exited before probe horizon"):
+                execute_graph(plan, scale=1.0, iperf=False, pcap=None)
+        fault.assert_not_called()
+        close.assert_called_once()
 
     def test_continuous_probe_detects_missing_replies_and_bounds_gap(self):
         output = (
