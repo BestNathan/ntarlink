@@ -363,9 +363,19 @@ def parse_continuous_ping(output: str) -> dict:
     # ping -O reports an unanswered probe at the next send, not a final
     # packet loss. A delayed reply may still arrive later in the capture.
     replied_sequences = {seq for seq, _ in replies}
+    # A probe ID can be reported unanswered more than once by a sustained
+    # ping stream. Preserve its first observation rather than inflating the
+    # number of lost probes or fault-window evidence with repeated notices.
+    first_unanswered_by_seq = {}
+    for sample in unanswered_samples:
+        seq = sample["seq"]
+        if seq not in first_unanswered_by_seq or (
+            sample["wall_utc_ns"] < first_unanswered_by_seq[seq]["wall_utc_ns"]
+        ):
+            first_unanswered_by_seq[seq] = sample
     confirmed_unanswered = [
-        sample for sample in unanswered_samples
-        if sample["seq"] not in replied_sequences
+        sample for seq, sample in sorted(first_unanswered_by_seq.items())
+        if seq not in replied_sequences
     ]
     gaps = [
         {"before_seq": previous[0], "after_seq": current[0],
