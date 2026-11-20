@@ -112,6 +112,38 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(observed["observed_unanswered_at_probe_interval"], 1)
         self.assertEqual(observed["first_unanswered_wall_utc_ns"], 1_000_200_000_000)
 
+    def test_delayed_older_probe_does_not_prove_recovery_after_loss(self):
+        # A delayed response for sequence 1 arrives after sequence 2 was
+        # reported unanswered. It cannot prove that traffic has recovered.
+        ping = parse_continuous_ping(
+            "[1000.100000] no answer yet for icmp_seq=2\n"
+            "[1000.200000] 64 bytes from host: icmp_seq=1 ttl=64 time=200 ms\n"
+        )
+        event = {
+            "link_id": "isl-a-b", "action": "down",
+            "fault_start_wall_utc_ns": 1_000_000_000_000,
+            "route_applied_wall_utc_ns": 1_000_050_000_000,
+        }
+        observation = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(observation["observed_unanswered_at_probe_interval"], 1)
+        self.assertIsNone(observation["first_reply_after_unanswered_wall_utc_ns"])
+        self.assertEqual(
+            observation["assessment"],
+            "sampled_unanswered_without_recovery_in_window",
+        )
+
+        # A later probe reply is valid sampled recovery evidence, but still
+        # not a measurement of exact outage end or protocol convergence.
+        ping["reply_samples"].append({
+            "seq": 3, "wall_utc_ns": 1_000_300_000_000,
+        })
+        observation = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(
+            observation["first_reply_after_unanswered_wall_utc_ns"],
+            1_000_300_000_000,
+        )
+        self.assertEqual(observation["assessment"], "sampled_unanswered_then_replied")
+
     def test_reordered_and_duplicate_replies_do_not_invent_loss(self):
         output = (
             "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
