@@ -90,6 +90,28 @@ class S2RouteTests(unittest.TestCase):
         self.assertIsNone(parse_continuous_ping("no replies")["largest_observed_reply_gap_wall_ns"])
 
 
+    def test_repeated_unanswered_notices_count_as_one_probe_per_fault_window(self):
+        output = (
+            "[1000.200000] no answer yet for icmp_seq=2\n"
+            "[1000.400000] no answer yet for icmp_seq=2\n"
+            "[1000.600000] no answer yet for icmp_seq=3\n"
+            "[1000.800000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
+        )
+        ping = parse_continuous_ping(output)
+        self.assertEqual(ping["observed_missing_sequences"], [2])
+        self.assertEqual(ping["late_reply_sequences"], [3])
+        self.assertEqual(ping["unanswered_samples"], [
+            {"seq": 2, "wall_utc_ns": 1_000_200_000_000}
+        ])
+        event = {
+            "link_id": "isl-a-b", "action": "down",
+            "fault_start_wall_utc_ns": 1_000_100_000_000,
+            "route_applied_wall_utc_ns": 1_000_150_000_000,
+        }
+        observed = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(observed["observed_unanswered_at_probe_interval"], 1)
+        self.assertEqual(observed["first_unanswered_wall_utc_ns"], 1_000_200_000_000)
+
     def test_reordered_and_duplicate_replies_do_not_invent_loss(self):
         output = (
             "[1000.000000] 64 bytes from host: icmp_seq=1 ttl=64 time=1 ms\n"
