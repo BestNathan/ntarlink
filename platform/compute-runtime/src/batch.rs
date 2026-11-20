@@ -992,6 +992,55 @@ mod tests {
     }
 
     #[test]
+    fn shared_artifact_consumers_with_distinct_releases_fail_closed_on_isl_outage() {
+        // Identical content identity does not imply an unmodeled shared cache.
+        // Each consumer owns a packet receipt and must not start CPU after loss.
+        let mut experiment = fixture();
+        let first = &mut experiment.jobs[2];
+        first.input_artifact.origin_site_id = "sat-a".into();
+        let shared = first.input_artifact.clone();
+        let second = &mut experiment.jobs[3];
+        second.node_id = "orbital-cpu-b".into();
+        second.input_artifact = shared.clone();
+        second.workload.input_artifact_id = shared.id.clone();
+        second.workload.release_ns = 30_000_000;
+        experiment
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "isl-a-b")
+            .unwrap()
+            .up = false;
+        let report = run_batch(&experiment).unwrap();
+        for id in ["c", "d"] {
+            let task = report.tasks.iter().find(|task| task.task_id == id).unwrap();
+            assert_eq!(task.status, BatchStatus::InputTransferFailed);
+            assert!(task.reservation.is_none());
+            assert!(task.compute_started_ns.is_none());
+            assert!(task.input_ready_ns.is_none());
+            let receipt = task.input_transfer.as_ref().unwrap();
+            assert_eq!(receipt.delivered_bytes, 0);
+            assert_eq!(receipt.dropped_bytes, shared.size_bytes);
+            assert!(report
+                .network
+                .packets
+                .iter()
+                .any(|packet| packet.flow_id.starts_with(&format!("__c1_input:{id}:"))));
+            assert!(!report
+                .network
+                .packets
+                .iter()
+                .any(|packet| packet.flow_id.starts_with(&format!("__c1:{id}:"))));
+        }
+        let mut reversed = experiment.clone();
+        reversed.jobs.reverse();
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run_batch(&reversed).unwrap()).unwrap()
+        );
+    }
+
+    #[test]
     fn remote_input_cannot_reference_a_non_satellite_or_overrun_horizon() {
         let mut experiment = fixture();
         experiment.jobs[2].input_artifact.origin_site_id = "gw-a".into();
