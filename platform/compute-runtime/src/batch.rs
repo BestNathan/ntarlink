@@ -1004,8 +1004,13 @@ mod tests {
         second.input_artifact = shared.clone();
         second.workload.input_artifact_id = shared.id.clone();
         second.workload.release_ns = 30_000_000;
-        experiment.network.links.iter_mut()
-            .find(|link| link.id == "isl-a-b").unwrap().up = false;
+        experiment
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "isl-a-b")
+            .unwrap()
+            .up = false;
         let report = run_batch(&experiment).unwrap();
         for id in ["c", "d"] {
             let task = report.tasks.iter().find(|task| task.task_id == id).unwrap();
@@ -1016,15 +1021,23 @@ mod tests {
             let receipt = task.input_transfer.as_ref().unwrap();
             assert_eq!(receipt.delivered_bytes, 0);
             assert_eq!(receipt.dropped_bytes, shared.size_bytes);
-            assert!(report.network.packets.iter().any(|packet|
-                packet.flow_id.starts_with(&format!("__c1_input:{id}:"))));
-            assert!(!report.network.packets.iter().any(|packet|
-                packet.flow_id.starts_with(&format!("__c1:{id}:"))));
+            assert!(report
+                .network
+                .packets
+                .iter()
+                .any(|packet| packet.flow_id.starts_with(&format!("__c1_input:{id}:"))));
+            assert!(!report
+                .network
+                .packets
+                .iter()
+                .any(|packet| packet.flow_id.starts_with(&format!("__c1:{id}:"))));
         }
         let mut reversed = experiment.clone();
         reversed.jobs.reverse();
-        assert_eq!(serde_json::to_vec(&report).unwrap(),
-                   serde_json::to_vec(&run_batch(&reversed).unwrap()).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&run_batch(&reversed).unwrap()).unwrap()
+        );
     }
 
     #[test]
