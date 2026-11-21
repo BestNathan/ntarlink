@@ -273,6 +273,14 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         .iter()
         .map(|job| (job.workload.id.as_str(), job))
         .collect();
+    // Validation already established unique compute IDs and site ownership.
+    // Reuse a stable lookup during output flow construction rather than
+    // rescanning the entire compute inventory for every admitted task.
+    let compute_by_id: BTreeMap<_, _> = experiment
+        .compute_nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
     let mut tasks = Vec::with_capacity(planned.len());
     let mut transfer_flows = BTreeMap::new();
     for plan in planned {
@@ -317,10 +325,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             } else {
                 let full = task.artifact_bytes / experiment.packet_payload_bytes;
                 let tail = task.artifact_bytes % experiment.packet_payload_bytes;
-                let node = experiment
-                    .compute_nodes
-                    .iter()
-                    .find(|n| n.id == job.node_id)
+                let node = compute_by_id
+                    .get(job.node_id.as_str())
+                    .copied()
                     .ok_or("admitted node disappeared")?;
                 for (suffix, bytes, packets, start) in [
                     ("full", experiment.packet_payload_bytes, full, end_ns),
