@@ -83,6 +83,40 @@ class S2WorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, "fault.at_ns"):
             self.plan(data)
 
+    def test_off_path_duplicate_faults_reject_before_projection(self):
+        data = copy.deepcopy(self.data)
+        data["links"].append({
+            "id": "reverse-only", "from": "gw-a", "to": "ue-a",
+            "capacity_bps": 1_000_000, "propagation_delay_ns": 1_000_000,
+        })
+        data["faults"].extend([
+            {"link_id": "reverse-only", "at_ns": 1, "action": "down"},
+            {"link_id": "reverse-only", "at_ns": 1, "action": "up"},
+        ])
+        with self.assertRaisesRegex(PlanError, "ambiguous"):
+            self.plan(data)
+        data["faults"][-1]["action"] = "down"
+        with self.assertRaisesRegex(PlanError, "ambiguous"):
+            self.plan(data)
+
+    def test_off_path_fault_count_obeys_source_safety_limit(self):
+        data = copy.deepcopy(self.data)
+        data["links"].append({
+            "id": "reverse-only", "from": "gw-a", "to": "ue-a",
+            "capacity_bps": 1_000_000, "propagation_delay_ns": 1_000_000,
+        })
+        # All source events are valid and distinct, but none are executed on
+        # the chosen path. They must still consume the scenario safety budget.
+        from s2_worker import MAX_FAULTS
+        data["faults"] = [
+            {"link_id": "reverse-only", "at_ns": at_ns, "action": "down"}
+            for at_ns in range(MAX_FAULTS + 1)
+        ]
+        with self.assertRaisesRegex(PlanError, "too many faults"):
+            self.plan(data)
+        data["faults"].pop()
+        self.assertEqual(self.plan(data)["faults"], [])
+
     def test_reject_unsafe_ids_rates_and_unsupported_initial_state(self):
         data = copy.deepcopy(self.data)
         data["nodes"][0]["id"] = "ue-a;rm -rf /"

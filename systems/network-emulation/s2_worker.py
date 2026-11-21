@@ -101,7 +101,12 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
     raw_faults = scenario.get("faults", [])
     if not isinstance(raw_faults, list):
         raise PlanError("faults must be a list")
+    # Source scenario constraints apply before path projection: otherwise an
+    # alternate selected path could silently accept an oversized fault ledger.
+    if len(raw_faults) > MAX_FAULTS:
+        raise PlanError("too many faults or ambiguous same-time link transitions")
     chosen = {link["id"] for link in path}
+    seen_transitions = set()
     for fault in raw_faults:
         if not isinstance(fault, dict):
             raise PlanError("fault must be an object")
@@ -115,12 +120,14 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
         action = fault.get("action")
         if action not in ("down", "up"):
             raise PlanError("fault action must be down or up")
+        transition = (at_ns, link_id)
+        if transition in seen_transitions:
+            raise PlanError("too many faults or ambiguous same-time link transitions")
+        seen_transitions.add(transition)
         if link_id not in chosen:
             continue
         events.append({"at_ns": at_ns, "link_id": link_id, "action": action})
     events.sort(key=lambda value: (value["at_ns"], value["link_id"]))
-    if len(events) > MAX_FAULTS or len({(x["at_ns"], x["link_id"]) for x in events}) != len(events):
-        raise PlanError("too many faults or ambiguous same-time link transitions")
     # Map each path hop to an isolated /30, avoiding the host routing table.
     ip_links = []
     for index, link in enumerate(path):
