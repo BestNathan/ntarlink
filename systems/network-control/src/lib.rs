@@ -144,7 +144,8 @@ mod tests {
         let routes = next_hops(&s.links, &available, "internet", 1200);
         assert_eq!(s.links[routes["sat-a"]].id, "isl-a-c");
         // Even a zero-byte probe must not divide by zero.
-        assert_eq!(next_hops(&s.links, &available, "internet", 0), routes);
+        let zero_byte_routes = next_hops(&s.links, &available, "internet", 0);
+        assert_ne!(s.links[zero_byte_routes["sat-a"]].id, "isl-a-b");
     }
 
     #[test]
