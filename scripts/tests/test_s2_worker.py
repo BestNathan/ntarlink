@@ -256,10 +256,10 @@ class S2WorkerTests(unittest.TestCase):
 
     def test_continuous_probe_loss_windows_are_observations_not_blackout_durations(self):
         output = (
-            "[1795080000.100] no answer yet for icmp_seq=2\\n"
-            "[1795080000.200] no answer yet for icmp_seq=3\\n"
-            "[1795080000.300] 64 bytes from 10.248.3.2: icmp_seq=4 ttl=61 time=10 ms\\n"
-            "[1795080000.400] no answer yet for icmp_seq=6\\n"
+            "[1795080000.100] no answer yet for icmp_seq=2\n"
+            "[1795080000.200] no answer yet for icmp_seq=3\n"
+            "[1795080000.300] 64 bytes from 10.248.3.2: icmp_seq=4 ttl=61 time=10 ms\n"
+            "[1795080000.400] no answer yet for icmp_seq=6\n"
         )
         result = summarize_ping_stream(output)
         self.assertEqual(result["reported_missing"], 3)
