@@ -512,15 +512,16 @@ mod tests {
         );
 
         let mut ground_origin = fixture();
-        ground_origin.jobs[0].input_artifact.origin_site_id =
-            ground_origin.ground_site_id.clone();
+        ground_origin.jobs[0].input_artifact.origin_site_id = ground_origin.ground_site_id.clone();
         assert_eq!(
             ground_origin.validate().unwrap_err(),
             "invalid batch workload or input artifact origin"
         );
 
         let mut duplicate_node = fixture();
-        duplicate_node.compute_nodes.push(duplicate_node.compute_nodes[0].clone());
+        duplicate_node
+            .compute_nodes
+            .push(duplicate_node.compute_nodes[0].clone());
         assert_eq!(
             duplicate_node.validate().unwrap_err(),
             "invalid orbital compute-node inventory"
