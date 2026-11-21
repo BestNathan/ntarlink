@@ -108,12 +108,15 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
         link_id = identifier(fault.get("link_id"))
         if link_id not in links:
             raise PlanError("fault references unknown link")
-        if link_id not in chosen:
-            continue
+        # Validate every source fault before projecting onto the selected path.
+        # An off-path event is not executed, but malformed scenario input must
+        # not become valid merely because the path selector skipped its link.
         at_ns = unsigned(fault.get("at_ns"), "fault.at_ns", maximum=duration - 1)
         action = fault.get("action")
         if action not in ("down", "up"):
             raise PlanError("fault action must be down or up")
+        if link_id not in chosen:
+            continue
         events.append({"at_ns": at_ns, "link_id": link_id, "action": action})
     events.sort(key=lambda value: (value["at_ns"], value["link_id"]))
     if len(events) > MAX_FAULTS or len({(x["at_ns"], x["link_id"]) for x in events}) != len(events):
