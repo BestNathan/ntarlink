@@ -248,6 +248,27 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(result["received_samples"][0]["rtt_ms"], 12.3)
         self.assertIn("not S1 virtual time", result["timestamp_scale"])
 
+        self.assertEqual(result["observed_missing_windows"], [{
+            "first_sequence": 2, "last_sequence": 2, "missing_count": 1,
+            "first_subsequent_reply_sequence": 3,
+            "first_subsequent_reply_wall_epoch_ns": result["received_samples"][1]["wall_epoch_ns"],
+        }])
+
+    def test_continuous_probe_loss_windows_are_observations_not_blackout_durations(self):
+        output = (
+            "[1795080000.100] no answer yet for icmp_seq=2\\n"
+            "[1795080000.200] no answer yet for icmp_seq=3\\n"
+            "[1795080000.300] 64 bytes from 10.248.3.2: icmp_seq=4 ttl=61 time=10 ms\\n"
+            "[1795080000.400] no answer yet for icmp_seq=6\\n"
+        )
+        result = summarize_ping_stream(output)
+        self.assertEqual(result["reported_missing"], 3)
+        self.assertEqual([(w["first_sequence"], w["last_sequence"], w["missing_count"])
+                          for w in result["observed_missing_windows"]], [(2, 3, 2), (6, 6, 1)])
+        self.assertEqual(result["observed_missing_windows"][0]["first_subsequent_reply_sequence"], 4)
+        self.assertIsNone(result["observed_missing_windows"][1]["first_subsequent_reply_sequence"])
+        self.assertIn("not measured continuous blackout durations", result["limitations"])
+
     def test_continuous_probe_uses_disk_backed_output_and_closes_handles(self):
         worker = LinuxPath(self.plan())
 
