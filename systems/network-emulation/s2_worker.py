@@ -493,6 +493,41 @@ class LinuxPath:
         return errors
 
 
+def clock_pair() -> dict:
+    """Bound a wall-epoch sample by monotonic reads, without assuming zero skew."""
+    before = time.monotonic_ns()
+    epoch = time.time_ns()
+    after = time.monotonic_ns()
+    return {
+        "wall_epoch_ns": epoch,
+        "monotonic_midpoint_ns": before + (after - before) // 2,
+        "sampling_uncertainty_ns": (after - before + 1) // 2,
+        "clock_domain": "host-wall-UTC-vs-host-monotonic",
+    }
+
+
+def correlate_probe_events(events: list[dict], traffic: dict) -> list[dict]:
+    """Associate observed replies with applied transitions; never infer blackout."""
+    samples = traffic.get("received_samples", [])
+    result = []
+    for index, event in enumerate(events):
+        start = event["clock_after_apply"]["wall_epoch_ns"]
+        end = (events[index + 1]["clock_before_apply"]["wall_epoch_ns"]
+               if index + 1 < len(events) else None)
+        window = [sample for sample in samples
+                  if sample["wall_epoch_ns"] >= start
+                  and (end is None or sample["wall_epoch_ns"] < end)]
+        result.append({
+            "link_id": event["link_id"], "action": event["action"],
+            "first_observed_reply_sequence": window[0]["sequence"] if window else None,
+            "first_observed_reply_wall_epoch_ns": window[0]["wall_epoch_ns"] if window else None,
+            "observed_reply_count": len(window),
+            "window_end_wall_epoch_ns": end,
+            "interpretation": "sampled ICMP replies after controller apply, not protocol convergence",
+        })
+    return result
+
+
 def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, continuous_ping: bool = False) -> dict:
     if not 1.0 <= scale <= 100.0 or plan["duration_ns"] * scale / 1e9 > 120.0:
         raise PlanError("time scale must be 1..100 and planned duration no more than 120 wall seconds")
@@ -518,18 +553,24 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
             report["iperf"] = worker.iperf()
         if continuous_ping:
             stream = worker.start_continuous_ping()
+        origin_clock = clock_pair()
+        report["clock_origin"] = origin_clock
         start = time.monotonic_ns()
         for event in plan["faults"]:
             expected_ns = int(event["at_ns"] * scale)
             remaining = (start + expected_ns - time.monotonic_ns()) / 1e9
             if remaining > 0:
                 time.sleep(remaining)
+            before_clock = clock_pair()
             before = time.monotonic_ns()
             worker.set_fault(event)
+            after_clock = clock_pair()
             report["events"].append({
                 **event, "expected_wall_offset_ns": expected_ns,
                 "applied_wall_offset_ns": time.monotonic_ns() - start,
                 "scheduler_lateness_ns": max(0, before - start - expected_ns),
+                "clock_before_apply": before_clock, "clock_after_apply": after_clock,
+                "controller_apply_monotonic_ns": after_clock["monotonic_midpoint_ns"] - before_clock["monotonic_midpoint_ns"],
             })
             report["probes"].append(worker.ping(f'{event["link_id"]}:{event["action"]}'))
         if continuous_ping:
@@ -544,6 +585,12 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
                 stream.wait(timeout=3)
             stdout, stderr = worker.read_probe_output()
             report["continuous_traffic"] = summarize_ping_stream(stdout)
+            report["probe_event_correlation"] = correlate_probe_events(
+                report["events"], report["continuous_traffic"])
+            report["probe_event_correlation_limitations"] = (
+                "Host wall-clock samples and ping -D timestamps may skew; "
+                "200-ms ICMP sampling does not measure continuous blackout or routing convergence."
+            )
             report["continuous_traffic"]["exit_code_after_termination"] = stream.returncode
             report["continuous_traffic"]["stderr_tail"] = stderr[-400:]
             stream = None
