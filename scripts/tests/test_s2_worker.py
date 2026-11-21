@@ -61,6 +61,28 @@ class S2WorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, "fault.at_ns"):
             self.plan(data)
 
+    def test_off_path_faults_still_validate_source_contract(self):
+        data = copy.deepcopy(self.data)
+        data["links"].append({
+            "id": "reverse-only", "from": "gw-a", "to": "ue-a",
+            "capacity_bps": 1_000_000,
+            "propagation_delay_ns": 1_000_000,
+        })
+        data["faults"].append({
+            "link_id": "reverse-only", "at_ns": 1, "action": "down",
+        })
+        plan = self.plan(data)
+        self.assertNotIn("reverse-only", [x["id"] for x in plan["links"]])
+        self.assertNotIn("reverse-only", [x["link_id"] for x in plan["faults"]])
+
+        data["faults"][-1]["action"] = "invalid"
+        with self.assertRaisesRegex(PlanError, "fault action"):
+            self.plan(data)
+        data["faults"][-1]["action"] = "down"
+        data["faults"][-1]["at_ns"] = data["duration_ns"]
+        with self.assertRaisesRegex(PlanError, "fault.at_ns"):
+            self.plan(data)
+
     def test_reject_unsafe_ids_rates_and_unsupported_initial_state(self):
         data = copy.deepcopy(self.data)
         data["nodes"][0]["id"] = "ue-a;rm -rf /"
