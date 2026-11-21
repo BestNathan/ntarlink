@@ -4,7 +4,12 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 fn link_cost_ns(link: &Link, packet_size_bytes: u64) -> Option<u64> {
     let bits_ns = u128::from(packet_size_bytes) * 8 * 1_000_000_000;
+    // Route computation is also a public API: callers may supply a dynamic
+    // link snapshot before scenario validation. An unusable link must not panic.
     let bitrate = u128::from(link.capacity_bps);
+    if bitrate == 0 {
+        return None;
+    }
     let serialization = bits_ns.div_ceil(bitrate);
     let total = serialization
         + u128::from(link.propagation_delay_ns)
@@ -127,6 +132,24 @@ mod tests {
         assert!(!routes.contains_key("internet"));
         let again = next_hops(&s.links, &available, "internet", 0);
         assert_eq!(routes, again);
+    }
+
+    #[test]
+    fn zero_capacity_link_is_excluded_without_panicking_or_hiding_backup() {
+        let mut s =
+            Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
+        let direct = s
+            .links
+            .iter()
+            .position(|link| link.id == "isl-a-b")
+            .unwrap();
+        s.links[direct].capacity_bps = 0;
+        let available = vec![true; s.links.len()];
+        let routes = next_hops(&s.links, &available, "internet", 1200);
+        assert_eq!(s.links[routes["sat-a"]].id, "isl-a-c");
+        // Even a zero-byte probe must not divide by zero.
+        let zero_byte_routes = next_hops(&s.links, &available, "internet", 0);
+        assert_ne!(s.links[zero_byte_routes["sat-a"]].id, "isl-a-b");
     }
 
     #[test]
