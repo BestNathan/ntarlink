@@ -529,6 +529,41 @@ mod tests {
     }
 
     #[test]
+    fn indexed_inventory_accepts_large_permuted_multi_node_batch() {
+        let mut experiment = fixture();
+        let template_node = experiment.compute_nodes[0].clone();
+        let template_job = experiment.jobs[0].clone();
+        experiment.compute_nodes = (0..1_000)
+            .map(|i| {
+                let mut node = template_node.clone();
+                node.id = format!("orbital-compute-{i}");
+                node
+            })
+            .collect();
+        experiment.jobs = (0..1_000)
+            .map(|i| {
+                let mut job = template_job.clone();
+                job.node_id = format!("orbital-compute-{i}");
+                job.workload.id = format!("batch-task-{i}");
+                job.workload.input_artifact_id = format!("batch-input-{i}");
+                job.input_artifact.id = job.workload.input_artifact_id.clone();
+                job
+            })
+            .collect();
+        assert!(experiment.validate().is_ok());
+        experiment.jobs.reverse();
+        experiment.compute_nodes.reverse();
+        assert!(experiment.validate().is_ok());
+
+        // A missing node at the end of a large batch must not be skipped.
+        experiment.jobs[999].node_id = "not-in-inventory".into();
+        assert_eq!(
+            experiment.validate().unwrap_err(),
+            "invalid batch workload or input artifact origin"
+        );
+    }
+
+    #[test]
     fn shared_input_identity_must_preserve_origin_size_and_digest() {
         let mut shared = fixture();
         let first = shared.jobs[0].input_artifact.clone();
