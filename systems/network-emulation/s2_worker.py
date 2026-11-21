@@ -176,6 +176,24 @@ def summarize_ping_stream(output: str) -> dict:
                 replies[seq] = (int(float(stamp.group(1)) * 1e9), float(rtt.group(1)))
     misses.difference_update(replies)
     ordered = sorted(replies)
+    # A missing-notice sequence is evidence of a failed probe at the ping
+    # observation boundary, not proof of a continuous link blackout. Group
+    # consecutive unresolved sequences without assuming a fixed send interval.
+    windows = []
+    for seq in sorted(misses):
+        if windows and seq == windows[-1]["last_sequence"] + 1:
+            windows[-1]["last_sequence"] = seq
+            windows[-1]["missing_count"] += 1
+        else:
+            windows.append({
+                "first_sequence": seq, "last_sequence": seq, "missing_count": 1,
+            })
+    for window in windows:
+        later = next((seq for seq in ordered if seq > window["last_sequence"]), None)
+        window["first_subsequent_reply_sequence"] = later
+        window["first_subsequent_reply_wall_epoch_ns"] = (
+            replies[later][0] if later is not None else None
+        )
     return {
         "fidelity": "S2-measured-Linux-ICMP-wall-clock",
         "timestamp_scale": "Unix epoch nanoseconds from ping -D; not S1 virtual time",
@@ -186,7 +204,8 @@ def summarize_ping_stream(output: str) -> dict:
             for seq in ordered
         ],
         "missing_sequences": sorted(misses),
-        "limitations": "Missing notices are ping -O observations, not a complete sent-packet ledger; wall-clock jumps and host scheduling affect timestamps.",
+        "observed_missing_windows": windows,
+        "limitations": "Missing windows group unresolved ping -O notices by sequence; they are not measured continuous blackout durations or a complete sent-packet ledger. Wall-clock jumps and host scheduling affect timestamps.",
     }
 
 
