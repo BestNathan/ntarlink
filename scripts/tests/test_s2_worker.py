@@ -11,7 +11,10 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
-from s2_worker import LinuxPath, PlanError, build_plan, summarize_ping_stream  # noqa: E402
+from s2_worker import (  # noqa: E402
+    LinuxPath, PlanError, build_plan, clock_pair, correlate_probe_events,
+    summarize_ping_stream,
+)
 
 SCENARIO = ROOT / "scenarios" / "s2-linux-ip-path.json"
 
@@ -268,6 +271,36 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(result["observed_missing_windows"][0]["first_subsequent_reply_sequence"], 4)
         self.assertIsNone(result["observed_missing_windows"][1]["first_subsequent_reply_sequence"])
         self.assertIn("not measured continuous blackout durations", result["limitations"])
+
+    def test_clock_pair_bounds_monotonic_sampling(self):
+        with patch("s2_worker.time.monotonic_ns", side_effect=[100, 110]):
+            with patch("s2_worker.time.time_ns", return_value=5000):
+                pair = clock_pair()
+        self.assertEqual(pair["wall_epoch_ns"], 5000)
+        self.assertEqual(pair["monotonic_midpoint_ns"], 105)
+        self.assertEqual(pair["sampling_uncertainty_ns"], 5)
+
+    def test_probe_correlation_stops_at_next_transition(self):
+        events = [
+            {"link_id": "space-isl", "action": "down",
+             "clock_after_apply": {"wall_epoch_ns": 100},
+             "clock_before_apply": {"wall_epoch_ns": 90}},
+            {"link_id": "space-isl", "action": "up",
+             "clock_after_apply": {"wall_epoch_ns": 300},
+             "clock_before_apply": {"wall_epoch_ns": 290}},
+        ]
+        traffic = {"received_samples": [
+            {"sequence": 1, "wall_epoch_ns": 99},
+            {"sequence": 2, "wall_epoch_ns": 200},
+            {"sequence": 3, "wall_epoch_ns": 290},
+            {"sequence": 4, "wall_epoch_ns": 301},
+        ]}
+        correlated = correlate_probe_events(events, traffic)
+        self.assertEqual(correlated[0]["first_observed_reply_sequence"], 2)
+        self.assertEqual(correlated[0]["observed_reply_count"], 1)
+        self.assertEqual(correlated[1]["first_observed_reply_sequence"], 4)
+        self.assertEqual(correlated[1]["observed_reply_count"], 1)
+        self.assertIn("not protocol convergence", correlated[0]["interpretation"])
 
     def test_continuous_probe_uses_disk_backed_output_and_closes_handles(self):
         worker = LinuxPath(self.plan())
