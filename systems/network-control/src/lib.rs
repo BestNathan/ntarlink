@@ -138,7 +138,11 @@ mod tests {
     fn zero_capacity_link_is_excluded_without_panicking_or_hiding_backup() {
         let mut s =
             Scenario::from_json(include_str!("../../../scenarios/isl-failure.json")).unwrap();
-        let direct = s.links.iter().position(|link| link.id == "isl-a-b").unwrap();
+        let direct = s
+            .links
+            .iter()
+            .position(|link| link.id == "isl-a-b")
+            .unwrap();
         s.links[direct].capacity_bps = 0;
         let available = vec![true; s.links.len()];
         let routes = next_hops(&s.links, &available, "internet", 1200);
