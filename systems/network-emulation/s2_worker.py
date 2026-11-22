@@ -169,7 +169,7 @@ def summarize_ping_stream(output: str) -> dict:
     duplicate_replies = 0
     misses = set()
     for line in output.splitlines():
-        stamp = re.match(r"^\\[([0-9]+(?:\\.[0-9]+)?)\\]", line)
+        stamp = re.match(r"^\[([0-9]+(?:\.[0-9]+)?)\]", line)
         sequence = re.search(r"icmp_seq[= ]([0-9]+)", line)
         if not stamp or not sequence:
             continue
