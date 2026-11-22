@@ -108,6 +108,11 @@ pub(crate) fn observe_input(
         let Some(&injected_at) = expected_injections.get(&packet.packet_id) else {
             return Err("unexpected input packet ordinal in L1 trace".into());
         };
+        // Packet identity must belong to the declared flow. A valid ordinal
+        // from another task must never be credited to this artifact.
+        if !packet.packet_id.starts_with(&format!("{}:", packet.flow_id)) {
+            return Err("input packet identity does not match flow".into());
+        }
         if packet.injected_ns != injected_at {
             return Err("input packet injection timestamp mismatch".into());
         }
@@ -271,6 +276,26 @@ mod tests {
         assert!(observe_input(&experiment, &delayed, &flows)
             .unwrap_err()
             .contains("input packet injection timestamp mismatch"));
+    }
+
+    #[test]
+    fn input_receipt_rejects_packet_identity_borrowed_from_another_flow() {
+        let mut experiment =
+            BatchExperiment::from_json(include_str!("../../../scenarios/c1-shared-network.json"))
+                .unwrap();
+        experiment.jobs[2].input_artifact.origin_site_id = "sat-a".into();
+        let mut network = experiment.network.clone();
+        let flows = append_input_flows(&experiment, &mut network).unwrap();
+        let mut report = run(&network).unwrap();
+        let packet = report
+            .packets
+            .iter_mut()
+            .find(|packet| flows.contains_key(&packet.flow_id))
+            .unwrap();
+        // Keep a valid packet ID and timestamp, but assign it to a different
+        // generated flow. Aggregate accounting must not accept this substitution.
+        packet.flow_id = format!("__c1_input:{}:tail", experiment.jobs[2].workload.id);
+        assert!(observe_input(&experiment, &report, &flows).is_err());
     }
 
     #[test]
