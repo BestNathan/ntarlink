@@ -6,6 +6,7 @@ network namespace worker on a wall clock. Dry-run is the default.
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -159,11 +160,16 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
 
 
 def summarize_ping_stream(output: str) -> dict:
-    """Summarize measured Linux ping output, never simulated packet delivery."""
+    """Summarize observed Linux ICMP replies using exact UTC nanoseconds.
+
+    A late reply cancels a provisional -O miss; duplicate replies are not
+    additional delivered probes. These observations are not an IP loss ledger.
+    """
     replies = {}
+    duplicate_replies = 0
     misses = set()
     for line in output.splitlines():
-        stamp = re.match(r"^\[([0-9]+(?:\.[0-9]+)?)\]", line)
+        stamp = re.match(r"^\\[([0-9]+(?:\\.[0-9]+)?)\\]", line)
         sequence = re.search(r"icmp_seq[= ]([0-9]+)", line)
         if not stamp or not sequence:
             continue
@@ -173,12 +179,19 @@ def summarize_ping_stream(output: str) -> dict:
         elif "time=" in line and "bytes from" in line:
             rtt = re.search(r"time=([0-9.]+) ms", line)
             if rtt:
-                replies[seq] = (int(float(stamp.group(1)) * 1e9), float(rtt.group(1)))
+                # float(epoch_seconds) loses sub-microsecond precision at
+                # current Unix epochs and can misattribute transition windows.
+                epoch_ns = int(Decimal(stamp.group(1)) * 1_000_000_000)
+                sample = (epoch_ns, float(rtt.group(1)))
+                if seq in replies:
+                    duplicate_replies += 1
+                    if epoch_ns < replies[seq][0]:
+                        replies[seq] = sample
+                else:
+                    replies[seq] = sample
+    late = misses.intersection(replies)
     misses.difference_update(replies)
     ordered = sorted(replies)
-    # A missing-notice sequence is evidence of a failed probe at the ping
-    # observation boundary, not proof of a continuous link blackout. Group
-    # consecutive unresolved sequences without assuming a fixed send interval.
     windows = []
     for seq in sorted(misses):
         if windows and seq == windows[-1]["last_sequence"] + 1:
@@ -198,7 +211,9 @@ def summarize_ping_stream(output: str) -> dict:
         "fidelity": "S2-measured-Linux-ICMP-wall-clock",
         "timestamp_scale": "Unix epoch nanoseconds from ping -D; not S1 virtual time",
         "received": len(replies),
+        "duplicate_reply_count": duplicate_replies,
         "reported_missing": len(misses),
+        "late_reply_sequences": sorted(late),
         "received_samples": [
             {"sequence": seq, "wall_epoch_ns": replies[seq][0], "rtt_ms": replies[seq][1]}
             for seq in ordered
