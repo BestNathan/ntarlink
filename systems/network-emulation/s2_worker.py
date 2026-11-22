@@ -199,7 +199,7 @@ def summarize_ping_stream(output: str) -> dict:
     # The final iputils ping summary is the only authoritative sent-probe
     # denominator. -O notices are provisional and cannot establish loss.
     summary = re.search(
-        r"(?m)^\\s*([0-9]+) packets transmitted, ([0-9]+) (?:packets )?received",
+        r"(?m)^\s*([0-9]+) packets transmitted, ([0-9]+) (?:packets )?received",
         output,
     )
     transmitted = int(summary.group(1)) if summary else None
