@@ -6,6 +6,7 @@ network namespace worker on a wall clock. Dry-run is the default.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from decimal import Decimal
 import hashlib
 import json
@@ -23,6 +24,8 @@ import time
 TOKEN = re.compile(r"[a-z][a-z0-9_-]{0,30}\Z")
 MAX_HOPS = 8
 MAX_FAULTS = 32
+MAX_NODES = 128
+MAX_LINKS = 512
 
 
 class PlanError(ValueError):
@@ -55,6 +58,8 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
     node_rows, link_rows = scenario.get("nodes"), scenario.get("links")
     if not isinstance(node_rows, list) or not isinstance(link_rows, list):
         raise PlanError("scenario requires nodes and links")
+    if len(node_rows) > MAX_NODES or len(link_rows) > MAX_LINKS:
+        raise PlanError("S2 topology exceeds bounded node/link inventory")
     nodes = [identifier(n.get("id")) for n in node_rows if isinstance(n, dict)]
     if len(nodes) != len(node_rows) or len(nodes) != len(set(nodes)):
         raise PlanError("node ids must be present and unique")
@@ -81,18 +86,20 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
         adjacency[start].append(links[link_id])
     # Deterministic shortest directed path. This is *not* the S1 control-plane
     # route; recording the selected path avoids implying routing parity.
-    queue = [(source, [], [source])]
+    queue = deque([(source, [])])
+    visited = {source}
     path = None
     while queue:
-        current, edges, seen = queue.pop(0)
+        current, edges = queue.popleft()
         if current == target:
             path = edges
             break
         if len(edges) >= MAX_HOPS:
             continue
         for link in sorted(adjacency[current], key=lambda item: item["id"]):
-            if link["to"] not in seen:
-                queue.append((link["to"], edges + [link], seen + [link["to"]]))
+            if link["to"] not in visited:
+                visited.add(link["to"])
+                queue.append((link["to"], edges + [link]))
     if not path:
         raise PlanError("no directed path within the eight-hop S2 safety limit")
     node_path = [source] + [link["to"] for link in path]
@@ -155,7 +162,7 @@ def build_plan(raw: bytes, source: str, target: str, tag: str) -> dict:
         "duration_ns": duration,
         "source_ip": ip_links[0]["left_ip"],
         "target_ip": ip_links[-1]["right_ip"],
-        "limits": {"max_hops": MAX_HOPS, "max_faults": MAX_FAULTS},
+        "limits": {"max_hops": MAX_HOPS, "max_faults": MAX_FAULTS, "max_nodes": MAX_NODES, "max_links": MAX_LINKS},
     }
 
 
