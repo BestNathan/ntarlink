@@ -773,6 +773,61 @@ mod tests {
     }
 
     #[test]
+    fn partial_l1_delivery_retains_staging_and_blocks_competing_task() {
+        let mut experiment = fixture();
+        let first = experiment.jobs[0].clone();
+        let mut second = experiment.jobs[1].clone();
+        second.workload.release_ns = 30_000_000;
+        experiment.jobs = vec![first, second];
+        // One execution fits exactly, but its retained output prevents the
+        // second execution from reserving the same finite storage budget.
+        let peak = experiment.jobs[0].input_artifact.size_bytes
+            + experiment.jobs[0].workload.output_size_bytes;
+        experiment.compute_nodes[0].storage_bytes = peak;
+        experiment
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .queue_limit_bytes = 1000;
+
+        let report = run_batch(&experiment).unwrap();
+        let first = report
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "a")
+            .unwrap();
+        let second = report
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "b")
+            .unwrap();
+        assert_eq!(first.status, BatchStatus::TransferFailed);
+        assert!(first.delivered_bytes > 0);
+        assert!(first.dropped_bytes > 0);
+        assert_eq!(first.ground_arrival_ns, None);
+        assert_eq!(
+            first.output_release_observed_ns,
+            Some(experiment.network.duration_ns)
+        );
+        assert_eq!(second.status, BatchStatus::Rejected);
+        assert!(second.reservation.is_none());
+        assert_eq!(second.injected_packets, 0);
+        assert_eq!(
+            report.network.injected,
+            report.network.delivered + report.network.dropped
+        );
+
+        experiment.jobs.reverse();
+        let replay = run_batch(&experiment).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&report).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+    }
+
+    #[test]
     fn output_injection_horizon_rejects_without_reserving_shared_capacity() {
         let mut experiment = fixture();
         experiment.packet_payload_bytes = 1;
