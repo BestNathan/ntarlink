@@ -259,11 +259,11 @@ class S2WorkerTests(unittest.TestCase):
 
     def test_probe_evidence_preserves_nanoseconds_and_deduplicates_late_replies(self):
         output = (
-            "[1795080000.123456789] no answer yet for icmp_seq=7\\n"
-            "[1795080000.123456790] 64 bytes from 10.248.3.2: icmp_seq=7 ttl=61 time=2 ms\\n"
-            "[1795080000.123456791] 64 bytes from 10.248.3.2: icmp_seq=7 ttl=61 time=3 ms\\n"
-            "[1795080000.123456792] no answer yet for icmp_seq=8\\n"
-            "[1795080000.123456793] 64 bytes from 10.248.3.2: icmp_seq=9 ttl=61 time=4 ms\\n"
+            "[1795080000.123456789] no answer yet for icmp_seq=7\n"
+            "[1795080000.123456790] 64 bytes from 10.248.3.2: icmp_seq=7 ttl=61 time=2 ms\n"
+            "[1795080000.123456791] 64 bytes from 10.248.3.2: icmp_seq=7 ttl=61 time=3 ms\n"
+            "[1795080000.123456792] no answer yet for icmp_seq=8\n"
+            "[1795080000.123456793] 64 bytes from 10.248.3.2: icmp_seq=9 ttl=61 time=4 ms\n"
         )
         result = summarize_ping_stream(output)
         self.assertEqual(result["received"], 2)
@@ -281,7 +281,7 @@ class S2WorkerTests(unittest.TestCase):
         lines = output.splitlines()
         lines[1], lines[2] = lines[2], lines[1]
         self.assertEqual(
-            summarize_ping_stream("\\n".join(lines))["received_samples"],
+            summarize_ping_stream("\n".join(lines))["received_samples"],
             result["received_samples"],
         )
 
