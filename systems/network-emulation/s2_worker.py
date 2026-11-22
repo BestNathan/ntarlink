@@ -196,6 +196,16 @@ def summarize_ping_stream(output: str) -> dict:
                         replies[seq] = sample
                 else:
                     replies[seq] = sample
+    # The final iputils ping summary is the only authoritative sent-probe
+    # denominator. -O notices are provisional and cannot establish loss.
+    summary = re.search(
+        r"(?m)^\\s*([0-9]+) packets transmitted, ([0-9]+) (?:packets )?received",
+        output,
+    )
+    transmitted = int(summary.group(1)) if summary else None
+    received_total = int(summary.group(2)) if summary else None
+    if transmitted is not None and received_total > transmitted:
+        raise PlanError("ping summary received count exceeds transmitted count")
     late = misses.intersection(replies)
     misses.difference_update(replies)
     ordered = sorted(replies)
@@ -217,6 +227,14 @@ def summarize_ping_stream(output: str) -> dict:
     return {
         "fidelity": "S2-measured-Linux-ICMP-wall-clock",
         "timestamp_scale": "Unix epoch nanoseconds from ping -D; not S1 virtual time",
+        "ping_summary": {
+            "transmitted": transmitted,
+            "received": received_total,
+            "lost": transmitted - received_total if transmitted is not None else None,
+            "loss_fraction": ((transmitted - received_total) / transmitted
+                              if transmitted else None),
+            "source": "iputils ping final packet summary; absent if process did not emit it",
+        },
         "received": len(replies),
         "duplicate_reply_count": duplicate_replies,
         "reported_missing": len(misses),
