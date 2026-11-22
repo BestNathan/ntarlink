@@ -339,6 +339,30 @@ class S2WorkerTests(unittest.TestCase):
         self.assertIsNone(result["observed_missing_windows"][1]["first_subsequent_reply_sequence"])
         self.assertIn("not measured continuous blackout durations", result["limitations"])
 
+    def test_continuous_ping_summary_reports_actual_sent_denominator(self):
+        output = (
+            "[1795080000.100] no answer yet for icmp_seq=2\\n"
+            "[1795080000.200] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=1 ms\\n"
+            "--- 10.248.3.2 ping statistics ---\\n"
+            "4 packets transmitted, 3 received, 25% packet loss, time 601ms\\n"
+        )
+        result = summarize_ping_stream(output)
+        self.assertEqual(result["ping_summary"]["transmitted"], 4)
+        self.assertEqual(result["ping_summary"]["received"], 3)
+        self.assertEqual(result["ping_summary"]["lost"], 1)
+        self.assertEqual(result["ping_summary"]["loss_fraction"], 0.25)
+        # -O notices and parsed reply lines are not the authoritative count.
+        self.assertEqual(result["reported_missing"], 1)
+        self.assertEqual(result["received"], 1)
+        self.assertIsNone(summarize_ping_stream(output.split("---")[0])[
+            "ping_summary"]["transmitted"])
+
+    def test_continuous_ping_summary_rejects_impossible_counts(self):
+        with self.assertRaisesRegex(PlanError, "exceeds transmitted"):
+            summarize_ping_stream("2 packets transmitted, 3 received, 0% packet loss")
+        result = summarize_ping_stream("0 packets transmitted, 0 received, 100% packet loss")
+        self.assertIsNone(result["ping_summary"]["loss_fraction"])
+
     def test_clock_pair_bounds_monotonic_sampling(self):
         with patch("s2_worker.time.monotonic_ns", side_effect=[100, 110]):
             with patch("s2_worker.time.time_ns", return_value=5000):
