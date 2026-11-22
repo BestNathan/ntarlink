@@ -369,6 +369,31 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(correlated[1]["observed_reply_count"], 1)
         self.assertIn("not protocol convergence", correlated[0]["interpretation"])
 
+    def test_probe_correlation_uses_arrival_time_after_out_of_order_recovery(self):
+        # ICMP sequence 12 can arrive before a delayed sequence 11. The first
+        # observed recovery reply must be the earliest wall-clock arrival.
+        events = [
+            {"link_id": "space-isl", "action": "up",
+             "clock_after_apply": {"wall_epoch_ns": 100},
+             "clock_before_apply": {"wall_epoch_ns": 90}},
+            {"link_id": "space-isl", "action": "down",
+             "clock_after_apply": {"wall_epoch_ns": 300},
+             "clock_before_apply": {"wall_epoch_ns": 290}},
+        ]
+        traffic = {"received_samples": [
+            {"sequence": 11, "wall_epoch_ns": 220},
+            {"sequence": 12, "wall_epoch_ns": 150},
+            {"sequence": 13, "wall_epoch_ns": 300},
+        ]}
+        expected = correlate_probe_events(events, traffic)
+        self.assertEqual(expected[0]["first_observed_reply_sequence"], 12)
+        self.assertEqual(expected[0]["first_observed_reply_wall_epoch_ns"], 150)
+        self.assertEqual(expected[0]["observed_reply_count"], 2)
+        self.assertEqual(expected[1]["first_observed_reply_sequence"], 13)
+        self.assertEqual(expected[1]["observed_reply_count"], 1)
+        traffic["received_samples"].reverse()
+        self.assertEqual(correlate_probe_events(events, traffic), expected)
+
     def test_continuous_probe_uses_disk_backed_output_and_closes_handles(self):
         worker = LinuxPath(self.plan())
 
