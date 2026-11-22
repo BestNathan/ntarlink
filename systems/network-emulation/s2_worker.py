@@ -594,7 +594,7 @@ def execute(plan: dict, *, scale: float, use_iperf: bool, pcap: Path | None, con
                 "clock_before_apply": before_clock, "clock_after_apply": after_clock,
                 "controller_apply_monotonic_ns": after_clock["monotonic_midpoint_ns"] - before_clock["monotonic_midpoint_ns"],
             })
-            report["probes"].append(worker.ping(f'{event["link_id"]}:{event["action"]}'))
+            # A synchronous one-second ping timeout would block the next fault\n            # transition and distort the wall-clock fault schedule. The ongoing\n            # probe supplies per-transition observations in continuous mode.\n            if not continuous_ping:\n                report["probes"].append(worker.ping(f'{event["link_id"]}:{event["action"]}'))
         if continuous_ping:
             remaining = (start + int(plan["duration_ns"] * scale) - time.monotonic_ns()) / 1e9
             if remaining > 0:
