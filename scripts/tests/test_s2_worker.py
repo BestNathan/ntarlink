@@ -7,13 +7,13 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "systems" / "network-emulation"))
 from s2_worker import (  # noqa: E402
     LinuxPath, PlanError, build_plan, clock_pair, correlate_probe_events,
-    summarize_ping_stream,
+    summarize_ping_stream, execute,
 )
 
 SCENARIO = ROOT / "scenarios" / "s2-linux-ip-path.json"
@@ -407,6 +407,50 @@ class S2WorkerTests(unittest.TestCase):
         self.assertTrue(all(handle.closed for handle in handles))
         self.assertIsNone(worker.probe_output)
         self.assertIsNone(worker.probe_errors)
+
+    def test_continuous_probe_does_not_block_fault_timeline(self):
+        # The controller must not run synchronous ping probes between scheduled
+        # transitions: a missing reply can otherwise consume a full second.
+        plan = self.plan()
+        worker = MagicMock()
+        worker.read_probe_output.return_value = ("", "")
+        worker.start_continuous_ping.return_value.returncode = -15
+        with patch("s2_worker.LinuxPath", return_value=worker), \
+             patch("s2_worker.time.monotonic_ns", return_value=0), \
+             patch("s2_worker.time.sleep"), \
+             patch("s2_worker.clock_pair", return_value={
+                 "wall_epoch_ns": 0, "monotonic_midpoint_ns": 0,
+                 "sampling_uncertainty_ns": 0,
+             }):
+            report = execute(
+                plan, scale=1.0, use_iperf=False, pcap=None,
+                continuous_ping=True,
+            )
+        self.assertEqual(worker.set_fault.call_count, len(plan["faults"]))
+        self.assertEqual(worker.ping.call_count, 1)
+        self.assertEqual(len(report["probes"]), 1)
+        self.assertEqual(len(report["events"]), len(plan["faults"]))
+        self.assertEqual(len(report["probe_event_correlation"]), len(plan["faults"]))
+        self.assertEqual(report["continuous_traffic"]["received"], 0)
+        worker.close_probe_output.assert_called_once()
+
+    def test_noncontinuous_mode_retains_transition_probes(self):
+        plan = self.plan()
+        worker = MagicMock()
+        with patch("s2_worker.LinuxPath", return_value=worker), \
+             patch("s2_worker.time.monotonic_ns", return_value=0), \
+             patch("s2_worker.time.sleep"), \
+             patch("s2_worker.clock_pair", return_value={
+                 "wall_epoch_ns": 0, "monotonic_midpoint_ns": 0,
+                 "sampling_uncertainty_ns": 0,
+             }):
+            report = execute(
+                plan, scale=1.0, use_iperf=False, pcap=None,
+                continuous_ping=False,
+            )
+        self.assertEqual(worker.ping.call_count, len(plan["faults"]) + 1)
+        self.assertEqual(len(report["probes"]), len(plan["faults"]) + 1)
+        worker.start_continuous_ping.assert_not_called()
 
     def test_dry_run_is_safe_and_reproducible(self):
         cmd = [
