@@ -341,10 +341,10 @@ class S2WorkerTests(unittest.TestCase):
 
     def test_continuous_ping_summary_reports_actual_sent_denominator(self):
         output = (
-            "[1795080000.100] no answer yet for icmp_seq=2\\n"
-            "[1795080000.200] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=1 ms\\n"
-            "--- 10.248.3.2 ping statistics ---\\n"
-            "4 packets transmitted, 3 received, 25% packet loss, time 601ms\\n"
+            "[1795080000.100] no answer yet for icmp_seq=2\n"
+            "[1795080000.200] 64 bytes from 10.248.3.2: icmp_seq=1 ttl=61 time=1 ms\n"
+            "--- 10.248.3.2 ping statistics ---\n"
+            "4 packets transmitted, 3 received, 25% packet loss, time 601ms\n"
         )
         result = summarize_ping_stream(output)
         self.assertEqual(result["ping_summary"]["transmitted"], 4)
