@@ -793,8 +793,16 @@ mod tests {
             .queue_limit_bytes = 1000;
 
         let report = run_batch(&experiment).unwrap();
-        let first = report.tasks.iter().find(|task| task.task_id == "a").unwrap();
-        let second = report.tasks.iter().find(|task| task.task_id == "b").unwrap();
+        let first = report
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "a")
+            .unwrap();
+        let second = report
+            .tasks
+            .iter()
+            .find(|task| task.task_id == "b")
+            .unwrap();
         assert_eq!(first.status, BatchStatus::TransferFailed);
         assert!(first.delivered_bytes > 0);
         assert!(first.dropped_bytes > 0);
