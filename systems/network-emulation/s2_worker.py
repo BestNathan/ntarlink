@@ -530,7 +530,12 @@ def clock_pair() -> dict:
 
 def correlate_probe_events(events: list[dict], traffic: dict) -> list[dict]:
     """Associate observed replies with applied transitions; never infer blackout."""
-    samples = traffic.get("received_samples", [])
+    # Ping replies can arrive out of sequence after a link outage. Correlate
+    # against actual wall-clock arrival, not ICMP sequence or output order.
+    samples = sorted(
+        traffic.get("received_samples", []),
+        key=lambda sample: (sample["wall_epoch_ns"], sample["sequence"]),
+    )
     result = []
     for index, event in enumerate(events):
         start = event["clock_after_apply"]["wall_epoch_ns"]
