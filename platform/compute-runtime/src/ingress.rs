@@ -110,7 +110,10 @@ pub(crate) fn observe_input(
         };
         // Packet identity must belong to the declared flow. A valid ordinal
         // from another task must never be credited to this artifact.
-        if !packet.packet_id.starts_with(&format!("{}:", packet.flow_id)) {
+        if !packet
+            .packet_id
+            .starts_with(&format!("{}:", packet.flow_id))
+        {
             return Err("input packet identity does not match flow".into());
         }
         if packet.injected_ns != injected_at {
