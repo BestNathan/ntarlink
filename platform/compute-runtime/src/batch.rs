@@ -402,6 +402,11 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         let expected_at = expected_output_packets
             .get(&packet.packet_id)
             .ok_or("unexpected output packet ordinal in L1 trace")?;
+        // Bind every packet ordinal to its declared output flow, not just
+        // to any valid packet ID in the shared trace.
+        if !packet.packet_id.starts_with(&format!("{}:", packet.flow_id)) {
+            return Err("output packet identity does not match flow".into());
+        }
         if packet.injected_ns != *expected_at {
             return Err("output packet injection timestamp mismatch".into());
         }
