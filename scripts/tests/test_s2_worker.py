@@ -54,6 +54,45 @@ class S2WorkerTests(unittest.TestCase):
         self.assertEqual(first["faults"], second["faults"])
         self.assertNotEqual(first["source_sha256"], second["source_sha256"])
 
+    def test_bounded_dense_topology_uses_stable_shortest_path(self):
+        data = copy.deepcopy(self.data)
+        data["nodes"] = [{"id": f"n{i}"} for i in range(60)]
+        data["links"] = [
+            {
+                "id": f"e{i:02d}-{j:02d}", "from": f"n{i}", "to": f"n{j}",
+                "capacity_bps": 1_000_000, "propagation_delay_ns": 1000,
+            }
+            for i in range(59) for j in range(i + 1, min(60, i + 9))
+        ]
+        data["faults"] = []
+        raw = json.dumps(data).encode()
+        first = build_plan(raw, "n0", "n59", "s2")
+        data["links"].reverse()
+        second = build_plan(json.dumps(data).encode(), "n0", "n59", "s2")
+        self.assertEqual(
+            [link["id"] for link in first["links"]],
+            [link["id"] for link in second["links"]],
+        )
+        self.assertLessEqual(len(first["links"]), 8)
+
+    def test_reject_oversized_topology_before_path_expansion(self):
+        data = copy.deepcopy(self.data)
+        data["nodes"].extend(
+            {"id": f"extra{i}"} for i in range(129)
+        )
+        with self.assertRaisesRegex(PlanError, "bounded node/link"):
+            self.plan(data)
+        data = copy.deepcopy(self.data)
+        data["links"].extend(
+            {
+                "id": f"extra{i}", "from": "ue-a", "to": "sat-a",
+                "capacity_bps": 1_000_000, "propagation_delay_ns": 1000,
+            }
+            for i in range(513)
+        )
+        with self.assertRaisesRegex(PlanError, "bounded node/link"):
+            self.plan(data)
+
     def test_reject_ambiguous_fault_and_invalid_time(self):
         data = copy.deepcopy(self.data)
         data["faults"].append(copy.deepcopy(data["faults"][0]))
