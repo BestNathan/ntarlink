@@ -139,6 +139,9 @@ def build_graph(raw: bytes, source: str, target: str, tag: str) -> dict:
     # attachment even when every individual failure is safe.
     disabled: set[str] = set()
     for event in event_rows:
+        was_down = event["link_id"] in disabled
+        if (event["action"] == "down") == was_down:
+            raise PlanError("fault must change the current link state")
         if event["action"] == "down":
             disabled.add(event["link_id"])
         else:
