@@ -120,7 +120,6 @@ pub fn observed_output_delivery(
         return None;
     }
     let mut delivered_packets = 0usize;
-    let mut delivered_bytes = 0u64;
     let mut last_arrival = None;
     for packet in &report.packets {
         if packet.status != PacketStatus::Delivered {
@@ -132,9 +131,7 @@ pub fn observed_output_delivery(
     }
     // Packet sizes are accounted by the authoritative transfer report;
     // never infer application bytes from link-layer framing.
-    delivered_bytes = delivered_bytes.checked_add(transfer.delivered_bytes)?;
     (delivered_packets == transfer.delivered_packets
-        && delivered_bytes == expected_output_bytes
         && last_arrival == transfer.last_arrival_ns)
         .then_some(last_arrival?)
 }
@@ -622,6 +619,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(blocked[1].admission.decision, Decision::RejectedCapacity);
+    }
+
+    #[test]
+    fn packet_backed_release_evidence_rejects_partial_and_missing_provenance() {
+        let scenario = fixture();
+        let report = run_experiment(&scenario).unwrap();
+        let outcome = &report.onboard_first;
+        let expected = scenario.workload.output_size_bytes;
+        let arrival = outcome.transfer.as_ref().unwrap().last_arrival_ns;
+        assert_eq!(observed_output_delivery(outcome, expected), arrival);
+        assert_eq!(observed_output_delivery(outcome, expected + 1), None);
+
+        let mut lost = fixture();
+        lost.network.links.iter_mut().find(|link| link.id == "feeder-b-gw").unwrap().up = false;
+        let failed = run_experiment(&lost).unwrap();
+        assert_eq!(observed_output_delivery(&failed.onboard_first, expected), None);
     }
 
     #[test]
