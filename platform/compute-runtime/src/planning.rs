@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(report.onboard_first.status, WorkloadStatus::Completed);
         assert_eq!(transfer.delivered_bytes, first.output_size_bytes);
         assert_eq!(transfer.dropped_bytes, 0);
-        let delivered_at = transfer.last_arrival_ns.unwrap();
+        let delivered_at = observed_output_delivery(&report.onboard_first, first.output_size_bytes).unwrap();
         second.release_ns = delivered_at + 1;
         assert!(second.release_ns < scenario.network.duration_ns);
         let make = |workload| Candidate {
@@ -609,7 +609,8 @@ mod tests {
             .up = false;
         let lost = run_experiment(&failed).unwrap();
         assert_eq!(lost.onboard_first.status, WorkloadStatus::TransferFailed);
-        assert!(lost.onboard_first.transfer.unwrap().dropped_bytes > 0);
+        assert!(lost.onboard_first.transfer.as_ref().unwrap().dropped_bytes > 0);
+        assert_eq!(observed_output_delivery(&lost.onboard_first, first.output_size_bytes), None);
         let blocked = plan_shared_with_observed_deliveries(
             &[node],
             jobs,
@@ -632,7 +633,12 @@ mod tests {
         assert_eq!(observed_output_delivery(outcome, expected + 1), None);
 
         let mut lost = fixture();
-        lost.network.links.iter_mut().find(|link| link.id == "feeder-b-gw").unwrap().up = false;
+        lost.network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
         let failed = run_experiment(&lost).unwrap();
         assert_eq!(observed_output_delivery(&failed.onboard_first, expected), None);
     }
