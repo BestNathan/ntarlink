@@ -43,7 +43,14 @@ pub fn plan_shared_with_arrivals(
     input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
 ) -> Result<Vec<PlannedWorkload>, String> {
-    plan_shared_internal(nodes, candidates, input_arrivals_ns, &BTreeMap::new(), horizon_ns, false)
+    plan_shared_internal(
+        nodes,
+        candidates,
+        input_arrivals_ns,
+        &BTreeMap::new(),
+        horizon_ns,
+        false,
+    )
 }
 
 /// Conservatively retain modeled output storage until the simulation horizon.
@@ -55,7 +62,14 @@ pub fn plan_shared_with_output_staging(
     input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
 ) -> Result<Vec<PlannedWorkload>, String> {
-    plan_shared_internal(nodes, candidates, input_arrivals_ns, &BTreeMap::new(), horizon_ns, true)
+    plan_shared_internal(
+        nodes,
+        candidates,
+        input_arrivals_ns,
+        &BTreeMap::new(),
+        horizon_ns,
+        true,
+    )
 }
 
 /// Plan output staging using *observed complete packet delivery* times supplied by
@@ -465,20 +479,33 @@ mod tests {
         let jobs = vec![make(first), make(second)];
         let deliveries = BTreeMap::from([("first".to_string(), 25_000_000)]);
         let planned = plan_shared_with_observed_deliveries(
-            std::slice::from_ref(&node), jobs.clone(), &BTreeMap::new(),
-            &deliveries, scenario.network.duration_ns,
-        ).unwrap();
+            std::slice::from_ref(&node),
+            jobs.clone(),
+            &BTreeMap::new(),
+            &deliveries,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
         assert_eq!(planned[0].admission.decision, Decision::Admitted);
         assert_eq!(planned[1].admission.decision, Decision::Admitted);
         let unknown = plan_shared_with_observed_deliveries(
-            std::slice::from_ref(&node), jobs.clone(), &BTreeMap::new(),
-            &BTreeMap::new(), scenario.network.duration_ns,
-        ).unwrap();
+            std::slice::from_ref(&node),
+            jobs.clone(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
         assert_eq!(unknown[1].admission.decision, Decision::RejectedCapacity);
         let invalid = BTreeMap::from([("first".to_string(), 1)]);
         assert!(plan_shared_with_observed_deliveries(
-            &[node], jobs, &BTreeMap::new(), &invalid, scenario.network.duration_ns,
-        ).is_err());
+            &[node],
+            jobs,
+            &BTreeMap::new(),
+            &invalid,
+            scenario.network.duration_ns,
+        )
+        .is_err());
     }
 
     #[test]
