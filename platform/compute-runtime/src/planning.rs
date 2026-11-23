@@ -118,9 +118,21 @@ pub fn observed_output_delivery(
     {
         return None;
     }
+    // The packet report also includes unrelated background flows. Only the
+    // generated artifact flows can authorize this output's storage release.
+    let output_id = outcome.produced_artifact.as_ref()?;
+    if transfer.artifact_id != output_id.id || output_id.size_bytes != expected_output_bytes {
+        return None;
+    }
+    let prefix = format!("__c0:{}:", output_id.id.strip_suffix(":output")?);
     let mut delivered_packets = 0usize;
     let mut last_arrival = None;
     for packet in &report.packets {
+        if packet.flow_id != format!("{prefix}full")
+            && packet.flow_id != format!("{prefix}tail")
+        {
+            continue;
+        }
         if packet.status != PacketStatus::Delivered {
             return None;
         }
@@ -128,8 +140,8 @@ pub fn observed_output_delivery(
         delivered_packets += 1;
         last_arrival = Some(last_arrival.map_or(completed, |last: u64| last.max(completed)));
     }
-    // Packet sizes are accounted by the authoritative transfer report;
-    // never infer application bytes from link-layer framing.
+    // Transfer byte accounting is authoritative; packet filtering prevents
+    // background traffic from invalidating or fabricating delivery evidence.
     (delivered_packets == transfer.delivered_packets && last_arrival == transfer.last_arrival_ns)
         .then_some(last_arrival?)
 }
