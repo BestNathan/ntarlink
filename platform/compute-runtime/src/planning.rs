@@ -94,6 +94,56 @@ pub fn plan_shared_with_observed_deliveries(
     )
 }
 
+/// Build C1 output-release evidence from a completed C0 packet-backed outcome.
+/// A partial transfer, missing packet report, or mismatched byte accounting
+/// cannot release storage. This is S1 virtual time, never host wall time.
+pub fn observed_output_delivery(
+    outcome: &crate::PolicyOutcome,
+    expected_output_bytes: u64,
+) -> Option<u64> {
+    use crate::WorkloadStatus;
+    use ntarlink_packet_runtime::PacketStatus;
+
+    if outcome.status != WorkloadStatus::Completed {
+        return None;
+    }
+    let transfer = outcome.transfer.as_ref()?;
+    let report = outcome.packet_report.as_ref()?;
+    if transfer.injected_bytes != expected_output_bytes
+        || transfer.delivered_bytes != expected_output_bytes
+        || transfer.dropped_bytes != 0
+        || transfer.injected_packets == 0
+        || transfer.injected_packets != transfer.delivered_packets
+        || transfer.dropped_packets != 0
+    {
+        return None;
+    }
+    // The packet report also includes unrelated background flows. Only the
+    // generated artifact flows can authorize this output's storage release.
+    let output_id = outcome.produced_artifact.as_ref()?;
+    if transfer.artifact_id != output_id.id || output_id.size_bytes != expected_output_bytes {
+        return None;
+    }
+    let prefix = format!("__c0:{}:", output_id.id.strip_suffix(":output")?);
+    let mut delivered_packets = 0usize;
+    let mut last_arrival = None;
+    for packet in &report.packets {
+        if packet.flow_id != format!("{prefix}full") && packet.flow_id != format!("{prefix}tail") {
+            continue;
+        }
+        if packet.status != PacketStatus::Delivered {
+            return None;
+        }
+        let completed = packet.completed_ns?;
+        delivered_packets += 1;
+        last_arrival = Some(last_arrival.map_or(completed, |last: u64| last.max(completed)));
+    }
+    // Transfer byte accounting is authoritative; packet filtering prevents
+    // background traffic from invalidating or fabricating delivery evidence.
+    (delivered_packets == transfer.delivered_packets && last_arrival == transfer.last_arrival_ns)
+        .then_some(last_arrival?)
+}
+
 fn plan_shared_internal(
     nodes: &[ComputeNode],
     mut candidates: Vec<Candidate>,
@@ -523,7 +573,9 @@ mod tests {
         assert_eq!(report.onboard_first.status, WorkloadStatus::Completed);
         assert_eq!(transfer.delivered_bytes, first.output_size_bytes);
         assert_eq!(transfer.dropped_bytes, 0);
-        let delivered_at = transfer.last_arrival_ns.unwrap();
+        let delivered_at =
+            observed_output_delivery(&report.onboard_first, scenario.workload.output_size_bytes)
+                .unwrap();
         second.release_ns = delivered_at + 1;
         assert!(second.release_ns < scenario.network.duration_ns);
         let make = |workload| Candidate {
@@ -567,7 +619,11 @@ mod tests {
             .up = false;
         let lost = run_experiment(&failed).unwrap();
         assert_eq!(lost.onboard_first.status, WorkloadStatus::TransferFailed);
-        assert!(lost.onboard_first.transfer.unwrap().dropped_bytes > 0);
+        assert!(lost.onboard_first.transfer.as_ref().unwrap().dropped_bytes > 0);
+        assert_eq!(
+            observed_output_delivery(&lost.onboard_first, scenario.workload.output_size_bytes),
+            None
+        );
         let blocked = plan_shared_with_observed_deliveries(
             &[node],
             jobs,
@@ -577,6 +633,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(blocked[1].admission.decision, Decision::RejectedCapacity);
+    }
+
+    #[test]
+    fn packet_backed_release_evidence_rejects_partial_and_missing_provenance() {
+        let scenario = fixture();
+        let report = run_experiment(&scenario).unwrap();
+        let outcome = &report.onboard_first;
+        let expected = scenario.workload.output_size_bytes;
+        let arrival = outcome.transfer.as_ref().unwrap().last_arrival_ns;
+        assert_eq!(observed_output_delivery(outcome, expected), arrival);
+        assert_eq!(observed_output_delivery(outcome, expected + 1), None);
+
+        let mut lost = fixture();
+        lost.network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
+        let failed = run_experiment(&lost).unwrap();
+        assert_eq!(
+            observed_output_delivery(&failed.onboard_first, expected),
+            None
+        );
     }
 
     #[test]
