@@ -253,17 +253,31 @@ mod tests {
             &nodes.into_iter().rev().collect::<Vec<_>>(),
             candidates.into_iter().rev().collect(),
             scenario.network.duration_ns,
-        ).unwrap();
-        assert_eq!(serde_json::to_vec(&first).unwrap(), serde_json::to_vec(&reversed).unwrap());
-        assert!(first.iter().all(|entry| entry.admission.decision == Decision::Admitted));
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&reversed).unwrap()
+        );
+        assert!(first
+            .iter()
+            .all(|entry| entry.admission.decision == Decision::Admitted));
         let mut missing = scenario.workload.clone();
         missing.id = "unknown-at-scale".into();
         let rejected = plan_shared(
             std::slice::from_ref(&scenario.orbital_node),
-            vec![Candidate { node_id: "missing".into(), workload: missing, input_bytes: 1 }],
+            vec![Candidate {
+                node_id: "missing".into(),
+                workload: missing,
+                input_bytes: 1,
+            }],
             scenario.network.duration_ns,
-        ).unwrap();
-        assert_eq!(rejected[0].admission.decision, Decision::RejectedUnknownNode);
+        )
+        .unwrap();
+        assert_eq!(
+            rejected[0].admission.decision,
+            Decision::RejectedUnknownNode
+        );
     }
 
     #[test]
