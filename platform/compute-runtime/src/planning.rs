@@ -541,7 +541,9 @@ mod tests {
             scenario.network.duration_ns,
         )
         .unwrap();
-        assert!(accepted.iter().all(|result| result.admission.decision == Decision::Admitted));
+        assert!(accepted
+            .iter()
+            .all(|result| result.admission.decision == Decision::Admitted));
         let reversed = plan_shared_with_observed_deliveries(
             std::slice::from_ref(&node),
             jobs.iter().cloned().rev().collect(),
