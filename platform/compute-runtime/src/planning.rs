@@ -43,7 +43,14 @@ pub fn plan_shared_with_arrivals(
     input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
 ) -> Result<Vec<PlannedWorkload>, String> {
-    plan_shared_internal(nodes, candidates, input_arrivals_ns, horizon_ns, false)
+    plan_shared_internal(
+        nodes,
+        candidates,
+        input_arrivals_ns,
+        &BTreeMap::new(),
+        horizon_ns,
+        false,
+    )
 }
 
 /// Conservatively retain modeled output storage until the simulation horizon.
@@ -55,13 +62,43 @@ pub fn plan_shared_with_output_staging(
     input_arrivals_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
 ) -> Result<Vec<PlannedWorkload>, String> {
-    plan_shared_internal(nodes, candidates, input_arrivals_ns, horizon_ns, true)
+    plan_shared_internal(
+        nodes,
+        candidates,
+        input_arrivals_ns,
+        &BTreeMap::new(),
+        horizon_ns,
+        true,
+    )
+}
+
+/// Plan output staging using *observed complete packet delivery* times supplied by
+/// the authoritative packet runtime. Missing observations (including loss or
+/// incomplete transfer) retain storage until the horizon; no route prediction
+/// releases capacity. Callers must supply observations from the same scenario
+/// and virtual clock, after packet execution, not from a speculative plan.
+pub fn plan_shared_with_observed_deliveries(
+    nodes: &[ComputeNode],
+    candidates: Vec<Candidate>,
+    input_arrivals_ns: &BTreeMap<String, u64>,
+    output_deliveries_ns: &BTreeMap<String, u64>,
+    horizon_ns: u64,
+) -> Result<Vec<PlannedWorkload>, String> {
+    plan_shared_internal(
+        nodes,
+        candidates,
+        input_arrivals_ns,
+        output_deliveries_ns,
+        horizon_ns,
+        true,
+    )
 }
 
 fn plan_shared_internal(
     nodes: &[ComputeNode],
     mut candidates: Vec<Candidate>,
     input_arrivals_ns: &BTreeMap<String, u64>,
+    output_deliveries_ns: &BTreeMap<String, u64>,
     horizon_ns: u64,
     stage_output: bool,
 ) -> Result<Vec<PlannedWorkload>, String> {
@@ -167,7 +204,14 @@ fn plan_shared_internal(
                                     task_id: format!("phase:{}:{}:output", task.id.len(), task.id),
                                     node_id: node.id.clone(),
                                     start_ns: end,
-                                    end_ns: horizon_ns,
+                                    end_ns: match output_deliveries_ns.get(&task.id) {
+                                        Some(&delivered) if delivered >= end && delivered <= horizon_ns => delivered,
+                                        Some(_) => return Err(format!(
+                                            "output delivery observation outside execution/horizon for {}",
+                                            task.id
+                                        )),
+                                        None => horizon_ns,
+                                    },
                                     memory_bytes: 0,
                                     storage_bytes: task.output_size_bytes,
                                     power_mw: 0,
@@ -414,6 +458,125 @@ mod tests {
         .unwrap();
         assert_eq!(results[0].admission.decision, Decision::Admitted);
         assert_eq!(results[1].admission.decision, Decision::RejectedCapacity);
+    }
+
+    #[test]
+    fn observed_delivery_releases_storage_but_missing_delivery_does_not() {
+        let scenario = fixture();
+        let mut node = scenario.orbital_node.clone();
+        let mut first = scenario.workload.clone();
+        first.id = "first".into();
+        first.release_ns = 0;
+        let mut second = first.clone();
+        second.id = "second".into();
+        second.release_ns = 30_000_000;
+        node.storage_bytes = scenario.input_artifact.size_bytes + first.output_size_bytes;
+        let make = |workload| Candidate {
+            node_id: node.id.clone(),
+            workload,
+            input_bytes: scenario.input_artifact.size_bytes,
+        };
+        let jobs = vec![make(first), make(second)];
+        let deliveries = BTreeMap::from([("first".to_string(), 25_000_000)]);
+        let planned = plan_shared_with_observed_deliveries(
+            std::slice::from_ref(&node),
+            jobs.clone(),
+            &BTreeMap::new(),
+            &deliveries,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(planned[0].admission.decision, Decision::Admitted);
+        assert_eq!(planned[1].admission.decision, Decision::Admitted);
+        let unknown = plan_shared_with_observed_deliveries(
+            std::slice::from_ref(&node),
+            jobs.clone(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(unknown[1].admission.decision, Decision::RejectedCapacity);
+        let invalid = BTreeMap::from([("first".to_string(), 1)]);
+        assert!(plan_shared_with_observed_deliveries(
+            &[node],
+            jobs,
+            &BTreeMap::new(),
+            &invalid,
+            scenario.network.duration_ns,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn packet_runtime_delivery_evidence_controls_shared_output_capacity() {
+        let scenario = fixture();
+        let mut node = scenario.orbital_node.clone();
+        let mut first = scenario.workload.clone();
+        first.id = "first".into();
+        first.release_ns = 0;
+        let mut second = first.clone();
+        second.id = "second".into();
+        node.storage_bytes = scenario.input_artifact.size_bytes + first.output_size_bytes;
+        let report = run_experiment(&scenario).unwrap();
+        let transfer = report.onboard_first.transfer.as_ref().unwrap();
+        assert_eq!(report.onboard_first.status, WorkloadStatus::Completed);
+        assert_eq!(transfer.delivered_bytes, first.output_size_bytes);
+        assert_eq!(transfer.dropped_bytes, 0);
+        let delivered_at = transfer.last_arrival_ns.unwrap();
+        second.release_ns = delivered_at + 1;
+        assert!(second.release_ns < scenario.network.duration_ns);
+        let make = |workload| Candidate {
+            node_id: node.id.clone(),
+            workload,
+            input_bytes: scenario.input_artifact.size_bytes,
+        };
+        let jobs = vec![make(first), make(second)];
+        let observed = BTreeMap::from([("first".to_string(), delivered_at)]);
+        let accepted = plan_shared_with_observed_deliveries(
+            std::slice::from_ref(&node),
+            jobs.clone(),
+            &BTreeMap::new(),
+            &observed,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert!(accepted
+            .iter()
+            .all(|result| result.admission.decision == Decision::Admitted));
+        let reversed = plan_shared_with_observed_deliveries(
+            std::slice::from_ref(&node),
+            jobs.iter().cloned().rev().collect(),
+            &BTreeMap::new(),
+            &observed,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&accepted).unwrap(),
+            serde_json::to_vec(&reversed).unwrap()
+        );
+
+        let mut failed = fixture();
+        failed
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
+        let lost = run_experiment(&failed).unwrap();
+        assert_eq!(lost.onboard_first.status, WorkloadStatus::TransferFailed);
+        assert!(lost.onboard_first.transfer.unwrap().dropped_bytes > 0);
+        let blocked = plan_shared_with_observed_deliveries(
+            &[node],
+            jobs,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(blocked[1].admission.decision, Decision::RejectedCapacity);
     }
 
     #[test]
