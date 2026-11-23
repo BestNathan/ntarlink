@@ -446,7 +446,8 @@ def correlate_route_transition_observations(events: list[dict], ping: dict) -> l
         before_missing = (
             next(
                 (sample for sample in reversed(replies)
-                 if start <= sample["wall_utc_ns"] < first_missing["wall_utc_ns"]),
+                 if start <= sample["wall_utc_ns"] < first_missing["wall_utc_ns"]
+                 and sample["seq"] < first_missing["seq"]),
                 None,
             )
             if first_missing else None
