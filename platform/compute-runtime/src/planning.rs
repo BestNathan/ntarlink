@@ -509,6 +509,75 @@ mod tests {
     }
 
     #[test]
+    fn packet_runtime_delivery_evidence_controls_shared_output_capacity() {
+        let scenario = fixture();
+        let mut node = scenario.orbital_node.clone();
+        let mut first = scenario.workload.clone();
+        first.id = "first".into();
+        first.release_ns = 0;
+        let mut second = first.clone();
+        second.id = "second".into();
+        node.storage_bytes = scenario.input_artifact.size_bytes + first.output_size_bytes;
+        let report = run_experiment(&scenario).unwrap();
+        let transfer = report.onboard_first.transfer.as_ref().unwrap();
+        assert_eq!(report.onboard_first.status, WorkloadStatus::Completed);
+        assert_eq!(transfer.delivered_bytes, first.output_size_bytes);
+        assert_eq!(transfer.dropped_bytes, 0);
+        let delivered_at = transfer.last_arrival_ns.unwrap();
+        second.release_ns = delivered_at + 1;
+        assert!(second.release_ns < scenario.network.duration_ns);
+        let make = |workload| Candidate {
+            node_id: node.id.clone(),
+            workload,
+            input_bytes: scenario.input_artifact.size_bytes,
+        };
+        let jobs = vec![make(first), make(second)];
+        let observed = BTreeMap::from([("first".to_string(), delivered_at)]);
+        let accepted = plan_shared_with_observed_deliveries(
+            std::slice::from_ref(&node),
+            jobs.clone(),
+            &BTreeMap::new(),
+            &observed,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert!(accepted.iter().all(|result| result.admission.decision == Decision::Admitted));
+        let reversed = plan_shared_with_observed_deliveries(
+            std::slice::from_ref(&node),
+            jobs.iter().cloned().rev().collect(),
+            &BTreeMap::new(),
+            &observed,
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&accepted).unwrap(),
+            serde_json::to_vec(&reversed).unwrap()
+        );
+
+        let mut failed = scenario.clone();
+        failed
+            .network
+            .links
+            .iter_mut()
+            .find(|link| link.id == "feeder-b-gw")
+            .unwrap()
+            .up = false;
+        let lost = run_experiment(&failed).unwrap();
+        assert_eq!(lost.onboard_first.status, WorkloadStatus::TransferFailed);
+        assert!(lost.onboard_first.transfer.unwrap().dropped_bytes > 0);
+        let blocked = plan_shared_with_observed_deliveries(
+            &[node],
+            jobs,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(blocked[1].admission.decision, Decision::RejectedCapacity);
+    }
+
+    #[test]
     fn phase_ids_cannot_alias_other_workload_ids() {
         let scenario = fixture();
         let node = scenario.orbital_node.clone();
