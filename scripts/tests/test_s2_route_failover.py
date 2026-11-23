@@ -154,8 +154,8 @@ class S2RouteTests(unittest.TestCase):
         # controller was still applying the route. It is not evidence that
         # the post-apply forwarding path recovered.
         ping = parse_continuous_ping(
-            "[1000.100000] no answer yet for icmp_seq=2\\n"
-            "[1000.200000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\\n"
+            "[1000.100000] no answer yet for icmp_seq=2\n"
+            "[1000.200000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\n"
         )
         event = {
             "link_id": "isl-a-b", "action": "down",
