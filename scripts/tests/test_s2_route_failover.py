@@ -713,6 +713,28 @@ class S2RouteTests(unittest.TestCase):
         with self.assertRaisesRegex(PlanError, "up/down"):
             self.plan(duplicate)
 
+    def test_redundant_faults_are_rejected_before_host_mutation(self):
+        # S1 fault history is a state-transition contract, not a sequence of
+        # unconditional Linux link-set commands. Replaying a no-op would
+        # fabricate an S2 controller transition and measured recovery window.
+        for actions in (["up"], ["down", "down"], ["down", "up", "up"]):
+            with self.subTest(actions=actions):
+                scenario = copy.deepcopy(self.raw)
+                scenario["faults"] = [
+                    {"at_ns": 10 + i * 10, "link_id": "isl-a-b", "action": action}
+                    for i, action in enumerate(actions)
+                ]
+                with self.assertRaisesRegex(PlanError, "change the current link state"):
+                    self.plan(scenario)
+
+        # A valid down/up/down history still admits multiple outages.
+        scenario = copy.deepcopy(self.raw)
+        scenario["faults"] = [
+            {"at_ns": 10 + i * 10, "link_id": "isl-a-b", "action": action}
+            for i, action in enumerate(["down", "up", "down"])
+        ]
+        self.assertEqual(len(self.plan(scenario)["faults"]), 3)
+
     def test_safety_budget_and_bad_topology_rejected(self):
         altered = copy.deepcopy(self.raw)
         altered["links"].extend([copy.deepcopy(altered["links"][0]) for _ in range(2)])
