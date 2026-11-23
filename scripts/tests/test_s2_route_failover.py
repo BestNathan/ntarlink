@@ -149,6 +149,33 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(observed["observed_unanswered_at_probe_interval"], 1)
         self.assertEqual(observed["first_unanswered_wall_utc_ns"], 1_000_200_000_000)
 
+    def test_pre_apply_reply_does_not_prove_post_route_recovery(self):
+        # A newer sequence replied after a missing probe, but while the
+        # controller was still applying the route. It is not evidence that
+        # the post-apply forwarding path recovered.
+        ping = parse_continuous_ping(
+            "[1000.100000] no answer yet for icmp_seq=2\\n"
+            "[1000.200000] 64 bytes from host: icmp_seq=3 ttl=64 time=1 ms\\n"
+        )
+        event = {
+            "link_id": "isl-a-b", "action": "down",
+            "fault_start_wall_utc_ns": 1_000_000_000_000,
+            "route_applied_wall_utc_ns": 1_000_250_000_000,
+        }
+        before = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(before["assessment"],
+                         "sampled_unanswered_without_recovery_in_window")
+        self.assertIsNone(before["first_reply_after_unanswered_wall_utc_ns"])
+        self.assertIsNone(before["first_reply_after_apply_wall_utc_ns"])
+
+        ping["reply_samples"].append({
+            "seq": 4, "wall_utc_ns": 1_000_300_000_000,
+        })
+        after = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(after["assessment"], "sampled_unanswered_then_replied")
+        self.assertEqual(after["first_reply_after_unanswered_wall_utc_ns"],
+                         1_000_300_000_000)
+
     def test_delayed_older_probe_does_not_prove_recovery_after_loss(self):
         # A delayed response for sequence 1 arrives after sequence 2 was
         # reported unanswered. It cannot prove that traffic has recovered.
