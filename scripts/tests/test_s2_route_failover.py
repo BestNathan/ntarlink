@@ -176,6 +176,23 @@ class S2RouteTests(unittest.TestCase):
         self.assertEqual(after["first_reply_after_unanswered_wall_utc_ns"],
                          1_000_300_000_000)
 
+    def test_reordered_newer_reply_cannot_bracket_an_older_missing_probe(self):
+        # A reply for sequence 5 arrives before the timeout notice for
+        # sequence 3. It cannot be the pre-loss boundary for sequence 3.
+        ping = parse_continuous_ping(
+            "[1000.100000] 64 bytes from host: icmp_seq=5 ttl=64 time=1 ms\n"
+            "[1000.200000] no answer yet for icmp_seq=3\n"
+            "[1000.300000] 64 bytes from host: icmp_seq=6 ttl=64 time=1 ms\n"
+        )
+        event = {
+            "link_id": "isl-a-b", "action": "down",
+            "fault_start_wall_utc_ns": 1_000_000_000_000,
+            "route_applied_wall_utc_ns": 1_000_050_000_000,
+        }
+        observed = correlate_route_transition_observations([event], ping)[0]
+        self.assertEqual(observed["assessment"], "sampled_unanswered_then_replied")
+        self.assertIsNone(observed["sampled_reply_gap_bracketing_loss_wall_ns"])
+
     def test_delayed_older_probe_does_not_prove_recovery_after_loss(self):
         # A delayed response for sequence 1 arrives after sequence 2 was
         # reported unanswered. It cannot prove that traffic has recovered.
