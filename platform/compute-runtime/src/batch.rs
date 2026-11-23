@@ -95,6 +95,15 @@ impl BatchExperiment {
         {
             return Err("invalid batch resource, job count or packet payload".into());
         }
+        // Validate site ownership once. Large opt-in batches may contain many
+        // jobs and compute nodes; repeated network/node scans are quadratic.
+        let satellite_sites: BTreeSet<&str> = self
+            .network
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Satellite)
+            .map(|n| n.id.as_str())
+            .collect();
         if !self
             .network
             .nodes
@@ -108,11 +117,7 @@ impl BatchExperiment {
             if node.id.is_empty()
                 || !node_ids.insert(node.id.as_str())
                 || node.network_endpoint_id != node.site_id
-                || !self
-                    .network
-                    .nodes
-                    .iter()
-                    .any(|n| n.id == node.site_id && n.kind == NodeKind::Satellite)
+                || !satellite_sites.contains(node.site_id.as_str())
                 || node.cpu_units_per_second == 0
                 || node.memory_bytes == 0
                 || node.storage_bytes == 0
@@ -121,6 +126,11 @@ impl BatchExperiment {
                 return Err("invalid orbital compute-node inventory".into());
             }
         }
+        let compute_by_id: BTreeMap<&str, &ComputeNode> = self
+            .compute_nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect();
         let mut job_ids = BTreeSet::new();
         // An artifact ID is a stable content identity across jobs. Reject
         // conflicting declarations instead of silently treating two different
@@ -147,7 +157,7 @@ impl BatchExperiment {
         for job in &self.jobs {
             let task = &job.workload;
             let input = &job.input_artifact;
-            let node = self.compute_nodes.iter().find(|n| n.id == job.node_id);
+            let node = compute_by_id.get(job.node_id.as_str()).copied();
             let identity = (
                 input.origin_site_id.as_str(),
                 input.size_bytes,
@@ -172,11 +182,7 @@ impl BatchExperiment {
                 || task.release_ns >= task.deadline_ns
                 || task.deadline_ns > self.network.duration_ns
                 || node.is_none()
-                || !self
-                    .network
-                    .nodes
-                    .iter()
-                    .any(|n| n.id == input.origin_site_id && n.kind == NodeKind::Satellite)
+                || !satellite_sites.contains(input.origin_site_id.as_str())
             {
                 return Err("invalid batch workload or input artifact origin".into());
             }
@@ -267,6 +273,14 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
         .iter()
         .map(|job| (job.workload.id.as_str(), job))
         .collect();
+    // Validation already established unique compute IDs and site ownership.
+    // Reuse a stable lookup during output flow construction rather than
+    // rescanning the entire compute inventory for every admitted task.
+    let compute_by_id: BTreeMap<_, _> = experiment
+        .compute_nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
     let mut tasks = Vec::with_capacity(planned.len());
     let mut transfer_flows = BTreeMap::new();
     for plan in planned {
@@ -311,10 +325,9 @@ pub fn run_batch(experiment: &BatchExperiment) -> Result<BatchReport, String> {
             } else {
                 let full = task.artifact_bytes / experiment.packet_payload_bytes;
                 let tail = task.artifact_bytes % experiment.packet_payload_bytes;
-                let node = experiment
-                    .compute_nodes
-                    .iter()
-                    .find(|n| n.id == job.node_id)
+                let node = compute_by_id
+                    .get(job.node_id.as_str())
+                    .copied()
                     .ok_or("admitted node disappeared")?;
                 for (suffix, bytes, packets, start) in [
                     ("full", experiment.packet_payload_bytes, full, end_ns),
@@ -499,6 +512,70 @@ mod tests {
     fn fixture() -> BatchExperiment {
         BatchExperiment::from_json(include_str!("../../../scenarios/c1-shared-network.json"))
             .unwrap()
+    }
+
+    #[test]
+    fn indexed_inventory_validation_rejects_missing_nodes_and_non_satellite_origins() {
+        let original = fixture();
+        assert!(original.validate().is_ok());
+
+        let mut missing_node = fixture();
+        missing_node.jobs[0].node_id = "missing-compute-node".into();
+        assert_eq!(
+            missing_node.validate().unwrap_err(),
+            "invalid batch workload or input artifact origin"
+        );
+
+        let mut ground_origin = fixture();
+        ground_origin.jobs[0].input_artifact.origin_site_id = ground_origin.ground_site_id.clone();
+        assert_eq!(
+            ground_origin.validate().unwrap_err(),
+            "invalid batch workload or input artifact origin"
+        );
+
+        let mut duplicate_node = fixture();
+        duplicate_node
+            .compute_nodes
+            .push(duplicate_node.compute_nodes[0].clone());
+        assert_eq!(
+            duplicate_node.validate().unwrap_err(),
+            "invalid orbital compute-node inventory"
+        );
+    }
+
+    #[test]
+    fn indexed_inventory_accepts_large_permuted_multi_node_batch() {
+        let mut experiment = fixture();
+        let template_node = experiment.compute_nodes[0].clone();
+        let template_job = experiment.jobs[0].clone();
+        experiment.compute_nodes = (0..1_000)
+            .map(|i| {
+                let mut node = template_node.clone();
+                node.id = format!("orbital-compute-{i}");
+                node
+            })
+            .collect();
+        experiment.jobs = (0..1_000)
+            .map(|i| {
+                let mut job = template_job.clone();
+                job.node_id = format!("orbital-compute-{i}");
+                job.workload.id = format!("batch-task-{i}");
+                job.workload.input_artifact_id = format!("batch-input-{i}");
+                job.input_artifact.id = job.workload.input_artifact_id.clone();
+                job
+            })
+            .collect();
+        assert!(experiment.validate().is_ok());
+        experiment.jobs.reverse();
+        experiment.compute_nodes.reverse();
+        assert!(experiment.validate().is_ok());
+
+        // A missing node at the end of a large batch must not be skipped.
+        experiment.jobs[999].node_id = "not-in-inventory".into();
+        assert_eq!(
+            experiment.validate().unwrap_err(),
+            "invalid batch workload or input artifact origin"
+        );
     }
 
     #[test]
