@@ -94,7 +94,6 @@ pub fn plan_shared_with_observed_deliveries(
     )
 }
 
-
 /// Build C1 output-release evidence from a completed C0 packet-backed outcome.
 /// A partial transfer, missing packet report, or mismatched byte accounting
 /// cannot release storage. This is S1 virtual time, never host wall time.
@@ -131,8 +130,7 @@ pub fn observed_output_delivery(
     }
     // Packet sizes are accounted by the authoritative transfer report;
     // never infer application bytes from link-layer framing.
-    (delivered_packets == transfer.delivered_packets
-        && last_arrival == transfer.last_arrival_ns)
+    (delivered_packets == transfer.delivered_packets && last_arrival == transfer.last_arrival_ns)
         .then_some(last_arrival?)
 }
 
@@ -565,7 +563,9 @@ mod tests {
         assert_eq!(report.onboard_first.status, WorkloadStatus::Completed);
         assert_eq!(transfer.delivered_bytes, first.output_size_bytes);
         assert_eq!(transfer.dropped_bytes, 0);
-        let delivered_at = observed_output_delivery(&report.onboard_first, scenario.workload.output_size_bytes).unwrap();
+        let delivered_at =
+            observed_output_delivery(&report.onboard_first, scenario.workload.output_size_bytes)
+                .unwrap();
         second.release_ns = delivered_at + 1;
         assert!(second.release_ns < scenario.network.duration_ns);
         let make = |workload| Candidate {
@@ -610,7 +610,10 @@ mod tests {
         let lost = run_experiment(&failed).unwrap();
         assert_eq!(lost.onboard_first.status, WorkloadStatus::TransferFailed);
         assert!(lost.onboard_first.transfer.as_ref().unwrap().dropped_bytes > 0);
-        assert_eq!(observed_output_delivery(&lost.onboard_first, scenario.workload.output_size_bytes), None);
+        assert_eq!(
+            observed_output_delivery(&lost.onboard_first, scenario.workload.output_size_bytes),
+            None
+        );
         let blocked = plan_shared_with_observed_deliveries(
             &[node],
             jobs,
@@ -640,7 +643,10 @@ mod tests {
             .unwrap()
             .up = false;
         let failed = run_experiment(&lost).unwrap();
-        assert_eq!(observed_output_delivery(&failed.onboard_first, expected), None);
+        assert_eq!(
+            observed_output_delivery(&failed.onboard_first, expected),
+            None
+        );
     }
 
     #[test]
