@@ -94,6 +94,51 @@ pub fn plan_shared_with_observed_deliveries(
     )
 }
 
+
+/// Build C1 output-release evidence from a completed C0 packet-backed outcome.
+/// A partial transfer, missing packet report, or mismatched byte accounting
+/// cannot release storage. This is S1 virtual time, never host wall time.
+pub fn observed_output_delivery(
+    outcome: &crate::PolicyOutcome,
+    expected_output_bytes: u64,
+) -> Option<u64> {
+    use crate::WorkloadStatus;
+    use ntarlink_packet_runtime::PacketStatus;
+
+    if outcome.status != WorkloadStatus::Completed {
+        return None;
+    }
+    let transfer = outcome.transfer.as_ref()?;
+    let report = outcome.packet_report.as_ref()?;
+    if transfer.injected_bytes != expected_output_bytes
+        || transfer.delivered_bytes != expected_output_bytes
+        || transfer.dropped_bytes != 0
+        || transfer.injected_packets == 0
+        || transfer.injected_packets != transfer.delivered_packets
+        || transfer.dropped_packets != 0
+    {
+        return None;
+    }
+    let mut delivered_packets = 0usize;
+    let mut delivered_bytes = 0u64;
+    let mut last_arrival = None;
+    for packet in &report.packets {
+        if packet.status != PacketStatus::Delivered {
+            return None;
+        }
+        let completed = packet.completed_ns?;
+        delivered_packets += 1;
+        last_arrival = Some(last_arrival.map_or(completed, |last: u64| last.max(completed)));
+    }
+    // Packet sizes are accounted by the authoritative transfer report;
+    // never infer application bytes from link-layer framing.
+    delivered_bytes = delivered_bytes.checked_add(transfer.delivered_bytes)?;
+    (delivered_packets == transfer.delivered_packets
+        && delivered_bytes == expected_output_bytes
+        && last_arrival == transfer.last_arrival_ns)
+        .then_some(last_arrival?)
+}
+
 fn plan_shared_internal(
     nodes: &[ComputeNode],
     mut candidates: Vec<Candidate>,
