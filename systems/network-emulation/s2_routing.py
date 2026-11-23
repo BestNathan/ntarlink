@@ -452,11 +452,12 @@ def correlate_route_transition_observations(events: list[dict], ping: dict) -> l
             if first_missing else None
         )
         # A delayed reply to an older probe is not evidence that a newer
-        # unanswered probe has recovered. Require a later probe sequence.
+        # unanswered probe has recovered. Require a later probe sequence\n        # observed after the controller has finished applying the route.
         after_missing = (
             next(
                 (sample for sample in replies
-                 if sample["wall_utc_ns"] > first_missing["wall_utc_ns"]
+                 if sample["wall_utc_ns"] >= applied
+                 and sample["wall_utc_ns"] > first_missing["wall_utc_ns"]
                  and sample["seq"] > first_missing["seq"]
                  and (next_start is None or sample["wall_utc_ns"] < next_start)),
                 None,
