@@ -555,7 +555,7 @@ mod tests {
             serde_json::to_vec(&reversed).unwrap()
         );
 
-        let mut failed = scenario.clone();
+        let mut failed = fixture();
         failed
             .network
             .links
