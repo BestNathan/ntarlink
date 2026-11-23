@@ -66,8 +66,11 @@ fn plan_shared_internal(
     stage_output: bool,
 ) -> Result<Vec<PlannedWorkload>, String> {
     let mut capacities = BTreeMap::new();
+    // Resolve each candidate against the validated inventory in logarithmic
+    // time instead of rescanning all nodes for every workload in large C1 runs.
+    let mut node_index = BTreeMap::new();
     for node in nodes {
-        if node.id.is_empty() || capacities.contains_key(&node.id) {
+        if node.id.is_empty() || node_index.insert(node.id.as_str(), node).is_some() {
             return Err("duplicate or empty compute node ID".into());
         }
         capacities.insert(
@@ -141,7 +144,7 @@ fn plan_shared_internal(
             outcome.reason = Some("duplicate workload attempt ID".into());
         } else if task.id.is_empty() || start >= task.deadline_ns || task.deadline_ns > horizon_ns {
             outcome.reason = Some("invalid workload interval or horizon".into());
-        } else if let Some(node) = nodes.iter().find(|n| n.id == candidate.node_id) {
+        } else if let Some(node) = node_index.get(candidate.node_id.as_str()) {
             match reserve(node, task, candidate.input_bytes) {
                 Ok(reservation) => {
                     if let Some(end) = start.checked_add(reservation.modeled_cpu_duration_ns) {
@@ -222,6 +225,59 @@ mod tests {
     fn fixture() -> ComputeExperiment {
         ComputeExperiment::from_json(include_str!("../../../scenarios/c0-orbital-edge.json"))
             .unwrap()
+    }
+
+    #[test]
+    fn large_permuted_inventory_preserves_admission_and_unknown_node_rejection() {
+        let scenario = fixture();
+        let nodes: Vec<_> = (0..1_000)
+            .map(|index| {
+                let mut node = scenario.orbital_node.clone();
+                node.id = format!("compute-{index:04}");
+                node
+            })
+            .collect();
+        let candidates: Vec<_> = (0..1_000)
+            .map(|index| {
+                let mut workload = scenario.workload.clone();
+                workload.id = format!("task-{index:04}");
+                Candidate {
+                    node_id: format!("compute-{index:04}"),
+                    workload,
+                    input_bytes: scenario.input_artifact.size_bytes,
+                }
+            })
+            .collect();
+        let first = plan_shared(&nodes, candidates.clone(), scenario.network.duration_ns).unwrap();
+        let reversed = plan_shared(
+            &nodes.into_iter().rev().collect::<Vec<_>>(),
+            candidates.into_iter().rev().collect(),
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&first).unwrap(),
+            serde_json::to_vec(&reversed).unwrap()
+        );
+        assert!(first
+            .iter()
+            .all(|entry| entry.admission.decision == Decision::Admitted));
+        let mut missing = scenario.workload.clone();
+        missing.id = "unknown-at-scale".into();
+        let rejected = plan_shared(
+            std::slice::from_ref(&scenario.orbital_node),
+            vec![Candidate {
+                node_id: "missing".into(),
+                workload: missing,
+                input_bytes: 1,
+            }],
+            scenario.network.duration_ns,
+        )
+        .unwrap();
+        assert_eq!(
+            rejected[0].admission.decision,
+            Decision::RejectedUnknownNode
+        );
     }
 
     #[test]
