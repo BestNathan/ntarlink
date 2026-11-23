@@ -128,9 +128,7 @@ pub fn observed_output_delivery(
     let mut delivered_packets = 0usize;
     let mut last_arrival = None;
     for packet in &report.packets {
-        if packet.flow_id != format!("{prefix}full")
-            && packet.flow_id != format!("{prefix}tail")
-        {
+        if packet.flow_id != format!("{prefix}full") && packet.flow_id != format!("{prefix}tail") {
             continue;
         }
         if packet.status != PacketStatus::Delivered {
